@@ -3392,6 +3392,20 @@
 						}
 					},
 					{
+						"volatile.\u003cname\u003e.io.major": {
+							"longdesc": "The major number identifies a block device with an active I/O limit.",
+							"shortdesc": "Major number of the I/O-limited block device",
+							"type": "int"
+						}
+					},
+					{
+						"volatile.\u003cname\u003e.io.minor": {
+							"longdesc": "The minor number identifies a block device with an active I/O limit.",
+							"shortdesc": "Minor number of the I/O-limited block device",
+							"type": "int"
+						}
+					},
+					{
 						"volatile.\u003cname\u003e.last_state.created": {
 							"longdesc": "Possible values are `true` or `false`.",
 							"shortdesc": "Whether the network device physical device was created",

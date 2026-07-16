@@ -1454,6 +1454,24 @@ func ConfigKeyChecker(key string, instanceType api.InstanceType) (func(value str
 			return validate.IsAny, nil
 		}
 
+		// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.io.major)
+		// The major number identifies a block device with an active I/O limit.
+		// ---
+		//  type: int
+		//  shortdesc: Major number of the I/O-limited block device
+		if strings.HasSuffix(key, ".io.major") {
+			return validate.Optional(validate.IsUint32), nil
+		}
+
+		// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.io.minor)
+		// The minor number identifies a block device with an active I/O limit.
+		// ---
+		//  type: int
+		//  shortdesc: Minor number of the I/O-limited block device
+		if strings.HasSuffix(key, ".io.minor") {
+			return validate.Optional(validate.IsUint32), nil
+		}
+
 		// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.mig.uuid)
 		// The NVIDIA MIG instance UUID.
 		// ---
