@@ -6677,6 +6677,15 @@
 						}
 					},
 					{
+						"ceph.rbd.image_prefix": {
+							"default": "-",
+							"longdesc": "",
+							"scope": "local",
+							"shortdesc": "Per-server prefix for image volume names, allowing multiple servers to share an OSD pool",
+							"type": "string"
+						}
+					},
+					{
 						"ceph.user.name": {
 							"default": "`admin`",
 							"longdesc": "",

@@ -395,6 +395,23 @@ func (d *ceph) Validate(config map[string]string) error {
 		//  shortdesc: Comma-separated list of RBD features to enable on the volumes
 		"ceph.rbd.features": validate.IsAny,
 
+		// gendoc:generate(entity=storage_ceph, group=common, key=ceph.rbd.image_prefix)
+		//
+		// ---
+		//  type: string
+		//  scope: local
+		//  default: -
+		//  shortdesc: Per-server prefix for image volume names, allowing multiple servers to share an OSD pool
+		"ceph.rbd.image_prefix": validate.Optional(func(value string) error {
+			for _, r := range value {
+				if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '_') {
+					return fmt.Errorf("Invalid character %q in image prefix, only alphanumeric characters and \"-\", \".\", \"_\" are allowed", r)
+				}
+			}
+
+			return nil
+		}),
+
 		// gendoc:generate(entity=storage_ceph, group=common, key=ceph.user.name)
 		//
 		// ---
@@ -419,6 +436,13 @@ func (d *ceph) Validate(config map[string]string) error {
 
 // Update applies any driver changes required from a configuration change.
 func (d *ceph) Update(changedConfig map[string]string) error {
+	// Changing the image prefix would orphan all existing image volumes (their RBD
+	// names would no longer resolve), so it can only be set at pool creation time.
+	_, changed := changedConfig["ceph.rbd.image_prefix"]
+	if changed {
+		return errors.New(`"ceph.rbd.image_prefix" cannot be changed after pool creation`)
+	}
+
 	return nil
 }
 

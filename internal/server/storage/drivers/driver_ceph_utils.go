@@ -1023,6 +1023,13 @@ func (d *ceph) parseParent(parent string) (Volume, string, error) {
 		// Remove prefix from name.
 		name = strings.SplitN(name, "image_", 2)[1]
 
+		// Strip the per-server image prefix so the name maps back to the fingerprint
+		// recorded in the database.
+		prefix := d.config["ceph.rbd.image_prefix"]
+		if prefix != "" {
+			name = strings.TrimPrefix(name, prefix+"_")
+		}
+
 		// Check for block indicator.
 		before, ok := strings.CutSuffix(name, ".block")
 		if ok {
@@ -1290,6 +1297,15 @@ func (d *ceph) generateUUID(fsType string, devPath string) error {
 }
 
 func (d *ceph) getRBDVolumeName(vol Volume, snapName string, withPoolName bool) string {
+	// Image volumes are named after their (content-addressed) fingerprint, so multiple
+	// servers sharing an OSD pool would collide on them. Apply the per-server prefix
+	// to keep each server's image cache distinct. Instance and custom volumes are left
+	// alone as their names are already unique within a pool.
+	prefix := d.config["ceph.rbd.image_prefix"]
+	if prefix != "" && (vol.volType == VolumeTypeImage || vol.volType == cephVolumeTypeZombieImage) {
+		vol.name = prefix + "_" + vol.name
+	}
+
 	out := CephGetRBDImageName(vol, snapName, vol.isDeleted)
 
 	// If needed, the output will be prefixed with the pool name, e.g.

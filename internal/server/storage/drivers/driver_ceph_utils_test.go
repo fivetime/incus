@@ -117,6 +117,102 @@ func Test_ceph_getRBDVolumeName(t *testing.T) {
 	}
 }
 
+func Test_ceph_getRBDVolumeName_imagePrefix(t *testing.T) {
+	tests := []struct {
+		name string
+		vol  Volume
+		want string
+	}{
+		{
+			"Image volume gets the per-server prefix",
+			NewVolume(nil, "testpool", VolumeTypeImage, ContentTypeFS, "fingerprint", nil, nil),
+			"image_server1_fingerprint_ext4",
+		},
+		{
+			"Zombie image volume gets the per-server prefix",
+			func() Volume {
+				vol := NewVolume(nil, "testpool", VolumeTypeImage, ContentTypeFS, "fingerprint", nil, nil)
+				vol.isDeleted = true
+				return vol
+			}(),
+			"zombie_image_server1_fingerprint_ext4",
+		},
+		{
+			"Container volume is not prefixed",
+			NewVolume(nil, "testpool", VolumeTypeContainer, ContentTypeFS, "testvol", nil, nil),
+			"container_testvol",
+		},
+		{
+			"Custom volume is not prefixed",
+			NewVolume(nil, "testpool", VolumeTypeCustom, ContentTypeFS, "default_testvol", nil, nil),
+			"custom_default_testvol",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &ceph{
+				common{
+					config: map[string]string{
+						"ceph.osd.pool_name":    "testosdpool",
+						"ceph.rbd.image_prefix": "server1",
+					},
+				},
+			}
+
+			got := d.getRBDVolumeName(tt.vol, "", false)
+			if got != tt.want {
+				t.Errorf("ceph.getRBDVolumeName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_ceph_parseParent_imagePrefix(t *testing.T) {
+	d := &ceph{
+		common{
+			config: map[string]string{
+				"ceph.osd.pool_name":    "testosdpool",
+				"ceph.rbd.image_prefix": "server1",
+			},
+		},
+	}
+
+	// The parsed name must map back to the plain fingerprint recorded in the database.
+	for _, parent := range []string{
+		"pool/image_server1_9e90b7b9ccdd7a671a987fadcf07ab92363be57e7f056d18d42af452cdaf95bb_ext4@readonly",
+		"pool/zombie_image_server1_9e90b7b9ccdd7a671a987fadcf07ab92363be57e7f056d18d42af452cdaf95bb_ext4@readonly",
+	} {
+		vol, snapName, err := d.parseParent(parent)
+		if err != nil {
+			t.Fatalf("parseParent(%q) returned error: %v", parent, err)
+		}
+
+		if vol.name != "9e90b7b9ccdd7a671a987fadcf07ab92363be57e7f056d18d42af452cdaf95bb" {
+			t.Errorf("parseParent(%q) name = %v, want plain fingerprint", parent, vol.name)
+		}
+
+		if snapName != "readonly" {
+			t.Errorf("parseParent(%q) snapName = %v, want readonly", parent, snapName)
+		}
+
+		if vol.config["block.filesystem"] != "ext4" {
+			t.Errorf("parseParent(%q) block.filesystem = %v, want ext4", parent, vol.config["block.filesystem"])
+		}
+	}
+
+	// Round-trip: generating a name from the parsed volume must reproduce the RBD name.
+	vol, _, err := d.parseParent("pool/image_server1_abcd1234_ext4@readonly")
+	if err != nil {
+		t.Fatalf("parseParent returned error: %v", err)
+	}
+
+	got := d.getRBDVolumeName(vol, "readonly", false)
+	if got != "image_server1_abcd1234_ext4@readonly" {
+		t.Errorf("round-trip getRBDVolumeName() = %v, want image_server1_abcd1234_ext4@readonly", got)
+	}
+}
+
 func Example_ceph_parseParent() {
 	d := &ceph{}
 

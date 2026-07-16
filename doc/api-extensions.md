@@ -3279,3 +3279,17 @@ is controlled by the new `port-forward` agent feature.
 
 A matching `incus port-forward` command is added to the client, providing
 a local TCP listener which forwards every connection to the instance.
+
+## `storage_ceph_rbd_image_prefix`
+
+This adds a new `ceph.rbd.image_prefix` configuration key to Ceph RBD storage
+pools. When set, the RBD names of image volumes (and their zombie variants)
+are prefixed with the configured value, e.g.
+`image_prefix1_fingerprint_ext4` instead of `image_fingerprint_ext4`.
+
+Image volumes are named after their content fingerprint, so multiple Incus
+servers sharing a single OSD pool would otherwise collide on the cached image
+volumes. Setting a distinct prefix on each server (typically the server name)
+gives every server its own image cache within the shared pool.
+
+The key can only be set at pool creation time and is member-specific.
