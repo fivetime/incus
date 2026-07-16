@@ -2,7 +2,7 @@ name: Build novm image
 
 on:
   push:
-    branches: [ "openstack-incus-phase1" ]
+    branches: [ "main" ]
     tags: [ 'novm-v*' ]
   workflow_dispatch:
 
