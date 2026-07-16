@@ -3272,6 +3272,14 @@ The cluster member that the instance lived on before evacuation.
 
 ```
 
+```{config:option} volatile.migration.storage_handover instance-volatile
+:shortdesc: "Whether the instance's volumes were handed over on shared storage"
+:type: "bool"
+Set on the source instance after a migration that handed its volumes over in
+place on shared remote storage; deleting the instance then leaves the volumes
+untouched as they are owned by the target server.
+```
+
 ```{config:option} volatile.rebalance.last_move instance-volatile
 :shortdesc: "Timestamp of last move by automatic live-migration"
 :type: "integer"
@@ -5941,6 +5949,14 @@ Note that the claim must be contained in the access token.
 
 ```
 
+```{config:option} ceph.rbd.image_prefix storage_ceph-common
+:default: "-"
+:scope: "local"
+:shortdesc: "Per-server prefix for image volume names, allowing multiple servers to share an OSD pool"
+:type: "string"
+
+```
+
 ```{config:option} ceph.user.name storage_ceph-common
 :default: "`admin`"
 :scope: "global"
@@ -6580,6 +6596,16 @@ Note that the claim must be contained in the access token.
 ```
 
 <!-- config group storage_volume_ceph-common end -->
+<!-- config group storage_volume_cephext-common start -->
+```{config:option} ceph.rbd.image_name storage_volume_cephext-common
+:condition: "-"
+:default: "-"
+:shortdesc: "Name of the externally managed RBD image backing the volume"
+:type: "string"
+
+```
+
+<!-- config group storage_volume_cephext-common end -->
 <!-- config group storage_volume_cephfs-common start -->
 ```{config:option} initial.gid storage_volume_cephfs-common
 :condition: "custom volume with content type `filesystem`"

@@ -13,7 +13,8 @@ import (
 // which allows a migration between them to skip the data transfer and hand the
 // volume over in place.
 func PoolSharedIdentity(pool Pool) (string, string) {
-	if pool.Driver().Info().Name != "ceph" {
+	driverName := pool.Driver().Info().Name
+	if driverName != "ceph" && driverName != "cephext" {
 		return "", ""
 	}
 

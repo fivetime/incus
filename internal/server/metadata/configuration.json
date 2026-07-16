@@ -3617,6 +3617,13 @@
 						}
 					},
 					{
+						"volatile.migration.storage_handover": {
+							"longdesc": "Set on the source instance after a migration that handed its volumes over in\nplace on shared remote storage; deleting the instance then leaves the volumes\nuntouched as they are owned by the target server.",
+							"shortdesc": "Whether the instance's volumes were handed over on shared storage",
+							"type": "bool"
+						}
+					},
+					{
 						"volatile.rebalance.last_move": {
 							"longdesc": "",
 							"shortdesc": "Timestamp of last move by automatic live-migration",
@@ -7430,6 +7437,21 @@
 							"default": "same as `volume.snapshot.schedule`",
 							"longdesc": "",
 							"shortdesc": "{{snapshot_schedule_format}}",
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"storage_volume_cephext": {
+			"common": {
+				"keys": [
+					{
+						"ceph.rbd.image_name": {
+							"condition": "-",
+							"default": "-",
+							"longdesc": "",
+							"shortdesc": "Name of the externally managed RBD image backing the volume",
 							"type": "string"
 						}
 					}

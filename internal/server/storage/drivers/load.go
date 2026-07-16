@@ -8,6 +8,7 @@ import (
 var drivers = map[string]func() driver{
 	"btrfs":      func() driver { return &btrfs{} },
 	"ceph":       func() driver { return &ceph{} },
+	"cephext":    func() driver { return &cephext{} },
 	"cephfs":     func() driver { return &cephfs{} },
 	"cephobject": func() driver { return &cephobject{} },
 	"dir":        func() driver { return &dir{} },

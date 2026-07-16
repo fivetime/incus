@@ -3309,3 +3309,21 @@ untouched.
 
 The handover is only negotiated for stopped instances on non-live,
 non-refresh migrations.
+
+## `storage_driver_cephext`
+
+This adds a new `cephext` storage pool driver, a variant of the `ceph` driver
+for volumes whose RBD images are managed by an external system (for example
+OpenStack Cinder).
+
+A `cephext` pool points at an existing OSD pool through `source` and never
+creates, deletes or resizes any RBD image. Each volume maps to a pre-existing
+image through the `ceph.rbd.image_name` volume configuration key: creating the
+volume claims the image in place (typically via the root disk device's
+`initial.ceph.rbd.image_name` key at instance creation time), deleting the
+volume merely releases it.
+
+Operations that would alter the image or its snapshots outside of the external
+owner's control (Incus-side snapshots, copies, backups, resizing, renames) are
+refused. Shared storage migration handover is supported, so instances backed
+by such volumes migrate between servers without any data transfer.

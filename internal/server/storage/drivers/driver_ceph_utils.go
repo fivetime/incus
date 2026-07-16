@@ -1297,6 +1297,22 @@ func (d *ceph) generateUUID(fsType string, devPath string) error {
 }
 
 func (d *ceph) getRBDVolumeName(vol Volume, snapName string, withPoolName bool) string {
+	// A volume with an explicit RBD image name maps to an externally managed image
+	// (e.g. an OpenStack Cinder volume adopted as an instance root disk), so that
+	// name is used as-is instead of deriving one from the volume.
+	override := vol.config["ceph.rbd.image_name"]
+	if override != "" {
+		if snapName != "" {
+			override = fmt.Sprintf("%s@%s", override, snapName)
+		}
+
+		if withPoolName {
+			override = fmt.Sprintf("%s/%s", d.config["ceph.osd.pool_name"], override)
+		}
+
+		return override
+	}
+
 	// Image volumes are named after their (content-addressed) fingerprint, so multiple
 	// servers sharing an OSD pool would collide on them. Apply the per-server prefix
 	// to keep each server's image cache distinct. Instance and custom volumes are left

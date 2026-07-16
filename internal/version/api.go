@@ -558,6 +558,7 @@ var APIExtensions = []string{
 	"instance_port_forward",
 	"storage_ceph_rbd_image_prefix",
 	"migration_shared_ceph_storage",
+	"storage_driver_cephext",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

@@ -11,6 +11,7 @@ storage_btrfs
 storage_lvm
 storage_zfs
 storage_ceph
+storage_cephext
 storage_cephfs
 storage_cephobject
 storage_linstor

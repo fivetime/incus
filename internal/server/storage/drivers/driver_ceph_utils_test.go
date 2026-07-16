@@ -168,6 +168,34 @@ func Test_ceph_getRBDVolumeName_imagePrefix(t *testing.T) {
 	}
 }
 
+func Test_ceph_getRBDVolumeName_imageNameOverride(t *testing.T) {
+	d := &ceph{
+		common{
+			config: map[string]string{
+				"ceph.osd.pool_name": "cinderpool",
+			},
+		},
+	}
+
+	vol := NewVolume(nil, "testpool", VolumeTypeContainer, ContentTypeFS, "testvol",
+		map[string]string{"ceph.rbd.image_name": "volume-8231d2e8-e306-40e4-8f42-a9d2475f2e05"}, nil)
+
+	for _, tt := range []struct {
+		snapName     string
+		withPoolName bool
+		want         string
+	}{
+		{"", false, "volume-8231d2e8-e306-40e4-8f42-a9d2475f2e05"},
+		{"", true, "cinderpool/volume-8231d2e8-e306-40e4-8f42-a9d2475f2e05"},
+		{"snap1", true, "cinderpool/volume-8231d2e8-e306-40e4-8f42-a9d2475f2e05@snap1"},
+	} {
+		got := d.getRBDVolumeName(vol, tt.snapName, tt.withPoolName)
+		if got != tt.want {
+			t.Errorf("ceph.getRBDVolumeName() = %v, want %v", got, tt.want)
+		}
+	}
+}
+
 func Test_ceph_parseParent_imagePrefix(t *testing.T) {
 	d := &ceph{
 		common{
