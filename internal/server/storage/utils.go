@@ -292,8 +292,17 @@ func VolumeDBCreate(pool Pool, projectName string, volumeName string, volumeDesc
 	}
 
 	// A volume claiming an externally managed image must be its only claimant
-	// on this server.
-	if !snapshot {
+	// on this server. The named lock serializes concurrent claims of the same
+	// image so that the check and the record creation below cannot interleave;
+	// cross-server exclusion is the external owner's responsibility.
+	if !snapshot && vol.Config()["ceph.rbd.image_name"] != "" {
+		unlock, err := locking.Lock(context.TODO(), fmt.Sprintf("ExternalVolumeClaim_%s_%s", pool.Name(), vol.Config()["ceph.rbd.image_name"]))
+		if err != nil {
+			return err
+		}
+
+		defer unlock()
+
 		err = checkExternalVolumeClaimUnique(pool, projectName, volumeName, vol.Config())
 		if err != nil {
 			return err

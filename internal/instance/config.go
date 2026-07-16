@@ -516,7 +516,9 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// State of the shared storage handover of the instance's volumes during a
 	// migration: "pending" while the handover is in flight, "committed" once the
 	// target server owns the volumes. In either state, deleting the instance
-	// leaves the volumes themselves untouched.
+	// leaves the volumes themselves untouched. A failed migration keeps the
+	// "pending" marker as the target may still have completed its claim; clear
+	// it manually once the target is confirmed to hold no claim.
 	// ---
 	//  type: string
 	//  shortdesc: State of the shared storage handover of the instance's volumes

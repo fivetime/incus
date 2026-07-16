@@ -3273,11 +3273,14 @@ The cluster member that the instance lived on before evacuation.
 ```
 
 ```{config:option} volatile.migration.storage_handover instance-volatile
-:shortdesc: "Whether the instance's volumes were handed over on shared storage"
-:type: "bool"
-Set on the source instance after a migration that handed its volumes over in
-place on shared remote storage; deleting the instance then leaves the volumes
-untouched as they are owned by the target server.
+:shortdesc: "State of the shared storage handover of the instance's volumes"
+:type: "string"
+State of the shared storage handover of the instance's volumes during a
+migration: "pending" while the handover is in flight, "committed" once the
+target server owns the volumes. In either state, deleting the instance
+leaves the volumes themselves untouched. A failed migration keeps the
+"pending" marker as the target may still have completed its claim; clear
+it manually once the target is confirmed to hold no claim.
 ```
 
 ```{config:option} volatile.rebalance.last_move instance-volatile

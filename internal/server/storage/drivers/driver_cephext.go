@@ -305,11 +305,19 @@ func (d *cephext) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 	}
 
 	if sizeBytes > actualSizeBytes {
-		return fmt.Errorf("Volume size can only be changed through the image's external owner: %w", ErrNotSupported)
+		return fmt.Errorf("Volume size can only be grown through the image's external owner: %w", ErrNotSupported)
 	}
 
-	// The device already has the requested capacity, grow the filesystem to
-	// fill it. Shrinking is never done as the device size is authoritative.
+	if sizeBytes < actualSizeBytes {
+		// The externally managed device size is authoritative and its
+		// filesystem is only ever grown to fill it, so a smaller request is
+		// refused rather than recording a size that doesn't match reality or
+		// silently growing beyond what was asked for.
+		return fmt.Errorf("Volume size must match the externally managed device size of %d bytes: %w", actualSizeBytes, ErrCannotBeShrunk)
+	}
+
+	// The requested size matches the device, grow the contained filesystem to
+	// fill it (idempotent, a no-op when it already does).
 	if vol.contentType == ContentTypeFS {
 		err = growFileSystem(vol.ConfigBlockFilesystem(), devPath, vol)
 		if err != nil {

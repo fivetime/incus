@@ -8232,13 +8232,15 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		err := g.Wait()
 		if err != nil {
 			if volSourceArgs.SharedStorage {
-				// The migration failed so the volumes stay owned by this server.
-				// Clearing the marker is best effort: a stale marker only leaks
-				// the volumes, it can never cause a double delete.
-				resetErr := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": ""})
-				if resetErr != nil {
-					d.logger.Error("Failed clearing storage handover marker after failed migration", logger.Ctx{"err": resetErr})
-				}
+				// The migration failed from this server's point of view, but the
+				// target may still have completed its claim of the volumes (e.g.
+				// when its success response got lost). Only an explicit
+				// confirmation could prove that the target holds no claim, so the
+				// pending marker is kept: deleting the volumes of a completed
+				// handover would destroy the target's data, while a stale marker
+				// at worst leaks them. Clear the marker manually once the target
+				// is confirmed to hold no claim.
+				d.logger.Warn("Migration failed with a pending storage handover, keeping the volatile.migration.storage_handover marker")
 			}
 
 			op.Done(err)

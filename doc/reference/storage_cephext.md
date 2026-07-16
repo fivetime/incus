@@ -28,8 +28,9 @@ Because the image is owned by the external system, all operations that would
 alter it or its snapshots behind the owner's back are refused: Incus-side
 snapshots, copies, backups, refreshes and renames are not supported and the
 RBD image is never resized. After the external owner has grown the image
-(e.g. a volume extend), setting the volume's `size` up to the image's actual
-size grows the contained filesystem to fill the device.
+(e.g. a volume extend), setting the volume's `size` to the image's actual
+size grows the contained filesystem to fill the device; any other size is
+refused as the externally managed device size is authoritative.
 
 Mounting a volume is refused while its image is in use elsewhere (it has
 active RBD watchers from this or another server), as concurrent use of the

@@ -3618,9 +3618,9 @@
 					},
 					{
 						"volatile.migration.storage_handover": {
-							"longdesc": "Set on the source instance after a migration that handed its volumes over in\nplace on shared remote storage; deleting the instance then leaves the volumes\nuntouched as they are owned by the target server.",
-							"shortdesc": "Whether the instance's volumes were handed over on shared storage",
-							"type": "bool"
+							"longdesc": "State of the shared storage handover of the instance's volumes during a\nmigration: \"pending\" while the handover is in flight, \"committed\" once the\ntarget server owns the volumes. In either state, deleting the instance\nleaves the volumes themselves untouched. A failed migration keeps the\n\"pending\" marker as the target may still have completed its claim; clear\nit manually once the target is confirmed to hold no claim.",
+							"shortdesc": "State of the shared storage handover of the instance's volumes",
+							"type": "string"
 						}
 					},
 					{
