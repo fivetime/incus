@@ -10,7 +10,10 @@
 # Build context must be the repository root:
 #   docker build -f docker/alpine-novm/Dockerfile .
 
-ARG ALPINE_VERSION=edge
+# Pinned to a stable release rather than edge: edge is a rolling repository
+# where packages get renamed or dropped without notice (e.g. ceph20 -> ceph19).
+# Bump deliberately when moving to a newer Alpine release.
+ARG ALPINE_VERSION=3.24
 
 FROM alpine:${ALPINE_VERSION} AS incus-build
 
