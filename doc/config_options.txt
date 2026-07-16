@@ -3078,18 +3078,6 @@ The network device MAC address is used when no `hwaddr` property is set on the d
 The IO bus stores the actual IO bus being used, checked in case `io.bus=auto`.
 ```
 
-```{config:option} volatile.<name>.io.major instance-volatile
-:shortdesc: "Major number of the I/O-limited block device"
-:type: "int"
-The major number identifies a block device with an active I/O limit.
-```
-
-```{config:option} volatile.<name>.io.minor instance-volatile
-:shortdesc: "Minor number of the I/O-limited block device"
-:type: "int"
-The minor number identifies a block device with an active I/O limit.
-```
-
 ```{config:option} volatile.<name>.last_state.created instance-volatile
 :shortdesc: "Whether the network device physical device was created"
 :type: "string"

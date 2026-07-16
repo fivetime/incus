@@ -2944,10 +2944,6 @@ func (d *disk) getDiskLimits() (map[string]diskBlockLimit, error) {
 
 // parseLimit parses the disk configuration for its I/O limits and returns the I/O bytes/iops limits.
 func (d *disk) parseLimit(dev deviceConfig.Device) (int64, int64, int64, int64, error) {
-	return parseDiskLimit(dev)
-}
-
-func parseDiskLimit(dev deviceConfig.Device) (int64, int64, int64, int64, error) {
 	readSpeed := dev["limits.read"]
 	writeSpeed := dev["limits.write"]
 

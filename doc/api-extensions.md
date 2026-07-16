@@ -3339,9 +3339,7 @@ by such volumes migrate between servers without any data transfer.
 This adds the `limits.read` and `limits.write` configuration keys to required
 `unix-block` devices. Each key accepts either a byte-per-second value or an
 IOPS value and is enforced through the instance's I/O cgroup. The daemon
-records the device major and minor numbers when applying a limit and clears
-the corresponding `io.max` entries when the device is removed.
-
-Optional `unix-block` devices are rejected when limits are configured because
-an absent or asynchronously reappearing device cannot provide a stable cgroup
-enforcement target.
+resolves the device major and minor numbers from the Incus-managed host device
+node and clears the corresponding `io.max` entries when the device is removed.
+Limits are applied both during instance/device start and when an optional
+device appears later through the Unix-device event handler.
