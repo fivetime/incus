@@ -8030,11 +8030,16 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	// target server seeing the exact same backend can claim the volumes in place
 	// instead of having the data sent over. Only offered for a stopped instance
 	// as the volume handover requires the source to no longer write to it.
+	// The driver type is included so that ownership semantics can never get
+	// mixed up: "ceph" volumes are owned by Incus while "cephext" volumes are
+	// owned by an external system, so a handover is only valid between pools
+	// using the same driver.
 	if !clusterMove && !storageMove && !args.Live && !d.IsRunning() {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid != "" {
 			offerHeader.CephFsid = proto.String(fsid)
 			offerHeader.CephPool = proto.String(osdPool)
+			offerHeader.CephDriver = proto.String(pool.Driver().Info().Name)
 		}
 	}
 
@@ -8106,6 +8111,21 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 			if slices.Contains(volSourceArgs.Snapshots, allSnapshots[i].Name) {
 				volSourceArgs.Info.Config.VolumeSnapshots = append(volSourceArgs.Info.Config.VolumeSnapshots, allSnapshots[i])
 			}
+		}
+	}
+
+	// Mark the storage as handed over before the handover starts, so that no
+	// failure can ever leave the target owning the volumes while this marker is
+	// missing (which would let a later deletion of the source instance delete
+	// the volumes in use on the target). The marker is cleared again if the
+	// migration fails; if even that fails the worst case is a leaked volume,
+	// never a double delete.
+	if volSourceArgs.SharedStorage {
+		err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "true"})
+		if err != nil {
+			err = fmt.Errorf("Failed marking instance storage as handed over: %w", err)
+			op.Done(err)
+			return err
 		}
 	}
 
@@ -8210,17 +8230,18 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	{
 		err := g.Wait()
 		if err != nil {
+			if volSourceArgs.SharedStorage {
+				// The migration failed so the volumes stay owned by this server.
+				// Clearing the marker is best effort: a stale marker only leaks
+				// the volumes, it can never cause a double delete.
+				resetErr := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": ""})
+				if resetErr != nil {
+					d.logger.Error("Failed clearing storage handover marker after failed migration", logger.Ctx{"err": resetErr})
+				}
+			}
+
 			op.Done(err)
 			return err
-		}
-
-		if volSourceArgs.SharedStorage {
-			// The volumes are now owned by the target server. Mark the instance so
-			// that its deletion no longer touches the storage.
-			err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "true"})
-			if err != nil {
-				d.logger.Error("Failed marking instance storage as handed over", logger.Ctx{"err": err})
-			}
 		}
 
 		op.Done(nil)
@@ -8939,12 +8960,15 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	}
 
 	// If the source offered the identity of its remote shared storage backend and this
-	// server sees the exact same backend, agree to claim the volumes in place instead
-	// of receiving their data. The source only makes the offer for a stopped instance.
+	// server sees the exact same backend through the same driver type, agree to claim
+	// the volumes in place instead of receiving their data. The source only makes the
+	// offer for a stopped instance. The driver type comparison keeps Incus-owned
+	// ("ceph") and externally-owned ("cephext") volumes from ever getting handed
+	// over across ownership semantics.
 	sharedStorage := false
 	if offerHeader.GetCephFsid() != "" && offerHeader.Criu == nil && !clusterMove && !args.Refresh && !args.Live {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
-		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() {
+		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() && pool.Driver().Info().Name == offerHeader.GetCephDriver() {
 			sharedStorage = true
 			respHeader.SharedStorage = proto.Bool(true)
 		}

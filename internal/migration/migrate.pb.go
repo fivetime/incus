@@ -769,12 +769,16 @@ type MigrationHeader struct {
 	IndexHeaderVersion *uint32                `protobuf:"varint,13,opt,name=indexHeaderVersion" json:"indexHeaderVersion,omitempty"`
 	DependentVolumes   []*DependentVolume     `protobuf:"bytes,14,rep,name=dependentVolumes" json:"dependentVolumes,omitempty"`
 	// Shared remote storage negotiation: the source offers the identity of its
-	// remote storage backend (Ceph cluster fsid and OSD pool); the target replies
-	// with sharedStorage=true when it sees the exact same backend, in which case
-	// no volume data is transferred and the target claims the existing volume.
+	// remote storage backend (Ceph cluster fsid, OSD pool and storage driver);
+	// the target replies with sharedStorage=true when it sees the exact same
+	// backend through the same driver type, in which case no volume data is
+	// transferred and the target claims the existing volume. The driver type
+	// must match so that volume ownership semantics (Incus-owned "ceph" vs
+	// externally-owned "cephext") can never get mixed up by a handover.
 	CephFsid      *string `protobuf:"bytes,15,opt,name=cephFsid" json:"cephFsid,omitempty"`
 	CephPool      *string `protobuf:"bytes,16,opt,name=cephPool" json:"cephPool,omitempty"`
 	SharedStorage *bool   `protobuf:"varint,17,opt,name=sharedStorage" json:"sharedStorage,omitempty"`
+	CephDriver    *string `protobuf:"bytes,18,opt,name=cephDriver" json:"cephDriver,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -919,6 +923,13 @@ func (x *MigrationHeader) GetSharedStorage() bool {
 		return *x.SharedStorage
 	}
 	return false
+}
+
+func (x *MigrationHeader) GetCephDriver() string {
+	if x != nil && x.CephDriver != nil {
+		return *x.CephDriver
+	}
+	return ""
 }
 
 type MigrationControl struct {
@@ -1076,7 +1087,7 @@ const file_internal_migration_migrate_proto_rawDesc = "" +
 	"\n" +
 	"deviceName\x18\n" +
 	" \x01(\tR\n" +
-	"deviceName\"\xcf\x05\n" +
+	"deviceName\"\xef\x05\n" +
 	"\x0fMigrationHeader\x12*\n" +
 	"\x02fs\x18\x01 \x02(\x0e2\x1a.migration.MigrationFSTypeR\x02fs\x12'\n" +
 	"\x04criu\x18\x02 \x01(\x0e2\x13.migration.CRIUTypeR\x04criu\x12*\n" +
@@ -1096,7 +1107,10 @@ const file_internal_migration_migrate_proto_rawDesc = "" +
 	"\x10dependentVolumes\x18\x0e \x03(\v2\x1a.migration.DependentVolumeR\x10dependentVolumes\x12\x1a\n" +
 	"\bcephFsid\x18\x0f \x01(\tR\bcephFsid\x12\x1a\n" +
 	"\bcephPool\x18\x10 \x01(\tR\bcephPool\x12$\n" +
-	"\rsharedStorage\x18\x11 \x01(\bR\rsharedStorage\"F\n" +
+	"\rsharedStorage\x18\x11 \x01(\bR\rsharedStorage\x12\x1e\n" +
+	"\n" +
+	"cephDriver\x18\x12 \x01(\tR\n" +
+	"cephDriver\"F\n" +
 	"\x10MigrationControl\x12\x18\n" +
 	"\asuccess\x18\x01 \x02(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"3\n" +

@@ -99,12 +99,16 @@ message MigrationHeader {
 	repeated DependentVolume		dependentVolumes        = 14;
 
 	/* Shared remote storage negotiation: the source offers the identity of its
-	 * remote storage backend (Ceph cluster fsid and OSD pool); the target replies
-	 * with sharedStorage=true when it sees the exact same backend, in which case
-	 * no volume data is transferred and the target claims the existing volume. */
+	 * remote storage backend (Ceph cluster fsid, OSD pool and storage driver);
+	 * the target replies with sharedStorage=true when it sees the exact same
+	 * backend through the same driver type, in which case no volume data is
+	 * transferred and the target claims the existing volume. The driver type
+	 * must match so that volume ownership semantics (Incus-owned "ceph" vs
+	 * externally-owned "cephext") can never get mixed up by a handover. */
 	optional string				cephFsid		= 15;
 	optional string				cephPool		= 16;
 	optional bool				sharedStorage		= 17;
+	optional string				cephDriver		= 18;
 }
 
 message MigrationControl {
