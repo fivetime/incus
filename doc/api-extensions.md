@@ -3333,3 +3333,15 @@ Operations that would alter the image or its snapshots outside of the external
 owner's control (Incus-side snapshots, copies, backups, resizing, renames) are
 refused. Shared storage migration handover is supported, so instances backed
 by such volumes migrate between servers without any data transfer.
+
+## `unix_block_limits`
+
+This adds the `limits.read` and `limits.write` configuration keys to required
+`unix-block` devices. Each key accepts either a byte-per-second value or an
+IOPS value and is enforced through the instance's I/O cgroup. The daemon
+records the device major and minor numbers when applying a limit and clears
+the corresponding `io.max` entries when the device is removed.
+
+Optional `unix-block` devices are rejected when limits are configured because
+an absent or asynchronously reappearing device cannot provide a stable cgroup
+enforcement target.

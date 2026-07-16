@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/lxc/incus/v7/internal/linux"
+	"github.com/lxc/incus/v7/internal/server/cgroup"
 	deviceConfig "github.com/lxc/incus/v7/internal/server/device/config"
 	"github.com/lxc/incus/v7/internal/server/fsmonitor/drivers"
 	"github.com/lxc/incus/v7/internal/server/instance"
@@ -110,6 +112,20 @@ func (d *unixCommon) validateConfig(instConf instance.ConfigReader, partialValid
 		//  shortdesc: Whether this device is required to start the instance
 		"required": validate.Optional(validate.IsBool),
 
+		// gendoc:generate(entity=devices, group=unix-char-block, key=limits.read)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: I/O limit in byte/s or IOPS for block-device reads
+		"limits.read": validate.IsAny,
+
+		// gendoc:generate(entity=devices, group=unix-char-block, key=limits.write)
+		//
+		// ---
+		//  type: string
+		//  shortdesc: I/O limit in byte/s or IOPS for block-device writes
+		"limits.write": validate.IsAny,
+
 		// gendoc:generate(entity=devices, group=unix-char-block, key=uid)
 		//
 		// ---
@@ -126,6 +142,23 @@ func (d *unixCommon) validateConfig(instConf instance.ConfigReader, partialValid
 
 	if d.config["source"] == "" && d.config["path"] == "" {
 		return errors.New("Unix device entry is missing the required \"source\" or \"path\" property")
+	}
+
+	if d.config["type"] != "unix-block" && (d.config["limits.read"] != "" || d.config["limits.write"] != "") {
+		return errors.New("I/O limits are only supported for unix-block devices")
+	}
+
+	if !d.isRequired() && (d.config["limits.read"] != "" || d.config["limits.write"] != "") {
+		return errors.New("I/O limits require a required unix-block device")
+	}
+
+	readBps, readIops, writeBps, writeIops, err := parseDiskLimit(d.config)
+	if err != nil {
+		return fmt.Errorf("Invalid I/O limit: %w", err)
+	}
+
+	if (d.config["limits.read"] != "" && readBps <= 0 && readIops <= 0) || (d.config["limits.write"] != "" && writeBps <= 0 && writeIops <= 0) {
+		return errors.New("I/O limits must be greater than zero")
 	}
 
 	return nil
@@ -230,7 +263,7 @@ func (d *unixCommon) Start() (*deviceConfig.RunConfig, error) {
 	srcPath := unixDeviceSourcePath(d.config)
 
 	// If device file already exists on system, proceed to add it whether its required or not.
-	dType, _, _, err := unixDeviceAttributes(srcPath)
+	dType, major, minor, err := unixDeviceAttributes(srcPath)
 	if err == nil {
 		// Ensure device type matches what the device config is expecting.
 		if !unixIsOurDeviceType(d.config, dType) {
@@ -241,11 +274,31 @@ func (d *unixCommon) Start() (*deviceConfig.RunConfig, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		err = d.applyBlockLimits(&runConf, major, minor, false)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		// If the device file doesn't exist on the system, but major & minor numbers have
 		// been provided in the config then we can go ahead and create the device anyway.
 		if d.config["major"] != "" && d.config["minor"] != "" {
 			err := unixDeviceSetup(d.state, d.inst.DevicesPath(), "unix", d.name, d.config, true, &runConf)
+			if err != nil {
+				return nil, err
+			}
+
+			majorValue, err := strconv.ParseUint(d.config["major"], 10, 32)
+			if err != nil {
+				return nil, err
+			}
+
+			minorValue, err := strconv.ParseUint(d.config["minor"], 10, 32)
+			if err != nil {
+				return nil, err
+			}
+
+			err = d.applyBlockLimits(&runConf, uint32(majorValue), uint32(minorValue), false)
 			if err != nil {
 				return nil, err
 			}
@@ -270,6 +323,20 @@ func (d *unixCommon) Stop() (*deviceConfig.RunConfig, error) {
 		PostHooks: []func() error{d.postStop},
 	}
 
+	if d.config["type"] == "unix-block" && (d.config["limits.read"] != "" || d.config["limits.write"] != "") {
+		volatile := d.volatileGet()
+		majorValue, majorErr := strconv.ParseUint(volatile["io.major"], 10, 32)
+		minorValue, minorErr := strconv.ParseUint(volatile["io.minor"], 10, 32)
+		if majorErr != nil || minorErr != nil {
+			return nil, errors.New("Failed loading block device numbers to clear I/O limits")
+		}
+
+		err = d.applyBlockLimits(&runConf, uint32(majorValue), uint32(minorValue), true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	err = unixDeviceRemove(d.inst.DevicesPath(), "unix", d.name, "", &runConf)
 	if err != nil {
 		return nil, err
@@ -278,12 +345,81 @@ func (d *unixCommon) Stop() (*deviceConfig.RunConfig, error) {
 	return &runConf, nil
 }
 
+func (d *unixCommon) applyBlockLimits(runConf *deviceConfig.RunConfig, major uint32, minor uint32, clear bool) error {
+	if d.config["type"] != "unix-block" || (d.config["limits.read"] == "" && d.config["limits.write"] == "") {
+		return nil
+	}
+
+	if !cgroup.Supports(cgroup.IO) {
+		return errors.New("Cannot apply block device limits as IO cgroup controller is missing")
+	}
+
+	block := fmt.Sprintf("%d:%d", major, minor)
+	if clear {
+		runConf.CGroups = append(runConf.CGroups, deviceConfig.RunConfigItem{
+			Key:   "io.max",
+			Value: fmt.Sprintf("%s rbps=max riops=max wbps=max wiops=max", block),
+		})
+
+		return nil
+	}
+
+	err := d.volatileSet(map[string]string{
+		"io.major": strconv.FormatUint(uint64(major), 10),
+		"io.minor": strconv.FormatUint(uint64(minor), 10),
+	})
+	if err != nil {
+		return err
+	}
+
+	readBps, readIops, writeBps, writeIops, err := parseDiskLimit(d.config)
+	if err != nil {
+		return err
+	}
+
+	cg, err := cgroup.New(&cgroupWriter{runConf})
+	if err != nil {
+		return err
+	}
+
+	limits := []struct {
+		direction string
+		unit      string
+		value     int64
+	}{
+		{"read", "bps", readBps},
+		{"read", "iops", readIops},
+		{"write", "bps", writeBps},
+		{"write", "iops", writeIops},
+	}
+
+	for _, limit := range limits {
+		if limit.value <= 0 {
+			continue
+		}
+
+		err = cg.SetBlkioLimit(block, limit.direction, limit.unit, limit.value)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // postStop is run after the device is removed from the instance.
 func (d *unixCommon) postStop() error {
 	// Remove host files for this device.
 	err := unixDeviceDeleteFiles(d.state, d.inst.DevicesPath(), "unix", d.name, "")
 	if err != nil {
 		return fmt.Errorf("Failed to delete files for device '%s': %w", d.name, err)
+	}
+
+	if d.config["limits.read"] != "" || d.config["limits.write"] != "" {
+		err = d.volatileSet(map[string]string{"io.major": "", "io.minor": ""})
+		if err != nil {
+			return fmt.Errorf("Failed clearing I/O limit state for device '%s': %w", d.name, err)
+		}
 	}
 
 	return nil
