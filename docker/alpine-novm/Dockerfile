@@ -53,6 +53,8 @@ ARG CEPH_VERSION=19
 # Kept minimal for the Nova/ceph-RBD scenario: container instances only, RBD
 # storage only (no btrfs/lvm/cephfs tooling), nftables only (no iptables) and
 # no apparmor-utils (incusd only execs apparmor_parser, shipped in apparmor).
+# incusd refuses to start without ip, rsync, setfattr, tar (GNU), unsquashfs
+# and xz (see cmd/incusd/main_daemon.go), so those must always stay.
 # The incusd runtime libraries are pulled in through their soname (so:...)
 # instead of installing the Alpine incus package, whose binaries would only
 # get shadowed by the ones built from this repository.
@@ -71,6 +73,8 @@ RUN apk add --no-cache \
       nftables \
       rsync \
       shadow-subids \
+      squashfs-tools \
+      tar \
       util-linux-misc \
       xz \
       so:libacl.so.1 \
