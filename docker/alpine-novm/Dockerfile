@@ -40,8 +40,8 @@ WORKDIR /build/incus
 COPY . .
 RUN --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -o /out/incusd ./cmd/incusd \
-    && go build -trimpath -o /out/incus ./cmd/incus
+    go build -trimpath -ldflags "-s -w" -o /out/incusd ./cmd/incusd \
+    && go build -trimpath -ldflags "-s -w" -o /out/incus ./cmd/incus
 
 FROM alpine:${ALPINE_VERSION}
 
@@ -50,42 +50,45 @@ FROM alpine:${ALPINE_VERSION}
 # mapping is done by the host kernel anyway; bump this once aports ships ceph20.
 ARG CEPH_VERSION=19
 
+# Kept minimal for the Nova/ceph-RBD scenario: container instances only, RBD
+# storage only (no btrfs/lvm/cephfs tooling), nftables only (no iptables) and
+# no apparmor-utils (incusd only execs apparmor_parser, shipped in apparmor).
+# The incusd runtime libraries are pulled in through their soname (so:...)
+# instead of installing the Alpine incus package, whose binaries would only
+# get shadowed by the ones built from this repository.
 RUN apk add --no-cache \
       acl \
       apparmor \
       apparmor-profiles-abstractions \
       apparmor-profiles-tunables \
-      apparmor-utils \
       attr \
-      btrfs-progs \
       ceph${CEPH_VERSION}-common \
-      ceph${CEPH_VERSION}-mount \
       dnsmasq \
       e2fsprogs \
       e2fsprogs-extra \
-      incus-feature \
-      incus-feature-client \
       iproute2 \
-      iptables \
-      lvm2 \
       lxcfs \
       nftables \
       rsync \
       shadow-subids \
-      squashfs-tools \
-      thin-provisioning-tools \
       util-linux-misc \
       xz \
+      so:libacl.so.1 \
+      so:libcap.so.2 \
+      so:libcowsql.so.0 \
+      so:libgcc_s.so.1 \
+      so:libintl.so.8 \
+      so:liblxc.so.1 \
+      so:libraft.so.0 \
+      so:libsqlite3.so.0 \
+      so:libudev.so.1 \
+      so:libuv.so.1 \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subuid \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subgid \
     && mkdir -p /var/lib/incus-lxcfs /var/log/incus
 
-# Replace the packaged binaries with the ones built from this repository, the
-# Alpine package is only kept for its runtime dependencies and support files.
-COPY --from=incus-build /out/incusd /out/incus /tmp/incus-build/
-RUN install -m0755 /tmp/incus-build/incusd "$(command -v incusd)" \
-    && install -m0755 /tmp/incus-build/incus "$(command -v incus)" \
-    && rm -rf /tmp/incus-build
+COPY --from=incus-build /out/incusd /usr/sbin/incusd
+COPY --from=incus-build /out/incus /usr/bin/incus
 
 COPY docker/alpine-novm/start.sh docker/alpine-novm/healthcheck.sh /usr/local/sbin/
 RUN chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh
