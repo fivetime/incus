@@ -513,13 +513,14 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	"volatile.last_state.agent": validate.IsAny,
 
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.storage_handover)
-	// Set on the source instance after a migration that handed its volumes over in
-	// place on shared remote storage; deleting the instance then leaves the volumes
-	// untouched as they are owned by the target server.
+	// State of the shared storage handover of the instance's volumes during a
+	// migration: "pending" while the handover is in flight, "committed" once the
+	// target server owns the volumes. In either state, deleting the instance
+	// leaves the volumes themselves untouched.
 	// ---
-	//  type: bool
-	//  shortdesc: Whether the instance's volumes were handed over on shared storage
-	"volatile.migration.storage_handover": validate.Optional(validate.IsBool),
+	//  type: string
+	//  shortdesc: State of the shared storage handover of the instance's volumes
+	"volatile.migration.storage_handover": validate.Optional(validate.IsOneOf("pending", "committed")),
 
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.rebalance.last_move)
 	//

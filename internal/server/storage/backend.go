@@ -2472,9 +2472,12 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 		return err
 	}
 
-	// When the volume was handed over to another server as part of a shared storage
-	// migration it is now owned by that server, so only the local records are removed.
-	handedOver := util.IsTrue(inst.LocalConfig()["volatile.migration.storage_handover"])
+	// When the volume was (or may have been) handed over to another server as part
+	// of a shared storage migration, only the local records are removed. The
+	// "pending" state also protects the volumes: it means a handover was in
+	// flight, and deleting the volumes of a possibly completed handover would
+	// destroy the target's data, whereas not deleting them at worst leaks them.
+	handedOver := inst.LocalConfig()["volatile.migration.storage_handover"] != ""
 
 	if volExists && !handedOver {
 		err = b.driver.DeleteVolume(vol, op)
@@ -3494,10 +3497,11 @@ func (b *backend) DeleteInstanceSnapshot(inst instance.Instance, op *operations.
 		return err
 	}
 
-	// When the parent volume was handed over to another server as part of a shared
-	// storage migration its snapshots now belong to that server too, so only the
-	// local records are removed.
-	handedOver := util.IsTrue(src.LocalConfig()["volatile.migration.storage_handover"])
+	// When the parent volume was (or may have been) handed over to another server
+	// as part of a shared storage migration its snapshots belong to that server
+	// too, so only the local records are removed. See DeleteInstance for why the
+	// "pending" state is also protected.
+	handedOver := src.LocalConfig()["volatile.migration.storage_handover"] != ""
 
 	if volExists && !handedOver {
 		if parentDBVol.Config["block.type"] == drivers.BlockVolumeTypeQcow2 {

@@ -6244,16 +6244,17 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		volSourceArgs.MultiSync = true
 	}
 
-	// Mark the storage as handed over before the handover starts, so that no
-	// failure can ever leave the target owning the volumes while this marker is
-	// missing (which would let a later deletion of the source instance delete
-	// the volumes in use on the target). The marker is cleared again if the
-	// migration fails; if even that fails the worst case is a leaked volume,
-	// never a double delete.
+	// Mark the storage handover as pending before it starts, so that no failure
+	// can ever leave the target owning the volumes while this marker is missing
+	// (which would let a later deletion of the source instance delete the
+	// volumes in use on the target). The marker is upgraded to "committed" once
+	// the target has confirmed the claim and cleared again if the migration
+	// fails; both states prevent the source's deletion from touching the
+	// volumes, so any failure at worst leaks them, it can never double delete.
 	if volSourceArgs.SharedStorage {
-		err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "true"})
+		err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "pending"})
 		if err != nil {
-			err = fmt.Errorf("Failed marking instance storage as handed over: %w", err)
+			err = fmt.Errorf("Failed marking instance storage handover as pending: %w", err)
 			op.Done(err)
 			return err
 		}
@@ -6565,6 +6566,18 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 			op.Done(err)
 			return err
+		}
+
+		if volSourceArgs.SharedStorage {
+			// The target confirmed the claim, record that the ownership transfer
+			// completed. A failure here fails the migration while keeping the
+			// pending marker, so the volumes stay protected either way.
+			err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "committed"})
+			if err != nil {
+				err = fmt.Errorf("Failed marking instance storage handover as committed: %w", err)
+				op.Done(err)
+				return err
+			}
 		}
 
 		op.Done(nil)

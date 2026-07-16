@@ -3303,9 +3303,10 @@ storage driver) no longer transfers any volume data.
 During the migration negotiation the source offers the identity of its remote
 storage backend. When the target sees the same backend through the same driver
 type, the target claims the existing RBD volumes in place and the source hands
-them over, marking the source instance with
-`volatile.migration.storage_handover` before the handover starts so that its
-subsequent deletion only removes the local records and leaves the volumes
+them over. The source instance tracks the handover through the
+`volatile.migration.storage_handover` state ("pending" while in flight,
+"committed" once the target owns the volumes, cleared on failure); in either
+state its deletion only removes the local records and leaves the volumes
 untouched. The driver types must match so that Incus-owned (`ceph`) and
 externally-owned (`cephext`) volumes can never be handed over across ownership
 semantics.

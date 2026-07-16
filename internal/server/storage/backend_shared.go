@@ -1,6 +1,10 @@
 package storage
 
 import (
+	"context"
+	"fmt"
+
+	"github.com/lxc/incus/v7/internal/server/db"
 	"github.com/lxc/incus/v7/internal/server/storage/drivers"
 )
 
@@ -36,4 +40,45 @@ func PoolSharedIdentity(pool Pool) (string, string) {
 	}
 
 	return fsid, config["ceph.osd.pool_name"]
+}
+
+// checkExternalVolumeClaimUnique returns an error when another volume in the
+// pool already claims the same externally managed image. Two claims of the
+// same image on one server would allow its filesystem to be used twice
+// concurrently, corrupting it. Cross-server exclusion is the external owner's
+// responsibility (e.g. Cinder attachment tracking).
+func checkExternalVolumeClaimUnique(pool Pool, projectName string, volumeName string, volumeConfig map[string]string) error {
+	imageName := volumeConfig["ceph.rbd.image_name"]
+	if imageName == "" {
+		return nil
+	}
+
+	p, ok := pool.(*backend)
+	if !ok {
+		return nil
+	}
+
+	var volumes []*db.StorageVolume
+	err := p.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
+		var err error
+		volumes, err = tx.GetStoragePoolVolumes(ctx, pool.ID(), false)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("Failed checking for existing claims of RBD image %q: %w", imageName, err)
+	}
+
+	for _, vol := range volumes {
+		if vol.Config["ceph.rbd.image_name"] != imageName {
+			continue
+		}
+
+		if vol.Project == projectName && vol.Name == volumeName {
+			continue // The volume being (re-)created itself.
+		}
+
+		return fmt.Errorf("RBD image %q is already claimed by volume %q in project %q", imageName, vol.Name, vol.Project)
+	}
+
+	return nil
 }

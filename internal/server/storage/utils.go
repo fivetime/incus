@@ -291,6 +291,15 @@ func VolumeDBCreate(pool Pool, projectName string, volumeName string, volumeDesc
 		return err
 	}
 
+	// A volume claiming an externally managed image must be its only claimant
+	// on this server.
+	if !snapshot {
+		err = checkExternalVolumeClaimUnique(pool, projectName, volumeName, vol.Config())
+		if err != nil {
+			return err
+		}
+	}
+
 	err = p.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		// Create the database entry for the storage volume.
 		if snapshot {

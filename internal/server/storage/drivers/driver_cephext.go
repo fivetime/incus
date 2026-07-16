@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/lxc/incus/v7/internal/instancewriter"
 	"github.com/lxc/incus/v7/internal/linux"
@@ -140,7 +141,39 @@ func (d *cephext) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		return fmt.Errorf("RBD image %q not found in the %q osd pool", vol.config["ceph.rbd.image_name"], d.config["ceph.osd.pool_name"])
 	}
 
-	return vol.EnsureMountPath(false)
+	// Refuse to claim an image that is already mapped on this host, it is in
+	// use through another claim or by something else entirely.
+	_, _, err = d.getRBDMappedDevPath(vol, false)
+	if err == nil {
+		return fmt.Errorf("RBD image %q is already mapped on this host", vol.config["ceph.rbd.image_name"])
+	}
+
+	err = vol.EnsureMountPath(false)
+	if err != nil {
+		return err
+	}
+
+	// Verify the claimed image is actually usable before accepting it, so that
+	// a wrong image fails the claim rather than the instance's first start: it
+	// must carry a mountable filesystem and, for container volumes, the
+	// expected top-level rootfs directory.
+	if vol.contentType == ContentTypeFS {
+		err = vol.MountTask(func(mountPath string, op *operations.Operation) error {
+			if vol.volType == VolumeTypeContainer {
+				rootfsInfo, err := os.Lstat(filepath.Join(mountPath, "rootfs"))
+				if err != nil || !rootfsInfo.IsDir() {
+					return fmt.Errorf("RBD image %q does not contain a top-level rootfs directory", vol.config["ceph.rbd.image_name"])
+				}
+			}
+
+			return nil
+		}, op)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // MountVolume refuses to bring an externally managed image into use when it is
