@@ -1,6 +1,7 @@
 package drivers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -8,11 +9,13 @@ import (
 	"os"
 
 	"github.com/lxc/incus/v7/internal/instancewriter"
+	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/server/backup"
 	localMigration "github.com/lxc/incus/v7/internal/server/migration"
 	"github.com/lxc/incus/v7/internal/server/operations"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/revert"
+	"github.com/lxc/incus/v7/shared/subprocess"
 	"github.com/lxc/incus/v7/shared/units"
 	"github.com/lxc/incus/v7/shared/validate"
 )
@@ -85,7 +88,23 @@ func (d *cephext) commonVolumeRules() map[string]func(value string) error {
 	//  condition: -
 	//  default: -
 	//  shortdesc: Name of the externally managed RBD image backing the volume
-	rules["ceph.rbd.image_name"] = validate.IsAny
+	rules["ceph.rbd.image_name"] = validate.Optional(func(value string) error {
+		// A plain image name only: snapshot ("@") and pool/namespace ("/")
+		// references or any other special characters must be rejected as the
+		// name ends up in rbd command lines and maps to exactly one image in
+		// the pool.
+		if len(value) > 255 {
+			return errors.New("RBD image name is too long")
+		}
+
+		for _, r := range value {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '_') {
+				return fmt.Errorf("Invalid character %q in RBD image name, only alphanumeric characters and \"-\", \".\", \"_\" are allowed", r)
+			}
+		}
+
+		return nil
+	})
 
 	return rules
 }
@@ -103,6 +122,15 @@ func (d *cephext) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		return errors.New(`Volumes require the "ceph.rbd.image_name" configuration key to refer to an existing RBD image`)
 	}
 
+	// Refuse image-backed creation loudly rather than silently returning a
+	// volume without the image's content: the claimed image must already
+	// contain a prepared filesystem. Fillers without a fingerprint (e.g. the
+	// empty rootfs structure filler) are safe to skip as the claimed image
+	// provides that content.
+	if filler != nil && filler.Fingerprint != "" {
+		return errors.New("Volumes on cephext pools cannot be created from an image, they claim an externally prepared RBD image instead")
+	}
+
 	volExists, err := d.HasVolume(vol)
 	if err != nil {
 		return err
@@ -113,6 +141,48 @@ func (d *cephext) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 	}
 
 	return vol.EnsureMountPath(false)
+}
+
+// MountVolume refuses to bring an externally managed image into use when it is
+// already in use elsewhere, then mounts it as usual.
+func (d *cephext) MountVolume(vol Volume, op *operations.Operation) error {
+	// The same image being used through two volumes at once, from this or any
+	// other server, would corrupt its filesystem. Any RBD watcher means the
+	// image is currently mapped somewhere; the only acceptable case is this
+	// volume's own existing mount (mount reference counting). This check is
+	// advisory (a concurrent claim can still race it), the authoritative
+	// exclusion is expected from the external owner's attachment tracking.
+	out, err := subprocess.RunCommand(
+		"rbd",
+		"--id", d.config["ceph.user.name"],
+		"--cluster", d.config["ceph.cluster_name"],
+		"--pool", d.config["ceph.osd.pool_name"],
+		"status",
+		d.getRBDVolumeName(vol, "", false),
+		"--format", "json")
+	if err != nil {
+		return fmt.Errorf("Failed checking RBD image status: %w", err)
+	}
+
+	var status struct {
+		Watchers []struct {
+			Address string `json:"address"`
+		} `json:"watchers"`
+	}
+
+	err = json.Unmarshal([]byte(out), &status)
+	if err != nil {
+		return fmt.Errorf("Failed parsing RBD image status: %w", err)
+	}
+
+	if len(status.Watchers) > 0 {
+		ownMount := len(status.Watchers) == 1 && vol.contentType == ContentTypeFS && linux.IsMountPoint(vol.MountPath())
+		if !ownMount {
+			return fmt.Errorf("RBD image %q is already in use (%d watcher(s))", vol.config["ceph.rbd.image_name"], len(status.Watchers))
+		}
+	}
+
+	return d.ceph.MountVolume(vol, op)
 }
 
 // DeleteVolume releases the externally managed RBD image, leaving it untouched.
@@ -171,7 +241,11 @@ func (d *cephext) RenameVolume(vol Volume, newVolName string, op *operations.Ope
 	return ErrNotSupported
 }
 
-// SetVolumeQuota refuses any size change, the image size is managed externally.
+// SetVolumeQuota never touches the RBD image itself as its size is managed by
+// the external owner. When the external owner has grown the image (e.g. a
+// Cinder volume extend), a quota request up to the image's actual size grows
+// the contained filesystem to fill the device; anything larger is refused as
+// the image must be extended through its owner first.
 func (d *cephext) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool, op *operations.Operation) error {
 	sizeBytes, err := units.ParseByteSizeString(size)
 	if err != nil {
@@ -182,7 +256,35 @@ func (d *cephext) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 		return nil
 	}
 
-	return ErrNotSupported
+	// Activate the volume to read the device's actual size.
+	ourMap, devPath, err := d.getRBDMappedDevPath(vol, true)
+	if err != nil {
+		return err
+	}
+
+	if ourMap {
+		defer func() { _ = d.rbdUnmapVolume(vol, true) }()
+	}
+
+	actualSizeBytes, err := BlockDiskSizeBytes(devPath)
+	if err != nil {
+		return fmt.Errorf("Error getting current size: %w", err)
+	}
+
+	if sizeBytes > actualSizeBytes {
+		return fmt.Errorf("Volume size can only be changed through the image's external owner: %w", ErrNotSupported)
+	}
+
+	// The device already has the requested capacity, grow the filesystem to
+	// fill it. Shrinking is never done as the device size is authoritative.
+	if vol.contentType == ContentTypeFS {
+		err = growFileSystem(vol.ConfigBlockFilesystem(), devPath, vol)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // BackupVolume is not supported on externally managed volumes.

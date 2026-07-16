@@ -26,8 +26,15 @@ device at instance creation time:
 
 Because the image is owned by the external system, all operations that would
 alter it or its snapshots behind the owner's back are refused: Incus-side
-snapshots, copies, backups, refreshes, renames and size changes are not
-supported. Size and snapshot management stay entirely with the external owner.
+snapshots, copies, backups, refreshes and renames are not supported and the
+RBD image is never resized. After the external owner has grown the image
+(e.g. a volume extend), setting the volume's `size` up to the image's actual
+size grows the contained filesystem to fill the device.
+
+Mounting a volume is refused while its image is in use elsewhere (it has
+active RBD watchers from this or another server), as concurrent use of the
+same filesystem would corrupt it. This check is advisory; authoritative
+exclusion is expected from the external owner's attachment tracking.
 
 Shared storage migration handover is supported: when two standalone servers
 see the same Ceph cluster and OSD pool, instances backed by claimed volumes
