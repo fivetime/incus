@@ -3293,3 +3293,19 @@ volumes. Setting a distinct prefix on each server (typically the server name)
 gives every server its own image cache within the shared pool.
 
 The key can only be set at pool creation time and is member-specific.
+
+## `migration_shared_ceph_storage`
+
+Server-to-server migration between two standalone servers whose storage pools
+are backed by the exact same Ceph RBD backend (same cluster fsid and OSD pool)
+no longer transfers any volume data.
+
+During the migration negotiation the source offers the identity of its remote
+storage backend. When the target sees the same backend, the target claims the
+existing RBD volumes in place and the source hands them over, marking the
+source instance with `volatile.migration.storage_handover` so that its
+subsequent deletion only removes the local records and leaves the volumes
+untouched.
+
+The handover is only negotiated for stopped instances on non-live,
+non-refresh migrations.

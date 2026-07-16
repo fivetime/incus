@@ -512,6 +512,15 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	//  shortdesc: Instance agent state as of last host shutdown
 	"volatile.last_state.agent": validate.IsAny,
 
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.storage_handover)
+	// Set on the source instance after a migration that handed its volumes over in
+	// place on shared remote storage; deleting the instance then leaves the volumes
+	// untouched as they are owned by the target server.
+	// ---
+	//  type: bool
+	//  shortdesc: Whether the instance's volumes were handed over on shared storage
+	"volatile.migration.storage_handover": validate.Optional(validate.IsBool),
+
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.rebalance.last_move)
 	//
 	// ---

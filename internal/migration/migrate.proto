@@ -97,6 +97,14 @@ message MigrationHeader {
 	optional btrfsFeatures			btrfsFeatures 		= 12;
 	optional uint32				indexHeaderVersion	= 13;
 	repeated DependentVolume		dependentVolumes        = 14;
+
+	/* Shared remote storage negotiation: the source offers the identity of its
+	 * remote storage backend (Ceph cluster fsid and OSD pool); the target replies
+	 * with sharedStorage=true when it sees the exact same backend, in which case
+	 * no volume data is transferred and the target claims the existing volume. */
+	optional string				cephFsid		= 15;
+	optional string				cephPool		= 16;
+	optional bool				sharedStorage		= 17;
 }
 
 message MigrationControl {

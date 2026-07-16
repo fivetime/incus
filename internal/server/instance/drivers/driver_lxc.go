@@ -6145,6 +6145,18 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		}
 	}
 
+	// Offer the identity of the remote shared storage backend, if any, so that a
+	// target server seeing the exact same backend can claim the volumes in place
+	// instead of having the data sent over. Only offered for a stopped instance
+	// as the volume handover requires the source to no longer write to it.
+	if !clusterMove && !storageMove && !args.Live && !d.IsRunning() {
+		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
+		if fsid != "" {
+			offerHeader.CephFsid = proto.String(fsid)
+			offerHeader.CephPool = proto.String(osdPool)
+		}
+	}
+
 	// Send offer to target.
 	d.logger.Debug("Sending migration offer to target")
 	err = args.ControlSend(offerHeader)
@@ -6199,6 +6211,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		Info:               &localMigration.Info{Config: srcConfig},
 		ClusterMove:        clusterMove,
 		StorageMove:        storageMove,
+		SharedStorage:      offerHeader.GetCephFsid() != "" && respHeader.GetSharedStorage(),
 		DependentVolumes:   dependentVolumes,
 	}
 
@@ -6524,6 +6537,15 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 			return err
 		}
 
+		if volSourceArgs.SharedStorage {
+			// The volumes are now owned by the target server. Mark the instance so
+			// that its deletion no longer touches the storage.
+			err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "true"})
+			if err != nil {
+				d.logger.Error("Failed marking instance storage as handed over", logger.Ctx{"err": err})
+			}
+		}
+
 		op.Done(nil)
 
 		d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceMigrated.Event(d, nil))
@@ -6836,6 +6858,18 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		respHeader.Predump = proto.Bool(false)
 	}
 
+	// If the source offered the identity of its remote shared storage backend and this
+	// server sees the exact same backend, agree to claim the volumes in place instead
+	// of receiving their data. The source only makes the offer for a stopped instance.
+	sharedStorage := false
+	if offerHeader.GetCephFsid() != "" && offerHeader.Criu == nil && !clusterMove && !args.Refresh && !args.Live {
+		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
+		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() {
+			sharedStorage = true
+			respHeader.SharedStorage = proto.Bool(true)
+		}
+	}
+
 	// Get rsync options from sender, these are passed into mySink function as part of
 	// MigrationSinkArgs below.
 	rsyncFeatures := respHeader.GetRsyncFeaturesSlice()
@@ -6979,6 +7013,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			VolumeOnly:            !args.Snapshots,
 			ClusterMoveSourceName: args.ClusterMoveSourceName,
 			StoragePool:           args.StoragePool,
+			SharedStorage:         sharedStorage,
 			DependentVolumes:      dependentVolumes,
 		}
 
@@ -7041,8 +7076,9 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		isRemoteClusterMove := clusterMove && pool.Driver().Info().Remote
 
 		// Only delete all instance volumes on error if the pool volume creation has succeeded to
-		// avoid deleting an existing conflicting volume.
-		if !volTargetArgs.Refresh && !isRemoteClusterMove {
+		// avoid deleting an existing conflicting volume. Volumes claimed in place on shared
+		// storage are still owned by the source server and must not be deleted either.
+		if !volTargetArgs.Refresh && !isRemoteClusterMove && !sharedStorage {
 			reverter.Add(func() {
 				snapshots, _ := d.Snapshots()
 				snapshotCount := len(snapshots)

@@ -539,7 +539,20 @@ func (d *ceph) CreateVolumeFromCopy(vol Volume, srcVol Volume, copySnapshots boo
 
 // CreateVolumeFromMigration creates a volume being sent via a migration.
 func (d *ceph) CreateVolumeFromMigration(vol Volume, conn io.ReadWriteCloser, volTargetArgs localMigration.VolumeTargetArgs, preFiller *VolumeFiller, op *operations.Operation) error {
-	if volTargetArgs.ClusterMoveSourceName != "" && volTargetArgs.StoragePool == "" {
+	if volTargetArgs.SharedStorage {
+		// The volume already exists in the shared OSD pool, claim it in place
+		// without receiving any data.
+		volExists, err := d.HasVolume(vol)
+		if err != nil {
+			return err
+		}
+
+		if !volExists {
+			return fmt.Errorf("Volume %q not found on shared storage", d.getRBDVolumeName(vol, "", true))
+		}
+	}
+
+	if volTargetArgs.SharedStorage || (volTargetArgs.ClusterMoveSourceName != "" && volTargetArgs.StoragePool == "") {
 		err := vol.EnsureMountPath(false)
 		if err != nil {
 			return err
@@ -1557,6 +1570,10 @@ func (d *ceph) RenameVolume(vol Volume, newVolName string, op *operations.Operat
 func (d *ceph) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArgs *localMigration.VolumeSourceArgs, op *operations.Operation) error {
 	if volSrcArgs.ClusterMove && !volSrcArgs.StorageMove {
 		return nil // When performing a cluster member move don't do anything on the source member.
+	}
+
+	if volSrcArgs.SharedStorage {
+		return nil // The target server sees the same OSD pool and claims the volume in place, don't send anything.
 	}
 
 	// Handle simple rsync and block_and_rsync through generic.

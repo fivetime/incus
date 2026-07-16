@@ -75,6 +75,7 @@ type VolumeSourceArgs struct {
 	VolumeOnly         bool
 	ClusterMove        bool
 	StorageMove        bool
+	SharedStorage      bool // Source and target negotiated the same remote storage backend; skip data transfer.
 	DependentVolumes   []DependentVolumeArgs
 }
 
@@ -95,6 +96,7 @@ type VolumeTargetArgs struct {
 	VolumeOnly            bool
 	ClusterMoveSourceName string
 	StoragePool           string
+	SharedStorage         bool // Source and target negotiated the same remote storage backend; claim the existing volume.
 	DependentVolumes      []DependentVolumeArgs
 }
 

@@ -2075,7 +2075,9 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 	}
 
 	// Check for inconsistencies between database and storage before continuing.
-	if dbVol == nil && volExists {
+	// When claiming a volume on negotiated shared storage the volume is expected
+	// to exist on storage without any local database record yet.
+	if dbVol == nil && volExists && !args.SharedStorage {
 		return errors.New("Volume already exists on storage but not in database")
 	}
 
@@ -2093,11 +2095,15 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 	isRemoteClusterMove := args.ClusterMoveSourceName != "" && b.driver.Info().Remote
 
 	if !args.Refresh {
-		if volExists {
+		if volExists && !args.SharedStorage {
 			if !isRemoteClusterMove {
 				return errors.New("Cannot create volume, already exists on migration target storage")
 			}
 		} else {
+			// On negotiated shared storage the volume data already exists in the
+			// shared pool but this server has no record of it, so the database
+			// entry is still created (unlike a cluster move where the shared
+			// database already holds it).
 			// Validate config and create database entry for new storage volume if not refreshing.
 			// Strip unsupported config keys (in case the export was made from a different type of storage pool).
 			err = VolumeDBCreate(b, inst.Project().Name, inst.Name(), volumeDescription, volType, false, vol.Config(), inst.CreationDate(), time.Time{}, contentType, true, true)
@@ -2188,7 +2194,7 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 
 	var preFiller drivers.VolumeFiller
 
-	if !args.Refresh && !isRemoteClusterMove {
+	if !args.Refresh && !isRemoteClusterMove && !args.SharedStorage {
 		// If the negotiated migration method is rsync and the instance's base image is
 		// already on the host then setup a pre-filler that will unpack the local image
 		// to try and speed up the rsync of the incoming volume by avoiding the need to
@@ -2245,7 +2251,9 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 		}
 	}
 
-	if !isRemoteClusterMove {
+	if !isRemoteClusterMove && !args.SharedStorage {
+		// Not added for a shared storage claim either: deleting the instance would
+		// delete the claimed volume, which is still in use on the source server.
 		reverter.Add(func() { _ = b.DeleteInstance(inst, op) })
 	}
 
@@ -2464,7 +2472,11 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 		return err
 	}
 
-	if volExists {
+	// When the volume was handed over to another server as part of a shared storage
+	// migration it is now owned by that server, so only the local records are removed.
+	handedOver := util.IsTrue(inst.LocalConfig()["volatile.migration.storage_handover"])
+
+	if volExists && !handedOver {
 		err = b.driver.DeleteVolume(vol, op)
 		if err != nil {
 			return fmt.Errorf("Error deleting storage volume: %w", err)
@@ -3482,7 +3494,12 @@ func (b *backend) DeleteInstanceSnapshot(inst instance.Instance, op *operations.
 		return err
 	}
 
-	if volExists {
+	// When the parent volume was handed over to another server as part of a shared
+	// storage migration its snapshots now belong to that server too, so only the
+	// local records are removed.
+	handedOver := util.IsTrue(src.LocalConfig()["volatile.migration.storage_handover"])
+
+	if volExists && !handedOver {
 		if parentDBVol.Config["block.type"] == drivers.BlockVolumeTypeQcow2 {
 			parentVol := b.GetVolume(volType, contentType, parentStorageName, parentDBVol.Config)
 			rootDiskName, _, err := internalInstance.GetRootDiskDevice(inst.ExpandedDevices().CloneNative())
