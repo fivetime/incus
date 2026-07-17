@@ -24,6 +24,7 @@ RUN apk add --no-cache \
       gcc \
       gettext-dev \
       go \
+      libapparmor-dev \
       libcap-dev \
       libuv-dev \
       linux-headers \
@@ -46,6 +47,13 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
     go build -trimpath -ldflags "-s -w" -o /out/incusd ./cmd/incusd \
     && go build -trimpath -ldflags "-s -w" -o /out/incus ./cmd/incus
 
+# Build the minimal aa-exec replacement (see aa-exec.c). Incus needs aa-exec to
+# unpack images under a restricted AppArmor profile, and Alpine only ships it in
+# the heavyweight apparmor-utils package (python3/perl/bash), which this image
+# omits. Compiled here to reuse the toolchain already present in this stage.
+RUN cc -O2 -Wall -Wextra docker/alpine-novm/aa-exec.c -lapparmor -o /out/aa-exec \
+    && strip /out/aa-exec
+
 FROM alpine:${ALPINE_VERSION}
 
 # Newest Ceph packaged by Alpine edge. The ceph/rbd CLI is wire-compatible with
@@ -55,9 +63,11 @@ ARG CEPH_VERSION=19
 
 # Kept minimal for the Nova/ceph-RBD scenario: container instances only, RBD
 # storage only (no btrfs/lvm/cephfs tooling), nftables only (no iptables) and
-# no apparmor-utils (incusd only execs apparmor_parser, shipped in apparmor).
-# incusd refuses to start without ip, rsync, setfattr, tar (GNU), unsquashfs
-# and xz (see cmd/incusd/main_daemon.go), so those must always stay.
+# no apparmor-utils. incusd execs apparmor_parser (from apparmor) and aa-exec;
+# the latter only ships in apparmor-utils (python3/perl/bash), so a minimal
+# libapparmor-based aa-exec is built in the incus-build stage and copied in
+# below. incusd also refuses to start without ip, rsync, setfattr, tar (GNU),
+# unsquashfs and xz (see cmd/incusd/main_daemon.go), so those must always stay.
 # The incusd runtime libraries are pulled in through their soname (so:...)
 # instead of installing the Alpine incus package, whose binaries would only
 # get shadowed by the ones built from this repository.
@@ -81,6 +91,7 @@ RUN apk add --no-cache \
       util-linux-misc \
       xz \
       so:libacl.so.1 \
+      so:libapparmor.so.1 \
       so:libcap.so.2 \
       so:libcowsql.so.0 \
       so:libgcc_s.so.1 \
@@ -96,6 +107,7 @@ RUN apk add --no-cache \
 
 COPY --from=incus-build /out/incusd /usr/sbin/incusd
 COPY --from=incus-build /out/incus /usr/bin/incus
+COPY --from=incus-build /out/aa-exec /usr/local/bin/aa-exec
 
 COPY docker/alpine-novm/start.sh docker/alpine-novm/healthcheck.sh /usr/local/sbin/
 RUN chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh
