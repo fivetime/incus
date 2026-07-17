@@ -1,0 +1,3 @@
+docker/alpine-novm/*.sh text eol=lf
+docker/alpine-novm/Dockerfile text eol=lf
+.github/workflows/build-novm.yml text eol=lf
