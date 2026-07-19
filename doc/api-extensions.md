@@ -3343,3 +3343,10 @@ resolves the device major and minor numbers from the Incus-managed host device
 node and clears the corresponding `io.max` entries when the device is removed.
 Limits are applied both during instance/device start and when an optional
 device appears later through the Unix-device event handler.
+
+## `migration_stateful_shifted_root`
+
+This indicates that LXC instances with `migration.stateful=true` use an
+on-disk shifted root file system and disable the source console PTY for CRIU
+migration. This allows a destination restore to use the same UID/GID mapping
+without relying on an idmapped root mount.

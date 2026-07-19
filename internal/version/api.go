@@ -560,6 +560,7 @@ var APIExtensions = []string{
 	"migration_shared_ceph_storage",
 	"storage_driver_cephext",
 	"unix_block_limits",
+	"migration_stateful_shifted_root",
 }
 
 // APIExtensionsCount returns the number of available API extensions.
