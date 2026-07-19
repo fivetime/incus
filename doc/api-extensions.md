@@ -3350,3 +3350,17 @@ This indicates that LXC instances with `migration.stateful=true` use an
 on-disk shifted root file system and disable the source console PTY for CRIU
 migration. This allows a destination restore to use the same UID/GID mapping
 without relying on an idmapped root mount.
+
+## `migration_live_shared_cephext_storage`
+
+This extends CRIU container migration so that a root volume claimed through
+the `cephext` driver can be handed over without copying data. Both servers
+must expose the same Ceph FSID and OSD pool through `cephext`.
+
+The source completes its final CRIU checkpoint and releases its root-volume
+mount before the target claims and restores the container. On failure, the
+source restores its checkpoint only when the handover has not started or the
+target explicitly confirms that its claim was released. An ambiguous outcome
+leaves the source stopped for operator reconciliation. This ordering prevents
+an externally owned single-writer file system from being mounted on both
+servers at once.

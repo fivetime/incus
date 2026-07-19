@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -6164,13 +6165,16 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 	// Offer the identity of the remote shared storage backend, if any, so that a
 	// target server seeing the exact same backend can claim the volumes in place
-	// instead of having the data sent over. Only offered for a stopped instance
-	// as the volume handover requires the source to no longer write to it.
+	// instead of having the data sent over. A normal handover requires a stopped
+	// instance. A live handover is restricted to externally owned cephext roots;
+	// that path checkpoints and unmounts the source before the target can claim.
 	// The driver type is included so that ownership semantics can never get
 	// mixed up: "ceph" volumes are owned by Incus while "cephext" volumes are
 	// owned by an external system, so a handover is only valid between pools
 	// using the same driver.
-	if !clusterMove && !storageMove && !args.Live && !d.IsRunning() {
+	stoppedSharedHandover := !args.Live && !d.IsRunning()
+	liveExternalHandover := args.Live && pool.Driver().Info().Name == "cephext"
+	if !clusterMove && !storageMove && (stoppedSharedHandover || liveExternalHandover) {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid != "" {
 			offerHeader.CephFsid = proto.String(fsid)
@@ -6236,6 +6240,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		SharedStorage:      offerHeader.GetCephFsid() != "" && respHeader.GetSharedStorage(),
 		DependentVolumes:   dependentVolumes,
 	}
+	liveSharedStorage := args.Live && volSourceArgs.SharedStorage && pool.Driver().Info().Name == "cephext"
 
 	// Only send the snapshots that the target requests when refreshing.
 	if respHeader.GetRefresh() {
@@ -6278,6 +6283,8 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 	}
 
 	g, ctx := errgroup.WithContext(context.Background())
+	var targetSharedStorageReleased atomic.Bool
+	var liveSharedHandoverStarted atomic.Bool
 
 	// Start control connection monitor.
 	g.Go(func() error {
@@ -6293,6 +6300,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 			if err != nil {
 				err = fmt.Errorf("Error reading migration control target: %w", err)
 			} else if !resp.GetSuccess() {
+				targetSharedStorageReleased.Store(resp.GetSharedStorageReleased())
 				err = fmt.Errorf("Error from migration control target: %s", resp.GetMessage())
 			}
 
@@ -6322,6 +6330,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 	// Don't defer close this one as its needed potentially after this function has ended.
 	dumpSuccess := make(chan error, 1)
+	liveSharedCheckpointDir := ""
 
 	g.Go(func() error {
 		d.logger.Debug("Migrate send transfer started")
@@ -6329,14 +6338,16 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 		var err error
 
-		d.logger.Debug("Starting storage migration phase")
+		if !liveSharedStorage {
+			d.logger.Debug("Starting storage migration phase")
 
-		err = pool.MigrateInstance(d, filesystemConn, volSourceArgs, d.op)
-		if err != nil {
-			return err
+			err = pool.MigrateInstance(d, filesystemConn, volSourceArgs, d.op)
+			if err != nil {
+				return err
+			}
+
+			d.logger.Debug("Finished storage migration phase")
 		}
-
-		d.logger.Debug("Finished storage migration phase")
 
 		if args.Live {
 			d.logger.Debug("Starting live migration phase")
@@ -6359,6 +6370,77 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 			checkpointDir, err := os.MkdirTemp("", "incus_checkpoint_")
 			if err != nil {
 				return err
+			}
+
+			if liveSharedStorage {
+				liveSharedCheckpointDir = checkpointDir
+
+				preDumpDir := ""
+				if respHeader.GetPredump() {
+					d.logger.Debug("The other side supports pre-copy for live shared storage")
+					final := false
+					preDumpCounter := 0
+					for !final {
+						preDumpCounter++
+						final = preDumpCounter >= maxDumpIterations
+						dumpDir := fmt.Sprintf("%03d", preDumpCounter)
+						loopArgs := preDumpLoopArgs{
+							stateConn:     stateConn,
+							checkpointDir: checkpointDir,
+							bwlimit:       rsyncBwlimit,
+							preDumpDir:    preDumpDir,
+							dumpDir:       dumpDir,
+							final:         final,
+							rsyncFeatures: rsyncFeatures,
+						}
+
+						final, err = d.migrateSendPreDumpLoop(&loopArgs)
+						if err != nil {
+							return err
+						}
+
+						preDumpDir = dumpDir
+					}
+				}
+
+				// A shared external root must be fully released before the
+				// target can claim it. Keep this checkpoint until the target
+				// restore succeeds so a failed migration can restore locally.
+				criuMigrationArgs := instance.CriuMigrationArgs{
+					Cmd:          liblxc.MIGRATE_DUMP,
+					Stop:         true,
+					ActionScript: false,
+					PreDumpDir:   preDumpDir,
+					DumpDir:      "final",
+					StateDir:     checkpointDir,
+					Function:     "migration",
+				}
+				err = d.migrate(&criuMigrationArgs)
+				if err != nil {
+					return err
+				}
+
+				err = d.unmount()
+				if err != nil {
+					return fmt.Errorf("Failed releasing source root volume after CRIU checkpoint: %w", err)
+				}
+
+				ctName, _, _ := api.GetParentAndSnapshotName(d.Name())
+				err = rsync.Send(ctName, internalUtil.AddSlash(checkpointDir), stateConn, nil, rsyncFeatures, rsyncBwlimit, d.state.OS.ExecPath)
+				if err != nil {
+					return err
+				}
+
+				// The target filesystem receiver has waited without claiming
+				// the volume. Trigger handover only after source unmount.
+				liveSharedHandoverStarted.Store(true)
+				err = pool.MigrateInstance(d, filesystemConn, volSourceArgs, d.op)
+				if err != nil {
+					return err
+				}
+
+				d.logger.Debug("Finished live shared storage handover phase")
+				return nil
 			}
 
 			if liblxc.RuntimeLiblxcVersionAtLeast(liblxc.Version(), 2, 0, 4) {
@@ -6559,7 +6641,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		// Wait for routines to finish and collect first error.
 		err := g.Wait()
 
-		if args.Live {
+		if args.Live && !liveSharedStorage {
 			restoreSuccess <- err == nil
 
 			if err == nil {
@@ -6571,6 +6653,31 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		}
 
 		if err != nil {
+			canRestoreLiveShared := liveSharedCheckpointDir != "" &&
+				(!liveSharedHandoverStarted.Load() || targetSharedStorageReleased.Load())
+			if canRestoreLiveShared {
+				recoveryArgs := instance.CriuMigrationArgs{
+					Cmd:          liblxc.MIGRATE_RESTORE,
+					StateDir:     liveSharedCheckpointDir,
+					Function:     "migration",
+					Stop:         false,
+					ActionScript: false,
+					DumpDir:      "final",
+				}
+				recoveryErr := d.migrate(&recoveryArgs)
+				if recoveryErr != nil {
+					err = errors.Join(err, fmt.Errorf("Failed restoring source after live shared storage migration failure: %w", recoveryErr))
+				} else {
+					_ = os.RemoveAll(liveSharedCheckpointDir)
+					markerErr := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": ""})
+					if markerErr != nil {
+						err = errors.Join(err, fmt.Errorf("Failed clearing storage handover marker after restoring source: %w", markerErr))
+					}
+				}
+			} else if liveSharedCheckpointDir != "" {
+				d.logger.Error("Not restoring source after failed live shared storage migration because the target did not confirm releasing its claim")
+			}
+
 			if volSourceArgs.SharedStorage {
 				// The migration failed from this server's point of view, but the
 				// target may still have completed its claim of the volumes (e.g.
@@ -6597,6 +6704,10 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				op.Done(err)
 				return err
 			}
+		}
+
+		if liveSharedCheckpointDir != "" {
+			_ = os.RemoveAll(liveSharedCheckpointDir)
 		}
 
 		op.Done(nil)
@@ -6913,12 +7024,15 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 	// If the source offered the identity of its remote shared storage backend and this
 	// server sees the exact same backend through the same driver type, agree to claim
-	// the volumes in place instead of receiving their data. The source only makes the
-	// offer for a stopped instance. The driver type comparison keeps Incus-owned
+	// the volumes in place instead of receiving their data. Stateful live handover
+	// is restricted to cephext, whose source releases the externally owned root
+	// before this receiver claims it. The driver type comparison keeps Incus-owned
 	// ("ceph") and externally-owned ("cephext") volumes from ever getting handed
 	// over across ownership semantics.
 	sharedStorage := false
-	if offerHeader.GetCephFsid() != "" && offerHeader.Criu == nil && !clusterMove && !args.Refresh && !args.Live {
+	stoppedSharedHandover := offerHeader.Criu == nil && !args.Live
+	liveExternalHandover := args.Live && offerHeader.GetCriu() == migration.CRIUType_CRIU_RSYNC && pool.Driver().Info().Name == "cephext"
+	if offerHeader.GetCephFsid() != "" && !clusterMove && !args.Refresh && (stoppedSharedHandover || liveExternalHandover) {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() && pool.Driver().Info().Name == offerHeader.GetCephDriver() {
 			sharedStorage = true
@@ -6956,6 +7070,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	defer reverter.Fail()
 
 	g, ctx := errgroup.WithContext(context.Background())
+	var liveSharedStorageClaimed atomic.Bool
 
 	// Start control connection monitor.
 	g.Go(func() error {
@@ -7129,6 +7244,10 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			return fmt.Errorf("Failed creating instance on target: %w", err)
 		}
 
+		if sharedStorage && args.Live {
+			liveSharedStorageClaimed.Store(true)
+		}
+
 		isRemoteClusterMove := clusterMove && pool.Driver().Info().Remote
 
 		// Only delete all instance volumes on error if the pool volume creation has succeeded to
@@ -7281,10 +7400,28 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		// Wait for all routines to finish and collect the first error that occurred.
 		if ctx.Err() != nil {
 			err := g.Wait()
+			sharedStorageReleased := !liveSharedStorageClaimed.Load()
+
+			// A failed live cephext receive must release its local claim before
+			// the source may safely restore the checkpoint. Never claim release
+			// if the target is running or the cleanup did not fully succeed.
+			if sharedStorage && args.Live && pool.Driver().Info().Name == "cephext" && liveSharedStorageClaimed.Load() {
+				if d.IsRunning() {
+					err = errors.Join(err, errors.New("Target instance is running; shared storage claim was not released"))
+				} else {
+					releaseErr := pool.DeleteInstance(d, nil)
+					if releaseErr != nil {
+						err = errors.Join(err, fmt.Errorf("Failed releasing target shared storage claim: %w", releaseErr))
+					} else {
+						sharedStorageReleased = true
+					}
+				}
+			}
 
 			// Send failure response to source.
 			msg := migration.MigrationControl{
-				Success: proto.Bool(err == nil),
+				Success:               proto.Bool(err == nil),
+				SharedStorageReleased: proto.Bool(sharedStorageReleased),
 			}
 
 			if err != nil {

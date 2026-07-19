@@ -116,6 +116,9 @@ message MigrationControl {
 
 	/* optional failure message if sending a failure */
 	optional string		message		= 2;
+
+	/* confirms that a failed target released any shared storage claim */
+	optional bool		sharedStorageReleased = 3;
 }
 
 message MigrationSync {
