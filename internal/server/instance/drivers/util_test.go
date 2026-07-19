@@ -34,6 +34,17 @@ func TestRoundToBlockSize(t *testing.T) {
 	require.Equal(t, int64(0), value)
 }
 
+func TestCRIUStateUnshiftSkipper(t *testing.T) {
+	require.ErrorIs(
+		t,
+		criuStateUnshiftSkipper("", "", nil, -1, -1),
+		errCRIUStateOwnerNotShifted,
+	)
+	require.NoError(t, criuStateUnshiftSkipper("", "", nil, 0, 0))
+	require.NoError(t, criuStateUnshiftSkipper("", "", nil, 0, -1))
+	require.NoError(t, criuStateUnshiftSkipper("", "", nil, -1, 0))
+}
+
 // Test memoryConfigSectionToMap.
 func TestMemoryConfigSectionToMap(t *testing.T) {
 	result := memoryConfigSectionToMap(

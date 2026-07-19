@@ -7229,6 +7229,17 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 			d.logger.Debug("Done receiving final dump rsync")
 
+			// CRIU writes most images as the outer daemon's root user, but
+			// some namespace-owned images retain the source container's
+			// shifted IDs. Normalize only those shifted owners before
+			// migrate() applies the target container's idmap to the tree.
+			if len(srcIdmap.Entries) > 0 {
+				err = srcIdmap.UnshiftPath(imagesDir, criuStateUnshiftSkipper)
+				if err != nil {
+					return fmt.Errorf("Failed normalizing CRIU state ownership: %w", err)
+				}
+			}
+
 			// Wait until filesystem transfer is done before starting final state sync and restore.
 			<-fsTransferDone
 
@@ -7312,6 +7323,16 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 }
 
 // Migrate migrates the instance to another node.
+var errCRIUStateOwnerNotShifted = errors.New("CRIU state owner is not source-idmapped")
+
+func criuStateUnshiftSkipper(_ string, _ string, _ os.FileInfo, newuid int64, newgid int64) error {
+	if newuid < 0 && newgid < 0 {
+		return errCRIUStateOwnerNotShifted
+	}
+
+	return nil
+}
+
 func (d *lxc) migrate(args *instance.CriuMigrationArgs) error {
 	ctxMap := logger.Ctx{
 		"created":      d.creationDate,
