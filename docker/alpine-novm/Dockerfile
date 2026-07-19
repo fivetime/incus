@@ -86,6 +86,40 @@ RUN apk add --no-cache \
     && make -C /build/criu -j"$(nproc)" criu WERROR=0 \
     && /build/criu/criu/criu --version
 
+FROM alpine:${ALPINE_VERSION} AS lxc-build
+
+ARG LXC_COMMIT=e4415af07e3ec291205bc828e2b4e8141f91a499
+
+RUN apk add --no-cache \
+      build-base \
+      dbus-dev \
+      git \
+      libapparmor-dev \
+      libcap-dev \
+      libseccomp-dev \
+      linux-headers \
+      meson \
+      openssl-dev \
+      samurai \
+      util-linux-dev \
+    && git clone --filter=blob:none https://github.com/lxc/lxc.git /build/lxc \
+    && git -C /build/lxc checkout --detach "${LXC_COMMIT}"
+
+COPY docker/alpine-novm/lxc-restore-finalize-cgroups.patch /tmp/lxc-restore-finalize-cgroups.patch
+RUN git -C /build/lxc apply /tmp/lxc-restore-finalize-cgroups.patch \
+    && meson setup /build/lxc/build /build/lxc \
+      --prefix=/usr \
+      -Dtests=false \
+      -Dexamples=false \
+      -Dman=false \
+      -Dinit-script=openrc \
+      -Ddistrosysconfdir=/etc \
+      -Dselinux=false \
+    && ninja -C /build/lxc/build liblxc.so.1.9.0 \
+    && ldd /build/lxc/build/liblxc.so.1.9.0 \
+    && ! ldd /build/lxc/build/liblxc.so.1.9.0 | grep -q "not found" \
+    && strings /build/lxc/build/liblxc.so.1.9.0 | grep -q "apparmor"
+
 FROM alpine:${ALPINE_VERSION}
 
 # Newest Ceph packaged by Alpine edge. The ceph/rbd CLI is wire-compatible with
@@ -124,6 +158,7 @@ RUN apk add --no-cache \
       libbsd \
       libnet \
       libnl3 \
+      lxc-libs \
       lxcfs \
       lz4-libs \
       nftables \
@@ -147,13 +182,20 @@ RUN apk add --no-cache \
       so:libuv.so.1 \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subuid \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subgid \
-    && mkdir -p /var/lib/incus-lxcfs /var/log/incus
+    && mkdir -p /etc/criu /var/lib/incus-lxcfs /var/log/incus \
+    && printf '%s\n' 'enable-external-masters' > /etc/criu/default.conf
 
 COPY --from=incus-build /out/incusd /usr/sbin/incusd
 COPY --from=incus-build /out/incus /usr/bin/incus
 COPY --from=incus-build /out/aa-exec /usr/local/bin/aa-exec
 COPY --from=criu-build /build/criu/criu/criu /usr/local/sbin/criu
-RUN criu --version \
+COPY --from=lxc-build /build/lxc/build/liblxc.so.1.9.0 /usr/lib/liblxc.so.1.9.0
+RUN test "$(incusd --version)" = "7.2" \
+    && criu --version \
+    && tar --help 2>&1 | grep -q -- "--no-unquote" \
+    && ! ldd /usr/sbin/incusd | grep -q "not found" \
+    && ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found" \
+    && strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor" \
     && ! ldd /usr/local/sbin/criu | grep -q "not found"
 
 COPY docker/alpine-novm/start.sh docker/alpine-novm/healthcheck.sh /usr/local/sbin/

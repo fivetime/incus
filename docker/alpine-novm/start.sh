@@ -40,6 +40,10 @@ for command_name in aa-exec apparmor_parser criu incus incusd ip6tables-legacy-r
   require_command "$command_name"
 done
 
+[ -r /etc/criu/default.conf ] || fail "CRIU default configuration is missing"
+[ "$(sed -n '/^[[:space:]]*#/d; /^[[:space:]]*$/d; p' /etc/criu/default.conf)" = "enable-external-masters" ] \
+  || fail "CRIU must enable external masters for stateful migration of shared mounts"
+
 grep -q '^root:[0-9][0-9]*:[0-9][0-9]*$' /etc/subuid || fail "A root subordinate UID range is required"
 grep -q '^root:[0-9][0-9]*:[0-9][0-9]*$' /etc/subgid || fail "A root subordinate GID range is required"
 
