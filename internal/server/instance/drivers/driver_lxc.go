@@ -6434,6 +6434,21 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					Function:     "migration",
 				}
 				err = d.migrate(&criuMigrationArgs)
+				if err != nil && preDumpDir != "" && d.IsRunning() {
+					// A process created after the last pre-dump can leave CRIU
+					// without a matching parent page image. Retry the final
+					// checkpoint once without incremental parents. The source
+					// is still running here, so no storage handover has begun.
+					d.logger.Warn("Incremental final CRIU dump failed, retrying a full final dump", logger.Ctx{"err": err})
+					removeErr := os.RemoveAll(filepath.Join(checkpointDir, criuMigrationArgs.DumpDir))
+					if removeErr != nil {
+						return errors.Join(err, fmt.Errorf("Failed removing incomplete final CRIU dump: %w", removeErr))
+					}
+
+					criuMigrationArgs.PreDumpDir = ""
+					err = d.migrate(&criuMigrationArgs)
+				}
+
 				if err != nil {
 					return err
 				}
