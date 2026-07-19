@@ -1884,7 +1884,7 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 	// liblxc's CRIU restore path mounts the rootfs before it can create an
 	// idmapped mount. Keep stateful container rootfs ownership shifted on
 	// disk so restore sees the same UID/GID mapping as a normal start.
-	idmapType := idmap.StorageTypeNone
+	var idmapType idmap.StorageType = idmap.StorageTypeNone
 	if !util.IsTrue(d.expandedConfig["migration.stateful"]) {
 		idmapType = d.IdmappedStorage(d.RootfsPath(), "none")
 	}
