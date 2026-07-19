@@ -3817,6 +3817,24 @@ func (d *lxc) cleanupDevices(instanceRunning bool, stopHookNetnsPath string) {
 	}
 }
 
+// cleanupFailedMigrationRestore stops non-network devices prepared by
+// startCommon when CRIU restore fails before LXC can run the normal stop hooks.
+// The shared-storage receiver releases the root volume separately and only
+// acknowledges that release after it succeeds.
+func (d *lxc) cleanupFailedMigrationRestore() {
+	d.cleanupDevices(false, "")
+
+	err := d.removeUnixDevices()
+	if err != nil {
+		d.logger.Error("Failed to remove Unix devices after migration restore failure", logger.Ctx{"err": err})
+	}
+
+	err = d.removeDiskDevices()
+	if err != nil {
+		d.logger.Error("Failed to remove disk devices after migration restore failure", logger.Ctx{"err": err})
+	}
+}
+
 // Freeze functions.
 func (d *lxc) Freeze() error {
 	ctxMap := logger.Ctx{
@@ -7393,6 +7411,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			// here since we know that "final" is the folder for CRIU's final dump.
 			err = d.migrate(&criuMigrationArgs)
 			if err != nil {
+				d.cleanupFailedMigrationRestore()
 				return err
 			}
 
