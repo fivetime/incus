@@ -4,5 +4,7 @@ set -eu
 incus admin waitready --timeout=5 >/dev/null
 incus info | grep -q 'driver: lxc'
 criu --version >/dev/null
+command -v iptables-restore >/dev/null
+command -v ip6tables-restore >/dev/null
 test -d /sys/kernel/security/apparmor
 awk '$2 == "/sys/fs/cgroup" && $3 == "cgroup2" { found = 1 } END { exit !found }' /proc/mounts

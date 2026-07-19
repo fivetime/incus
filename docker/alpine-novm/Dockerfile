@@ -94,8 +94,10 @@ FROM alpine:${ALPINE_VERSION}
 ARG CEPH_VERSION=19
 
 # Kept minimal for the Nova/ceph-RBD scenario: container instances only, RBD
-# storage only (no btrfs/lvm/cephfs tooling), nftables only (no iptables) and
-# no apparmor-utils. incusd execs apparmor_parser (from apparmor) and aa-exec;
+# storage only (no btrfs/lvm/cephfs tooling) and no apparmor-utils. nftables
+# is Incus' firewall backend, while CRIU also requires iptables-restore and
+# ip6tables-restore to lock a container network during stateful migration.
+# incusd execs apparmor_parser (from apparmor) and aa-exec;
 # the latter only ships in apparmor-utils (python3/perl/bash), so a minimal
 # libapparmor-based aa-exec is built in the incus-build stage and copied in
 # below. incusd also refuses to start without ip, rsync, setfattr, tar (GNU),
@@ -115,6 +117,7 @@ RUN apk add --no-cache \
       e2fsprogs-extra \
       gnutls \
       iproute2 \
+      iptables \
       libbsd \
       libnet \
       libnl3 \
