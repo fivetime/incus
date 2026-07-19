@@ -6654,6 +6654,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 		if err != nil {
 			canRestoreLiveShared := liveSharedCheckpointDir != "" &&
+				!d.IsRunning() &&
 				(!liveSharedHandoverStarted.Load() || targetSharedStorageReleased.Load())
 			if canRestoreLiveShared {
 				recoveryArgs := instance.CriuMigrationArgs{
@@ -6674,7 +6675,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 						err = errors.Join(err, fmt.Errorf("Failed clearing storage handover marker after restoring source: %w", markerErr))
 					}
 				}
-			} else if liveSharedCheckpointDir != "" {
+			} else if liveSharedCheckpointDir != "" && !d.IsRunning() {
 				d.logger.Error("Not restoring source after failed live shared storage migration because the target did not confirm releasing its claim")
 			}
 
@@ -6687,7 +6688,17 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				// handover would destroy the target's data, while a stale marker
 				// at worst leaks them. Clear the marker manually once the target
 				// is confirmed to hold no claim.
-				d.logger.Warn("Migration failed with a pending storage handover, keeping the volatile.migration.storage_handover marker")
+				if liveSharedStorage && !liveSharedHandoverStarted.Load() {
+					// The final CRIU dump failed before the source volume was
+					// unmounted or offered to the target, so the source still
+					// has sole ownership and pending is safe to clear.
+					markerErr := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": ""})
+					if markerErr != nil {
+						err = errors.Join(err, fmt.Errorf("Failed clearing unstarted storage handover marker: %w", markerErr))
+					}
+				} else {
+					d.logger.Warn("Migration failed with a pending storage handover, keeping the volatile.migration.storage_handover marker")
+				}
 			}
 
 			op.Done(err)
@@ -7409,7 +7420,15 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 				if d.IsRunning() {
 					err = errors.Join(err, errors.New("Target instance is running; shared storage claim was not released"))
 				} else {
-					releaseErr := pool.DeleteInstance(d, nil)
+					// DeleteInstance removes the local database record but does
+					// not unmount an already claimed volume. Unmount first so
+					// the release acknowledgement proves the RBD mapping and
+					// watcher are gone before the source attempts recovery.
+					releaseErr := pool.UnmountInstance(d, nil)
+					if releaseErr == nil {
+						releaseErr = pool.DeleteInstance(d, nil)
+					}
+
 					if releaseErr != nil {
 						err = errors.Join(err, fmt.Errorf("Failed releasing target shared storage claim: %w", releaseErr))
 					} else {

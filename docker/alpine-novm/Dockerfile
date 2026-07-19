@@ -97,6 +97,8 @@ ARG CEPH_VERSION=19
 # storage only (no btrfs/lvm/cephfs tooling) and no apparmor-utils. nftables
 # is Incus' firewall backend, while CRIU also requires iptables-restore and
 # ip6tables-restore to lock a container network during stateful migration.
+# CRIU probes legacy restore binaries when restoring some checkpoints, so both
+# backends are installed rather than relying on backend-specific symlinks.
 # incusd execs apparmor_parser (from apparmor) and aa-exec;
 # the latter only ships in apparmor-utils (python3/perl/bash), so a minimal
 # libapparmor-based aa-exec is built in the incus-build stage and copied in
@@ -118,6 +120,7 @@ RUN apk add --no-cache \
       gnutls \
       iproute2 \
       iptables \
+      iptables-legacy \
       libbsd \
       libnet \
       libnl3 \

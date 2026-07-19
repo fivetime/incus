@@ -6,6 +6,8 @@ incus info | grep -q 'driver: lxc'
 criu --version >/dev/null
 command -v iptables-restore >/dev/null
 command -v ip6tables-restore >/dev/null
+command -v iptables-legacy-restore >/dev/null
+command -v ip6tables-legacy-restore >/dev/null
 mountpoint -q /run/incus
 awk '$5 == "/var/lib/incus" {
        for (i = 7; i <= NF && $i != "-"; i++)
