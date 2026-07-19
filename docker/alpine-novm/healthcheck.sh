@@ -7,5 +7,10 @@ criu --version >/dev/null
 command -v iptables-restore >/dev/null
 command -v ip6tables-restore >/dev/null
 mountpoint -q /run/incus
+awk '$5 == "/var/lib/incus" {
+       for (i = 7; i <= NF && $i != "-"; i++)
+         if ($i ~ /^shared:/) found = 1
+     }
+     END { exit !found }' /proc/self/mountinfo
 test -d /sys/kernel/security/apparmor
 awk '$2 == "/sys/fs/cgroup" && $3 == "cgroup2" { found = 1 } END { exit !found }' /proc/mounts

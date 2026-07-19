@@ -14,6 +14,12 @@ require_command() {
 mkdir -p /run/incus
 mountpoint -q /run/incus \
   || fail "/run/incus must be a host bind mount so running instances survive outer container restarts"
+awk '$5 == "/var/lib/incus" {
+       for (i = 7; i <= NF && $i != "-"; i++)
+         if ($i ~ /^shared:/) found = 1
+     }
+     END { exit !found }' /proc/self/mountinfo \
+  || fail "/var/lib/incus must use recursive shared mount propagation for system-container disk mounts"
 awk '$2 == "/sys/fs/cgroup" && $3 == "cgroup2" { found = 1 } END { exit !found }' /proc/mounts \
   || fail "A cgroup v2 host mount is required"
 [ -w /sys/fs/cgroup ] || fail "/sys/fs/cgroup must be writable; use --cgroupns=host and unmask it"
