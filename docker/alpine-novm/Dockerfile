@@ -54,6 +54,38 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
 RUN cc -O2 -Wall -Wextra docker/alpine-novm/aa-exec.c -lapparmor -o /out/aa-exec \
     && strip /out/aa-exec
 
+FROM alpine:${ALPINE_VERSION} AS criu-build
+
+ARG CRIU_COMMIT=b7bdc14736b1e8598f2ffbb371f42318835a111f
+
+RUN apk add --no-cache \
+      bash \
+      build-base \
+      coreutils \
+      e2fsprogs \
+      elfutils-dev \
+      git \
+      gnutls-dev \
+      iproute2 \
+      libaio-dev \
+      libbsd-dev \
+      libcap-dev \
+      libnet-dev \
+      libnl3-dev \
+      lz4-dev \
+      nftables-dev \
+      perl \
+      pkgconfig \
+      protobuf-c-compiler \
+      protobuf-c-dev \
+      protobuf-dev \
+      python3 \
+      util-linux-dev \
+    && git clone --filter=blob:none https://github.com/checkpoint-restore/criu.git /build/criu \
+    && git -C /build/criu checkout --detach "${CRIU_COMMIT}" \
+    && make -C /build/criu -j"$(nproc)" criu WERROR=0 \
+    && /build/criu/criu/criu --version
+
 FROM alpine:${ALPINE_VERSION}
 
 # Newest Ceph packaged by Alpine edge. The ceph/rbd CLI is wire-compatible with
@@ -81,9 +113,15 @@ RUN apk add --no-cache \
       dnsmasq \
       e2fsprogs \
       e2fsprogs-extra \
+      gnutls \
       iproute2 \
+      libbsd \
+      libnet \
+      libnl3 \
       lxcfs \
+      lz4-libs \
       nftables \
+      protobuf-c \
       rsync \
       shadow-subids \
       squashfs-tools \
@@ -108,6 +146,9 @@ RUN apk add --no-cache \
 COPY --from=incus-build /out/incusd /usr/sbin/incusd
 COPY --from=incus-build /out/incus /usr/bin/incus
 COPY --from=incus-build /out/aa-exec /usr/local/bin/aa-exec
+COPY --from=criu-build /build/criu/criu/criu /usr/local/sbin/criu
+RUN criu --version \
+    && ! ldd /usr/local/sbin/criu | grep -q "not found"
 
 COPY docker/alpine-novm/start.sh docker/alpine-novm/healthcheck.sh /usr/local/sbin/
 RUN chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh

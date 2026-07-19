@@ -738,6 +738,16 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 		}
 	}
 
+	// liblxc's CRIU restore path cannot recreate the source console PTY.
+	// Stateful containers keep the console ring buffer and log file, but
+	// exclude the console device itself from the checkpoint.
+	if util.IsTrue(d.expandedConfig["migration.stateful"]) {
+		err = lxcSetConfigItem(cc, "lxc.console.path", "none")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if d.state.OS.CoreScheduling {
 		err = lxcSetConfigItem(cc, "lxc.sched.core", "1")
 		if err != nil {
@@ -1871,9 +1881,16 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 		return idmap.StorageTypeNone, nextIdmap, nil
 	}
 
+	// liblxc's CRIU restore path mounts the rootfs before it can create an
+	// idmapped mount. Keep stateful container rootfs ownership shifted on
+	// disk so restore sees the same UID/GID mapping as a normal start.
+	idmapType := idmap.StorageTypeNone
+	if !util.IsTrue(d.expandedConfig["migration.stateful"]) {
+		idmapType = d.IdmappedStorage(d.RootfsPath(), "none")
+	}
+
 	// There's no on-disk idmap applied and the container can use idmapped
 	// storage.
-	idmapType := d.IdmappedStorage(d.RootfsPath(), "none")
 	if diskIdmap == nil && idmapType != idmap.StorageTypeNone {
 		return idmapType, nextIdmap, nil
 	}
