@@ -6796,8 +6796,22 @@ func (d *lxc) migrateSendPreDumpLoop(args *preDumpLoopArgs) (bool, error) {
 	}
 
 	err := d.migrate(&criuMigrationArgs)
+	preDumpFailed := err != nil
 	if err != nil {
-		return final, fmt.Errorf("Failed sending instance: %w", err)
+		// Pre-copy is an optional live migration optimization. A transient
+		// CRIU pre-dump failure must not abort a migration that can still use
+		// a full final checkpoint. Remove the incomplete generation, send an
+		// empty pre-dump update and tell the receiver to expect the final dump.
+		d.logger.Warn("CRIU pre-dump failed, continuing with a full final dump", logger.Ctx{"err": err})
+		removeErr := os.RemoveAll(filepath.Join(args.checkpointDir, args.dumpDir))
+		if removeErr != nil {
+			return final, errors.Join(err, fmt.Errorf("Failed removing incomplete CRIU pre-dump: %w", removeErr))
+		}
+
+		// Keep the last successful generation as the final dump's parent. On
+		// the first pre-dump failure this is empty, making the final dump full.
+		args.dumpDir = args.preDumpDir
+		final = true
 	}
 
 	// Send the pre-dump.
@@ -6807,49 +6821,51 @@ func (d *lxc) migrateSendPreDumpLoop(args *preDumpLoopArgs) (bool, error) {
 		return final, err
 	}
 
-	// The function readCriuStatsDump() reads the CRIU 'stats-dump' file
-	// in path and returns the pages_written, pages_skipped_parent, error.
-	readCriuStatsDump := func(statsPath string) (uint64, uint64, error) {
-		// Get dump statistics with crit
-		dumpStats, err := crit.GetDumpStats(statsPath)
-		if err != nil {
-			return 0, 0, fmt.Errorf("Failed to parse CRIU's 'stats-dump' file: %w", err)
+	if !preDumpFailed {
+		// The function readCriuStatsDump() reads the CRIU 'stats-dump' file
+		// in path and returns the pages_written, pages_skipped_parent, error.
+		readCriuStatsDump := func(statsPath string) (uint64, uint64, error) {
+			// Get dump statistics with crit
+			dumpStats, err := crit.GetDumpStats(statsPath)
+			if err != nil {
+				return 0, 0, fmt.Errorf("Failed to parse CRIU's 'stats-dump' file: %w", err)
+			}
+
+			return dumpStats.GetPagesWritten(), dumpStats.GetPagesSkippedParent(), nil
 		}
 
-		return dumpStats.GetPagesWritten(), dumpStats.GetPagesSkippedParent(), nil
-	}
+		// Read the CRIU's 'stats-dump' file
+		dumpPath := internalUtil.AddSlash(args.checkpointDir)
+		dumpPath += internalUtil.AddSlash(args.dumpDir)
+		written, skippedParent, err := readCriuStatsDump(dumpPath)
+		if err != nil {
+			return final, err
+		}
 
-	// Read the CRIU's 'stats-dump' file
-	dumpPath := internalUtil.AddSlash(args.checkpointDir)
-	dumpPath += internalUtil.AddSlash(args.dumpDir)
-	written, skippedParent, err := readCriuStatsDump(dumpPath)
-	if err != nil {
-		return final, err
-	}
+		totalPages := written + skippedParent
+		var percentageSkipped int
+		if totalPages > 0 {
+			percentageSkipped = int(100 - ((100 * written) / totalPages))
+		}
 
-	totalPages := written + skippedParent
-	var percentageSkipped int
-	if totalPages > 0 {
-		percentageSkipped = int(100 - ((100 * written) / totalPages))
-	}
+		d.logger.Debug("CRIU pages", logger.Ctx{"pages": written, "skipped": skippedParent, "skippedPerc": percentageSkipped})
 
-	d.logger.Debug("CRIU pages", logger.Ctx{"pages": written, "skipped": skippedParent, "skippedPerc": percentageSkipped})
+		// threshold is the percentage of memory pages that needs
+		// to be pre-copied for the pre-copy migration to stop.
+		var threshold int
+		tmp := d.ExpandedConfig()["migration.incremental.memory.goal"]
+		if tmp != "" {
+			threshold, _ = strconv.Atoi(tmp)
+		} else {
+			// defaults to 70%
+			threshold = 70
+		}
 
-	// threshold is the percentage of memory pages that needs
-	// to be pre-copied for the pre-copy migration to stop.
-	var threshold int
-	tmp := d.ExpandedConfig()["migration.incremental.memory.goal"]
-	if tmp != "" {
-		threshold, _ = strconv.Atoi(tmp)
-	} else {
-		// defaults to 70%
-		threshold = 70
-	}
-
-	if percentageSkipped > threshold {
-		d.logger.Debug("Memory pages skipped due to pre-copy is larger than threshold", logger.Ctx{"skippedPerc": percentageSkipped, "thresholdPerc": threshold})
-		d.logger.Debug("This was the last pre-dump; next dump is the final dump")
-		final = true
+		if percentageSkipped > threshold {
+			d.logger.Debug("Memory pages skipped due to pre-copy is larger than threshold", logger.Ctx{"skippedPerc": percentageSkipped, "thresholdPerc": threshold})
+			d.logger.Debug("This was the last pre-dump; next dump is the final dump")
+			final = true
+		}
 	}
 
 	// If in pre-dump mode, the receiving side expects a message to know if this was the last pre-dump.
