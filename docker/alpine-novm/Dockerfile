@@ -153,6 +153,7 @@ RUN apk add --no-cache \
       dnsmasq \
       e2fsprogs \
       e2fsprogs-extra \
+      eudev \
       gnutls \
       iproute2 \
       iptables \
@@ -197,6 +198,7 @@ COPY --from=lxc-build /build/lxc/build/liblxc.so.1.9.0 /usr/lib/liblxc.so.1.9.0
 RUN test "$(incusd --version)" = "7.2" \
     && criu --version \
     && command -v lvm \
+    && command -v udevadm \
     && command -v zfs \
     && command -v zpool \
     && tar --help 2>&1 | grep -q -- "--no-unquote" \

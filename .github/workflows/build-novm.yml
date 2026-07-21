@@ -60,6 +60,7 @@ jobs:
             criu --version
             command -v rbd
             command -v lvm
+            command -v udevadm
             command -v zfs
             command -v zpool
             command -v iptables-restore
