@@ -59,6 +59,9 @@ jobs:
             test "$(incus --version)" = "7.2"
             criu --version
             command -v rbd
+            command -v lvm
+            command -v zfs
+            command -v zpool
             command -v iptables-restore
             command -v ip6tables-restore
             command -v iptables-legacy-restore

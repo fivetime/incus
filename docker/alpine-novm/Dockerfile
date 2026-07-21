@@ -127,8 +127,10 @@ FROM alpine:${ALPINE_VERSION}
 # mapping is done by the host kernel anyway; bump this once aports ships ceph20.
 ARG CEPH_VERSION=19
 
-# Kept minimal for the Nova/ceph-RBD scenario: container instances only, RBD
-# storage only (no btrfs/lvm/cephfs tooling) and no apparmor-utils. nftables
+# Kept minimal for the Nova system-container scenario: container instances
+# only, with Ceph RBD plus the user-space tools needed for optional host LVM
+# and ZFS root pools. Kernel modules, VGs and zpools remain host-managed.
+# No cephfs tooling or apparmor-utils is included. nftables
 # is Incus' firewall backend, while CRIU also requires iptables-restore and
 # ip6tables-restore to lock a container network during stateful migration.
 # CRIU probes legacy restore binaries when restoring some checkpoints, so both
@@ -161,6 +163,7 @@ RUN apk add --no-cache \
       lxc-libs \
       lxcfs \
       lz4-libs \
+      lvm2 \
       nftables \
       protobuf-c \
       rsync \
@@ -169,6 +172,7 @@ RUN apk add --no-cache \
       tar \
       util-linux-misc \
       xz \
+      zfs \
       so:libacl.so.1 \
       so:libapparmor.so.1 \
       so:libcap.so.2 \
@@ -192,6 +196,9 @@ COPY --from=criu-build /build/criu/criu/criu /usr/local/sbin/criu
 COPY --from=lxc-build /build/lxc/build/liblxc.so.1.9.0 /usr/lib/liblxc.so.1.9.0
 RUN test "$(incusd --version)" = "7.2" \
     && criu --version \
+    && command -v lvm \
+    && command -v zfs \
+    && command -v zpool \
     && tar --help 2>&1 | grep -q -- "--no-unquote" \
     && ! ldd /usr/sbin/incusd | grep -q "not found" \
     && ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found" \
