@@ -283,11 +283,9 @@ again:
 			return fmt.Errorf("Failed force unmapping RBD volume %q from %q: %w", rbdVol, devPath, forceErr)
 		}
 
-		ourDeactivate = true
-		if unmapUntilEINVAL {
-			goto again
-		}
-
+		// A forced RBD unmap is asynchronous when the device still has open references.
+		// Retrying here would loop until those references disappear even though the
+		// kernel has already accepted the device removal request.
 		d.logger.Debug("Deactivated RBD volume", logger.Ctx{"volName": rbdVol})
 		return nil
 	}
