@@ -165,10 +165,8 @@ static void mknod_emulate(void)
 	pid = atoi(advance_arg(true));
 	pidfd = atoi(advance_arg(true));
 	ns_fd = pidfd_nsfd(pidfd, pid);
-	if (ns_fd < 0) {
-		fprintf(stderr, "mount: failed to resolve namespace fd: %d", errno);
+	if (ns_fd < 0)
 		_exit(EXIT_FAILURE);
-	}
 	target = advance_arg(true);
 	mode = atoi(advance_arg(true));
 	dev = atoi(advance_arg(true));
@@ -352,8 +350,10 @@ static void mount_emulate(void)
 	pid = atoi(advance_arg(true));
 	pidfd = atoi(advance_arg(true));
 	ns_fd = pidfd_nsfd(pidfd, pid);
-	if (ns_fd < 0)
+	if (ns_fd < 0) {
+		fprintf(stderr, "mount: failed to resolve namespace fd: %d", errno);
 		_exit(EXIT_FAILURE);
+	}
 	use_fuse = (atoi(advance_arg(true)) == 1);
 	if (!use_fuse) {
 		source = advance_arg(true);
