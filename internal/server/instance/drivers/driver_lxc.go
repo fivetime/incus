@@ -6205,6 +6205,16 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		}
 	}
 
+	d.logger.Info("Prepared shared storage migration offer", logger.Ctx{
+		"eligible":    !clusterMove && !storageMove && (stoppedSharedHandover || liveSharedHandover),
+		"offered":     offerHeader.GetCephFsid() != "",
+		"driver":      offerHeader.GetCephDriver(),
+		"pool":        offerHeader.GetCephPool(),
+		"live":        args.Live,
+		"running":     d.IsRunning(),
+		"storageMove": storageMove,
+	})
+
 	// Send offer to target.
 	d.logger.Debug("Sending migration offer to target")
 	err = args.ControlSend(offerHeader)
@@ -7096,13 +7106,25 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	sharedStorage := false
 	stoppedSharedHandover := offerHeader.Criu == nil && !args.Live
 	liveSharedHandover := args.Live && offerHeader.GetCriu() == migration.CRIUType_CRIU_RSYNC && isCephSharedStorageDriver(pool.Driver().Info().Name)
+	fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 	if offerHeader.GetCephFsid() != "" && !clusterMove && !args.Refresh && (stoppedSharedHandover || liveSharedHandover) {
-		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() && pool.Driver().Info().Name == offerHeader.GetCephDriver() {
 			sharedStorage = true
 			respHeader.SharedStorage = proto.Bool(true)
 		}
 	}
+
+	d.logger.Info("Negotiated shared storage migration", logger.Ctx{
+		"accepted":      sharedStorage,
+		"offered":       offerHeader.GetCephFsid() != "",
+		"driver":        pool.Driver().Info().Name,
+		"offeredDriver": offerHeader.GetCephDriver(),
+		"pool":          osdPool,
+		"offeredPool":   offerHeader.GetCephPool(),
+		"fsidMatch":     fsid != "" && fsid == offerHeader.GetCephFsid(),
+		"live":          args.Live,
+		"refresh":       args.Refresh,
+	})
 
 	// Get rsync options from sender, these are passed into mySink function as part of
 	// MigrationSinkArgs below.
