@@ -1,6 +1,7 @@
 package drivers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,8 @@ const cephBlockVolSuffix = ".block"
 const cephISOVolSuffix = ".iso"
 
 const cephVolumeTypeZombieImage = VolumeType("zombie_image")
+
+const cephRBDUnmapTimeout = 30 * time.Second
 
 // CephDefaultCluster represents the default ceph cluster name.
 const CephDefaultCluster = "ceph"
@@ -242,7 +245,9 @@ func (d *ceph) rbdUnmapVolume(vol Volume, unmapUntilEINVAL bool) error {
 	ourDeactivate := false
 
 again:
-	_, err := subprocess.RunCommand(
+	ctx, cancel := context.WithTimeout(context.Background(), cephRBDUnmapTimeout)
+	_, err := subprocess.RunCommandContext(
+		ctx,
 		"rbd",
 		"--id", d.config["ceph.user.name"],
 		"--cluster", d.config["ceph.cluster_name"],
@@ -250,6 +255,43 @@ again:
 		"unmap",
 		rbdVol,
 	)
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	cancel()
+	if timedOut {
+		if vol.contentType == ContentTypeFS && linux.IsMountPoint(vol.MountPath()) {
+			return fmt.Errorf("Timed out unmapping mounted RBD volume %q", rbdVol)
+		}
+
+		_, devPath, devErr := d.getRBDMappedDevPath(vol, false)
+		if devErr != nil {
+			return fmt.Errorf("Timed out unmapping RBD volume %q and failed locating its device: %w", rbdVol, devErr)
+		}
+
+		d.logger.Warn("RBD unmap timed out, forcing detached device removal", logger.Ctx{"volName": rbdVol, "dev": devPath})
+		forceCtx, forceCancel := context.WithTimeout(context.Background(), cephRBDUnmapTimeout)
+		_, forceErr := subprocess.RunCommandContext(
+			forceCtx,
+			"rbd",
+			"--id", d.config["ceph.user.name"],
+			"--cluster", d.config["ceph.cluster_name"],
+			"device", "unmap",
+			"--options", "force",
+			devPath,
+		)
+		forceCancel()
+		if forceErr != nil {
+			return fmt.Errorf("Failed force unmapping RBD volume %q from %q: %w", rbdVol, devPath, forceErr)
+		}
+
+		ourDeactivate = true
+		if unmapUntilEINVAL {
+			goto again
+		}
+
+		d.logger.Debug("Deactivated RBD volume", logger.Ctx{"volName": rbdVol})
+		return nil
+	}
+
 	if err != nil {
 		var runError subprocess.RunError
 		if errors.As(err, &runError) {
