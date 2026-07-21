@@ -165,8 +165,10 @@ static void mknod_emulate(void)
 	pid = atoi(advance_arg(true));
 	pidfd = atoi(advance_arg(true));
 	ns_fd = pidfd_nsfd(pidfd, pid);
-	if (ns_fd < 0)
+	if (ns_fd < 0) {
+		fprintf(stderr, "mount: failed to resolve namespace fd: %d", errno);
 		_exit(EXIT_FAILURE);
+	}
 	target = advance_arg(true);
 	mode = atoi(advance_arg(true));
 	dev = atoi(advance_arg(true));
@@ -374,12 +376,16 @@ static void mount_emulate(void)
 	}
 
 	fd_userns = preserve_ns(-ESRCH, ns_fd, "user");
-	if (fd_userns < 0)
+	if (fd_userns < 0) {
+		fprintf(stderr, "mount: failed to preserve user namespace: %d", errno);
 		_exit(EXIT_FAILURE);
+	}
 
 	fd_mntns = preserve_ns(getpid(), ns_fd, "mnt");
-	if (fd_mntns < 0)
+	if (fd_mntns < 0) {
+		fprintf(stderr, "mount: failed to preserve mount namespace: %d", errno);
 		_exit(EXIT_FAILURE);
+	}
 
 	if (use_fuse) {
 		attach_userns_fd(ns_fd);
@@ -390,19 +396,25 @@ static void mount_emulate(void)
 		change_namespaces(pidfd, ns_fd, CLONE_NEWPID);
 	}
 
-	if (!acquire_basic_creds(pid, pidfd, ns_fd, &root_fd, &cwd_fd))
+	if (!acquire_basic_creds(pid, pidfd, ns_fd, &root_fd, &cwd_fd)) {
+		fprintf(stderr, "mount: failed to acquire basic credentials: %d", errno);
 		_exit(EXIT_FAILURE);
+	}
 
-	if (!acquire_final_creds(pid, uid, gid, fsuid, fsgid))
+	if (!acquire_final_creds(pid, uid, gid, fsuid, fsgid)) {
+		fprintf(stderr, "mount: failed to acquire final credentials: %d", errno);
 		_exit(EXIT_FAILURE);
+	}
 
 	if (use_fuse) {
 		int status;
 		pid_t pid_fuse;
 
 		pid_fuse = fork();
-		if (pid_fuse < 0)
+		if (pid_fuse < 0) {
+			fprintf(stderr, "mount: failed to fork FUSE helper: %d", errno);
 			_exit(EXIT_FAILURE);
+		}
 
 		if (pid_fuse == 0) {
 			const char *fuse_source, *fuse_target, *fuse_opts;
@@ -415,12 +427,15 @@ static void mount_emulate(void)
 				execlp("mount.fuse", "mount.fuse", fuse_source, fuse_target, (char *) NULL);
 			else
 				execlp("mount.fuse", "mount.fuse", fuse_source, fuse_target, "-o", fuse_opts, (char *) NULL);
+			fprintf(stderr, "mount: failed to execute mount.fuse: %d", errno);
 			_exit(EXIT_FAILURE);
 		}
 
 		ret = waitpid(pid_fuse, &status, 0);
-		if ((ret != pid_fuse) || !WIFEXITED(status) || WEXITSTATUS(status))
+		if ((ret != pid_fuse) || !WIFEXITED(status) || WEXITSTATUS(status)) {
+			fprintf(stderr, "mount: FUSE helper failed: status=%d errno=%d", status, errno);
 			_exit(EXIT_FAILURE);
+		}
 	} else if (strcmp(shift, "idmapped") == 0) {
 		int fd_tree;
 		int fs_fd = -EBADF;
