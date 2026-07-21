@@ -3364,3 +3364,16 @@ target explicitly confirms that its claim was released. An ambiguous outcome
 leaves the source stopped for operator reconciliation. This ordering prevents
 an externally owned single-writer file system from being mounted on both
 servers at once.
+
+## `migration_live_shared_ceph_storage`
+
+This extends stateful live shared-storage handover to Incus-owned `ceph`
+container roots. The source checkpoints the container, fully unmounts the RBD
+root, and then lets a standalone target using the same Ceph FSID, OSD pool and
+`ceph` driver claim the existing volume without copying it.
+
+The source protects the handed-over volume with
+`volatile.migration.storage_handover`. If target restore fails, the target
+unmounts the root and removes only its local database record before explicitly
+allowing the source checkpoint to resume. It must never delete the shared RBD
+image during this rollback.

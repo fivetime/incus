@@ -432,6 +432,10 @@ func lxcInstantiate(s *state.State, args db.InstanceArgs, expandedDevices device
 }
 
 // The LXC container driver.
+func isCephSharedStorageDriver(driverName string) bool {
+	return driverName == "ceph" || driverName == "cephext"
+}
+
 type lxc struct {
 	common
 
@@ -6184,15 +6188,15 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 	// Offer the identity of the remote shared storage backend, if any, so that a
 	// target server seeing the exact same backend can claim the volumes in place
 	// instead of having the data sent over. A normal handover requires a stopped
-	// instance. A live handover is restricted to externally owned cephext roots;
-	// that path checkpoints and unmounts the source before the target can claim.
+	// instance. A live handover is restricted to Ceph-backed roots; that path
+	// checkpoints and unmounts the source before the target can claim.
 	// The driver type is included so that ownership semantics can never get
 	// mixed up: "ceph" volumes are owned by Incus while "cephext" volumes are
 	// owned by an external system, so a handover is only valid between pools
 	// using the same driver.
 	stoppedSharedHandover := !args.Live && !d.IsRunning()
-	liveExternalHandover := args.Live && pool.Driver().Info().Name == "cephext"
-	if !clusterMove && !storageMove && (stoppedSharedHandover || liveExternalHandover) {
+	liveSharedHandover := args.Live && isCephSharedStorageDriver(pool.Driver().Info().Name)
+	if !clusterMove && !storageMove && (stoppedSharedHandover || liveSharedHandover) {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid != "" {
 			offerHeader.CephFsid = proto.String(fsid)
@@ -6258,7 +6262,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		SharedStorage:      offerHeader.GetCephFsid() != "" && respHeader.GetSharedStorage(),
 		DependentVolumes:   dependentVolumes,
 	}
-	liveSharedStorage := args.Live && volSourceArgs.SharedStorage && pool.Driver().Info().Name == "cephext"
+	liveSharedStorage := args.Live && volSourceArgs.SharedStorage && isCephSharedStorageDriver(pool.Driver().Info().Name)
 
 	// Only send the snapshots that the target requests when refreshing.
 	if respHeader.GetRefresh() {
@@ -7085,14 +7089,14 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	// If the source offered the identity of its remote shared storage backend and this
 	// server sees the exact same backend through the same driver type, agree to claim
 	// the volumes in place instead of receiving their data. Stateful live handover
-	// is restricted to cephext, whose source releases the externally owned root
-	// before this receiver claims it. The driver type comparison keeps Incus-owned
+	// is restricted to Ceph-backed roots whose source releases the root before
+	// this receiver claims it. The driver type comparison keeps Incus-owned
 	// ("ceph") and externally-owned ("cephext") volumes from ever getting handed
 	// over across ownership semantics.
 	sharedStorage := false
 	stoppedSharedHandover := offerHeader.Criu == nil && !args.Live
-	liveExternalHandover := args.Live && offerHeader.GetCriu() == migration.CRIUType_CRIU_RSYNC && pool.Driver().Info().Name == "cephext"
-	if offerHeader.GetCephFsid() != "" && !clusterMove && !args.Refresh && (stoppedSharedHandover || liveExternalHandover) {
+	liveSharedHandover := args.Live && offerHeader.GetCriu() == migration.CRIUType_CRIU_RSYNC && isCephSharedStorageDriver(pool.Driver().Info().Name)
+	if offerHeader.GetCephFsid() != "" && !clusterMove && !args.Refresh && (stoppedSharedHandover || liveSharedHandover) {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() && pool.Driver().Info().Name == offerHeader.GetCephDriver() {
 			sharedStorage = true
@@ -7463,10 +7467,10 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			err := g.Wait()
 			sharedStorageReleased := !liveSharedStorageClaimed.Load()
 
-			// A failed live cephext receive must release its local claim before
+			// A failed live shared Ceph receive must release its local claim before
 			// the source may safely restore the checkpoint. Never claim release
 			// if the target is running or the cleanup did not fully succeed.
-			if sharedStorage && args.Live && pool.Driver().Info().Name == "cephext" && liveSharedStorageClaimed.Load() {
+			if sharedStorage && args.Live && isCephSharedStorageDriver(pool.Driver().Info().Name) && liveSharedStorageClaimed.Load() {
 				if d.IsRunning() {
 					err = errors.Join(err, errors.New("Target instance is running; shared storage claim was not released"))
 				} else {
@@ -7475,6 +7479,13 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 					// the release acknowledgement proves the RBD mapping and
 					// watcher are gone before the source attempts recovery.
 					releaseErr := pool.UnmountInstance(d, nil)
+					if releaseErr == nil && pool.Driver().Info().Name == "ceph" {
+						// This target only claimed a root that the source rollback
+						// still needs. Prevent normal target record cleanup from
+						// deleting the Incus-owned RBD image.
+						releaseErr = d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "pending"})
+					}
+
 					if releaseErr == nil {
 						releaseErr = pool.DeleteInstance(d, nil)
 					}

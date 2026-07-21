@@ -562,6 +562,7 @@ var APIExtensions = []string{
 	"unix_block_limits",
 	"migration_stateful_shifted_root",
 	"migration_live_shared_cephext_storage",
+	"migration_live_shared_ceph_storage",
 }
 
 // APIExtensionsCount returns the number of available API extensions.
