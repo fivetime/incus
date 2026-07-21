@@ -19,6 +19,34 @@ import (
 
 var testDir string
 
+func TestMonitorNameFromCgroup(t *testing.T) {
+	tests := map[string]struct {
+		content string
+		name    string
+	}{
+		"v2 root": {
+			content: "0::/lxc.monitor.instance-00000177\n",
+			name:    "instance-00000177",
+		},
+		"v2 nested": {
+			content: "0::/system.slice/incus.service/lxc.monitor.project_instance/scope\n",
+			name:    "project_instance",
+		},
+		"unrelated": {
+			content: "0::/system.slice/incus.service\n",
+			name:    "",
+		},
+	}
+
+	for testName, test := range tests {
+		t.Run(testName, func(t *testing.T) {
+			if monitorNameFromCgroup(test.content) != test.name {
+				t.Fatalf("Expected %q from %q", test.name, test.content)
+			}
+		})
+	}
+}
+
 type DevIncusDialer struct {
 	Path string
 }

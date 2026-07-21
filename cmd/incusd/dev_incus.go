@@ -406,6 +406,51 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, connState http.ConnState
 
 var errPIDNotInContainer = errors.New("pid not in container?")
 
+func monitorNameFromCgroup(content string) string {
+	const prefix = "/lxc.monitor."
+
+	for _, line := range strings.Split(content, "\n") {
+		index := strings.LastIndex(line, prefix)
+		if index < 0 {
+			continue
+		}
+
+		name := line[index+len(prefix):]
+		if separator := strings.IndexByte(name, '/'); separator >= 0 {
+			name = name[:separator]
+		}
+
+		return name
+	}
+
+	return ""
+}
+
+func loadContainerForMonitorName(name string, s *state.State) (instance.Container, error) {
+	projectName := api.ProjectDefaultName
+	if strings.Contains(name, "_") {
+		fields := strings.SplitN(name, "_", 2)
+		projectName = fields[0]
+		name = fields[1]
+	}
+
+	inst, err := instance.LoadByProjectAndName(s, projectName, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if inst.Type() != instancetype.Container {
+		return nil, errors.New("Instance is not container type")
+	}
+
+	c, ok := inst.(instance.Container)
+	if !ok {
+		return nil, errors.New("Instance is not container type")
+	}
+
+	return c, nil
+}
+
 func findContainerForPid(pid int32, s *state.State) (instance.Container, error) {
 	/*
 	 * Try and figure out which container a pid is in. There is probably a
@@ -442,28 +487,18 @@ func findContainerForPid(pid int32, s *state.State) (instance.Container, error) 
 			parts := strings.Split(string(cmdline), " ")
 			name := strings.TrimSuffix(parts[len(parts)-1], "\x00")
 
-			projectName := api.ProjectDefaultName
-			if strings.Contains(name, "_") {
-				fields := strings.SplitN(name, "_", 2)
-				projectName = fields[0]
-				name = fields[1]
-			}
+			return loadContainerForMonitorName(name, s)
+		}
 
-			inst, err := instance.LoadByProjectAndName(s, projectName, name)
-			if err != nil {
-				return nil, err
+		// In a containerized Incus deployment liblxc's monitor can have an
+		// empty cmdline. Its cgroup v2 path remains authoritative and is owned
+		// by liblxc, so use it before walking further up the host process tree.
+		cgroup, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+		if err == nil {
+			name := monitorNameFromCgroup(string(cgroup))
+			if name != "" {
+				return loadContainerForMonitorName(name, s)
 			}
-
-			if inst.Type() != instancetype.Container {
-				return nil, errors.New("Instance is not container type")
-			}
-
-			c, ok := inst.(instance.Container)
-			if !ok {
-				return nil, errors.New("Instance is not container type")
-			}
-
-			return c, nil
 		}
 
 		re, err := regexp.Compile(`^PPid:\s+([0-9]+)$`)
