@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/server/cgroup"
 	deviceConfig "github.com/lxc/incus/v7/internal/server/device/config"
-	"github.com/lxc/incus/v7/shared/units"
 )
 
 func unixBlockLimitsEnabled(config deviceConfig.Device) bool {
@@ -25,41 +23,12 @@ func unixBlockDevicePath(devicesPath string, deviceName string, config deviceCon
 	return filepath.Join(devicesPath, name)
 }
 
-func unixBlockLimitParse(config deviceConfig.Device) (int64, int64, int64, int64, error) {
-	parseValue := func(value string) (int64, int64, error) {
-		if value == "" {
-			return 0, 0, nil
-		}
-
-		before, isIOPS := strings.CutSuffix(value, "iops")
-		if isIOPS {
-			iops, err := strconv.ParseInt(before, 10, 64)
-			return 0, iops, err
-		}
-
-		bps, err := units.ParseByteSizeString(value)
-		return bps, 0, err
-	}
-
-	readBps, readIops, err := parseValue(config["limits.read"])
-	if err != nil {
-		return 0, 0, 0, 0, err
-	}
-
-	writeBps, writeIops, err := parseValue(config["limits.write"])
-	if err != nil {
-		return 0, 0, 0, 0, err
-	}
-
-	return readBps, readIops, writeBps, writeIops, nil
-}
-
 func unixBlockLimitValidate(config deviceConfig.Device) error {
 	if !unixBlockLimitsEnabled(config) {
 		return nil
 	}
 
-	readBps, readIops, writeBps, writeIops, err := unixBlockLimitParse(config)
+	readBps, readIops, writeBps, writeIops, err := diskParseLimits(config)
 	if err != nil {
 		return fmt.Errorf("Invalid I/O limit: %w", err)
 	}
@@ -89,7 +58,7 @@ func unixBlockLimitApply(runConf *deviceConfig.RunConfig, devicePath string, con
 		return errors.New("I/O limits require a block device")
 	}
 
-	readBps, readIops, writeBps, writeIops, err := unixBlockLimitParse(config)
+	readBps, readIops, writeBps, writeIops, err := diskParseLimits(config)
 	if err != nil {
 		return err
 	}

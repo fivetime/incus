@@ -114,14 +114,14 @@ func (d *unixCommon) validateConfig(instConf instance.ConfigReader, partialValid
 		//
 		// ---
 		//  type: string
-		//  shortdesc: I/O limit in byte/s or IOPS for block-device reads
+		//  shortdesc: I/O limit in byte/s or IOPS for read operations
 		"limits.read": validate.IsAny,
 
 		// gendoc:generate(entity=devices, group=unix-char-block, key=limits.write)
 		//
 		// ---
 		//  type: string
-		//  shortdesc: I/O limit in byte/s or IOPS for block-device writes
+		//  shortdesc: I/O limit in byte/s or IOPS for write operations
 		"limits.write": validate.IsAny,
 
 		// gendoc:generate(entity=devices, group=unix-char-block, key=uid)
@@ -263,6 +263,7 @@ func (d *unixCommon) Start() (*deviceConfig.RunConfig, error) {
 	srcPath := unixDeviceSourcePath(d.config)
 
 	// If device file already exists on system, proceed to add it whether its required or not.
+	created := false
 	dType, _, _, err := unixDeviceAttributes(srcPath)
 	if err == nil {
 		// Ensure device type matches what the device config is expecting.
@@ -275,10 +276,7 @@ func (d *unixCommon) Start() (*deviceConfig.RunConfig, error) {
 			return nil, err
 		}
 
-		err = unixBlockLimitApply(&runConf, unixBlockDevicePath(d.inst.DevicesPath(), d.name, d.config), d.config)
-		if err != nil {
-			return nil, err
-		}
+		created = true
 	} else {
 		// If the device file doesn't exist on the system, but major & minor numbers have
 		// been provided in the config then we can go ahead and create the device anyway.
@@ -288,13 +286,17 @@ func (d *unixCommon) Start() (*deviceConfig.RunConfig, error) {
 				return nil, err
 			}
 
-			err = unixBlockLimitApply(&runConf, unixBlockDevicePath(d.inst.DevicesPath(), d.name, d.config), d.config)
-			if err != nil {
-				return nil, err
-			}
+			created = true
 		} else if d.isRequired() {
 			// If the file is missing and the device is required then we cannot proceed.
 			return nil, errors.New("The required device path doesn't exist and the major and minor settings are not specified")
+		}
+	}
+
+	if created {
+		err = unixBlockLimitApply(&runConf, unixBlockDevicePath(d.inst.DevicesPath(), d.name, d.config), d.config)
+		if err != nil {
+			return nil, err
 		}
 	}
 

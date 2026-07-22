@@ -563,6 +563,7 @@ var APIExtensions = []string{
 	"migration_stateful_shifted_root",
 	"migration_live_shared_cephext_storage",
 	"migration_live_shared_ceph_storage",
+	"authorization_client_routing",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

@@ -3336,13 +3336,9 @@ by such volumes migrate between servers without any data transfer.
 
 ## `unix_block_limits`
 
-This adds the `limits.read` and `limits.write` configuration keys to required
-`unix-block` devices. Each key accepts either a byte-per-second value or an
-IOPS value and is enforced through the instance's I/O cgroup. The daemon
-resolves the device major and minor numbers from the Incus-managed host device
-node and clears the corresponding `io.max` entries when the device is removed.
-Limits are applied both during instance/device start and when an optional
-device appears later through the Unix-device event handler.
+This adds the `limits.read` and `limits.write` configuration keys to
+`unix-block` devices. These behave similarly to their `disk` device
+equivalents, accepting either a byte/s value or an IOPS value.
 
 ## `migration_stateful_shifted_root`
 
@@ -3377,3 +3373,29 @@ The source protects the handed-over volume with
 unmounts the root and removes only its local database record before explicitly
 allowing the source checkpoint to resume. It must never delete the shared RBD
 image during this rollback.
+
+## `authorization_client_routing`
+
+This allows loading multiple authorization drivers at once and routing each
+request to one of them based on the authentication class of the client.
+
+The following server configuration keys are added:
+
+* `authorization.client.default`: driver for clients without a more specific class route
+* `authorization.client.unix`: driver for local (`unix` socket) clients
+* `authorization.client.tls`: driver for unrestricted TLS clients
+* `authorization.client.tls-restricted`: driver for restricted (project-scoped) TLS clients
+* `authorization.client.oidc`: driver for OIDC-authenticated clients
+
+Each key accepts one of `allow`, `deny`, `openfga` or `scriptlet`. A per-class
+key falls back to `authorization.client.default` when unset.
+
+`authorization.client.tls-restricted` additionally accepts `tls`, as the TLS
+authorization method exists to enforce the per-certificate project restrictions
+that only apply to restricted certificates.
+
+The following server configuration key is also added:
+
+* `authorization.openfga.tls.identifier`: certificate attribute (`fingerprint`
+  or `name`) used as the OpenFGA user when a TLS client is authorized by
+  OpenFGA (defaults to `name`).

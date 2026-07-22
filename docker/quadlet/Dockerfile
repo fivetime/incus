@@ -206,7 +206,8 @@ RUN test "$(incusd --version)" = "7.2" \
     && ! ldd /usr/local/sbin/criu | grep -q "not found"
 
 COPY docker/quadlet/start.sh docker/quadlet/healthcheck.sh /usr/local/sbin/
-RUN chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh
+RUN sed -i 's/\r$//' /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh \
+    && chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh
 
 VOLUME ["/var/lib/incus"]
 STOPSIGNAL SIGPWR
