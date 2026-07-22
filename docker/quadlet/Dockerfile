@@ -8,7 +8,7 @@
 # Incus API, so no web UI is included.
 #
 # Build context must be the repository root:
-#   docker build -f docker/alpine-novm/Dockerfile .
+#   docker build -f docker/quadlet/Dockerfile .
 
 # Pinned to a stable release rather than edge: edge is a rolling repository
 # where packages get renamed or dropped without notice (e.g. ceph20 -> ceph19).
@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
 # unpack images under a restricted AppArmor profile, and Alpine only ships it in
 # the heavyweight apparmor-utils package (python3/perl/bash), which this image
 # omits. Compiled here to reuse the toolchain already present in this stage.
-RUN cc -O2 -Wall -Wextra docker/alpine-novm/aa-exec.c -lapparmor -o /out/aa-exec \
+RUN cc -O2 -Wall -Wextra docker/quadlet/aa-exec.c -lapparmor -o /out/aa-exec \
     && strip /out/aa-exec
 
 FROM alpine:${ALPINE_VERSION} AS criu-build
@@ -88,7 +88,8 @@ RUN apk add --no-cache \
 
 FROM alpine:${ALPINE_VERSION} AS lxc-build
 
-ARG LXC_COMMIT=e4415af07e3ec291205bc828e2b4e8141f91a499
+ARG LXC_REPOSITORY=https://github.com/fivetime/lxc.git
+ARG LXC_REF=main
 
 RUN apk add --no-cache \
       build-base \
@@ -102,12 +103,9 @@ RUN apk add --no-cache \
       openssl-dev \
       samurai \
       util-linux-dev \
-    && git clone --filter=blob:none https://github.com/lxc/lxc.git /build/lxc \
-    && git -C /build/lxc checkout --detach "${LXC_COMMIT}"
+    && git clone --depth=1 --branch "${LXC_REF}" "${LXC_REPOSITORY}" /build/lxc
 
-COPY docker/alpine-novm/lxc-restore-finalize-cgroups.patch /tmp/lxc-restore-finalize-cgroups.patch
-RUN git -C /build/lxc apply /tmp/lxc-restore-finalize-cgroups.patch \
-    && meson setup /build/lxc/build /build/lxc \
+RUN meson setup /build/lxc/build /build/lxc \
       --prefix=/usr \
       -Dtests=false \
       -Dexamples=false \
@@ -207,7 +205,7 @@ RUN test "$(incusd --version)" = "7.2" \
     && strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor" \
     && ! ldd /usr/local/sbin/criu | grep -q "not found"
 
-COPY docker/alpine-novm/start.sh docker/alpine-novm/healthcheck.sh /usr/local/sbin/
+COPY docker/quadlet/start.sh docker/quadlet/healthcheck.sh /usr/local/sbin/
 RUN chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh
 
 VOLUME ["/var/lib/incus"]

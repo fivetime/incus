@@ -1,0 +1,62 @@
+# Install this file as:
+#   install -Dm0644 incus.container /etc/containers/systemd/incus.container
+# Then run:
+#   systemctl daemon-reload && systemctl enable --now incus.service
+#
+# Pin Image to a tested release digest in production. This current template
+# runs lxcfs and incusd in one outer container. Do not use a systemctl restart
+# as a no-disruption Incus upgrade until lxcfs is split into its own service.
+
+[Unit]
+Description=Incus system-container node (Podman Quadlet)
+Documentation=https://linuxcontainers.org/incus/docs/main/
+Wants=network-online.target
+After=network-online.target
+
+# These must be provisioned by the node operator. RequiresMountsFor only
+# orders startup after their mounts; it does not create filesystems or loops.
+RequiresMountsFor=/var/lib/incus /var/log/incus
+AssertPathIsDirectory=/var/lib/incus
+AssertPathIsDirectory=/var/log/incus
+
+[Container]
+Image=ghcr.io/fivetime/incus:quadlet
+ContainerName=incus
+Network=host
+Environment=INCUS_SOCKET_GID=42425
+
+# Incus data and runtime mounts require host-visible recursive shared
+# propagation so nested system-container mounts survive outer restarts.
+Volume=/dev:/dev
+Volume=/var/lib/incus:/var/lib/incus:rshared
+Volume=/var/log/incus:/var/log/incus
+Volume=/run/incus-podman:/run/incus:rshared
+Volume=/lib/modules:/lib/modules:ro
+Volume=/sys/kernel/security:/sys/kernel/security
+Volume=/run/udev:/run/udev:ro
+
+# Uncomment only when this node uses Ceph-backed Incus pools.
+# Volume=/etc/ceph:/etc/ceph:ro
+
+PodmanArgs=--cgroups=no-conmon \
+           --cgroupns=host \
+           --security-opt=unmask=/sys/fs/cgroup \
+           --security-opt=apparmor=unconfined \
+           --privileged \
+           --pid=host \
+           --uts=host \
+           --stop-timeout=120
+
+[Service]
+Restart=always
+RestartSec=5s
+TimeoutStartSec=120
+TimeoutStopSec=135
+RuntimeDirectory=incus-podman
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
+ExecStartPre=/usr/bin/test -w /sys/kernel/security/apparmor/.load
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

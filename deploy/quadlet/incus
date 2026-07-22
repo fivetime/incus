@@ -1,0 +1,9 @@
+#!/bin/sh
+# Host-side wrapper for the Incus client bundled with the Quadlet container.
+set -eu
+
+if [ -t 0 ] && [ -t 1 ]; then
+    exec /usr/bin/podman exec -it incus /usr/bin/incus "$@"
+fi
+
+exec /usr/bin/podman exec -i incus /usr/bin/incus "$@"
