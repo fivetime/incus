@@ -564,6 +564,7 @@ var APIExtensions = []string{
 	"migration_live_shared_cephext_storage",
 	"migration_live_shared_ceph_storage",
 	"authorization_client_routing",
+	"instance_nvram",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

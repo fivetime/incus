@@ -2160,7 +2160,7 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 		ctx["fuse_source"] = fuseSource
 		ctx["fuse_target"] = args.target
 		ctx["fuse_opts"] = fuseOpts
-		_, stderr, runErr := subprocess.RunCommandSplit(
+		_, _, err = subprocess.RunCommandSplit(
 			context.TODO(),
 			nil,
 			[]*os.File{pidFd},
@@ -2170,8 +2170,6 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 			fmt.Sprintf("%d", args.pid),
 			fmt.Sprintf("%d", pidFdNr),
 			fmt.Sprintf("%d", 1),
-			// The FUSE path enters the instance user namespace before applying
-			// credentials, so pass namespace IDs rather than host-mapped IDs.
 			fmt.Sprintf("%d", args.nsuid),
 			fmt.Sprintf("%d", args.nsgid),
 			fmt.Sprintf("%d", args.nsfsuid),
@@ -2180,10 +2178,6 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 			args.target,
 			fuseOpts,
 		)
-		err = runErr
-		if err != nil {
-			ctx["err"] = fmt.Sprintf("Failed to run FUSE mount helper: %v (%s)", err, strings.TrimSpace(stderr))
-		}
 	} else {
 		_, _, err = subprocess.RunCommandSplit(
 			context.TODO(),

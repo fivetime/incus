@@ -406,26 +406,6 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, connState http.ConnState
 
 var errPIDNotInContainer = errors.New("pid not in container?")
 
-func monitorNameFromCgroup(content string) string {
-	const prefix = "/lxc.monitor."
-
-	for _, line := range strings.Split(content, "\n") {
-		index := strings.LastIndex(line, prefix)
-		if index < 0 {
-			continue
-		}
-
-		name := line[index+len(prefix):]
-		if separator := strings.IndexByte(name, '/'); separator >= 0 {
-			name = name[:separator]
-		}
-
-		return name
-	}
-
-	return ""
-}
-
 func loadContainerForMonitorName(name string, s *state.State) (instance.Container, error) {
 	projectName := api.ProjectDefaultName
 	if strings.Contains(name, "_") {
@@ -437,10 +417,6 @@ func loadContainerForMonitorName(name string, s *state.State) (instance.Containe
 	inst, err := instance.LoadByProjectAndName(s, projectName, name)
 	if err != nil {
 		return nil, err
-	}
-
-	if inst.Type() != instancetype.Container {
-		return nil, errors.New("Instance is not container type")
 	}
 
 	c, ok := inst.(instance.Container)
@@ -490,13 +466,14 @@ func findContainerForPid(pid int32, s *state.State) (instance.Container, error) 
 			return loadContainerForMonitorName(name, s)
 		}
 
-		// In a containerized Incus deployment liblxc's monitor can have an
-		// empty cmdline. Its cgroup v2 path remains authoritative and is owned
-		// by liblxc, so use it before walking further up the host process tree.
+		// In containerized deployments the monitor's cmdline can be empty, fall back to its cgroup path.
 		cgroup, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
 		if err == nil {
-			name := monitorNameFromCgroup(string(cgroup))
-			if name != "" {
+			_, name, found := strings.Cut(string(cgroup), "/lxc.monitor.")
+			if found {
+				name, _, _ = strings.Cut(name, "\n")
+				name, _, _ = strings.Cut(name, "/")
+
 				return loadContainerForMonitorName(name, s)
 			}
 		}
