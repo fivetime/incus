@@ -731,6 +731,86 @@ func (b *backend) CreateInstance(inst instance.Instance, op *operations.Operatio
 	return nil
 }
 
+// stripMetadataLinks removes any symlink in the instance's metadata area (everything but the guest
+// rootfs) and returns the removed paths. Removing rather than just reporting neutralizes links that
+// reach the volume via a path (e.g. snapshot restore) that cannot be cleanly reverted.
+func stripMetadataLinks(instPath string) ([]string, error) {
+	rootfsPath := filepath.Join(instPath, "rootfs")
+
+	var removed []string
+
+	err := filepath.WalkDir(instPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Don't descend into the guest's own root filesystem.
+		if path == rootfsPath && d.IsDir() {
+			return filepath.SkipDir
+		}
+
+		if d.Type()&fs.ModeSymlink != 0 {
+			relPath, err := filepath.Rel(instPath, path)
+			if err != nil {
+				return err
+			}
+
+			// Allow the links Incus itself maintains.
+			if relPath == "qemu.nvram" || relPath == "config/lxd-agent" {
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+
+				if !strings.Contains(target, "/") && target != "." && target != ".." {
+					return nil
+				}
+			}
+
+			err = os.Remove(path)
+			if err != nil {
+				return err
+			}
+
+			removed = append(removed, path)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return removed, nil
+}
+
+// stripInstanceMetadataLinks mounts the instance, strips disallowed metadata symlinks and errors if any were found.
+func (b *backend) stripInstanceMetadataLinks(inst instance.Instance, op *operations.Operation) error {
+	volType, err := InstanceTypeToVolumeType(inst.Type())
+	if err != nil {
+		return err
+	}
+
+	_, err = b.MountInstance(inst, op)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = b.UnmountInstance(inst, op) }()
+
+	removed, err := stripMetadataLinks(drivers.GetVolumeMountPath(b.name, volType, project.Instance(inst.Project().Name, inst.Name())))
+	if err != nil {
+		return err
+	}
+
+	if len(removed) > 0 {
+		b.logger.Warn("Removed disallowed symlinks from instance metadata", logger.Ctx{"instance": inst.Name(), "project": inst.Project().Name, "paths": removed})
+		return fmt.Errorf("Instance metadata contained disallowed symlinks: %v", removed)
+	}
+
+	return nil
+}
+
 // CreateInstanceFromBackup restores a backup file onto the storage device. Because the backup file
 // is unpacked and restored onto the storage device before the instance is created in the database
 // it is necessary to return two functions; a post hook that can be run once the instance has been
@@ -807,6 +887,16 @@ func (b *backend) CreateInstanceFromBackup(srcBackup backup.Info, srcData io.Rea
 
 	if revertHook != nil {
 		importRevert.Add(revertHook)
+	}
+
+	// Strip unsafe symlinks before any host-side use of the metadata area.
+	removed, err := stripMetadataLinks(vol.MountPath())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(removed) > 0 {
+		return nil, nil, fmt.Errorf("Backup metadata contained disallowed symlinks: %v", removed)
 	}
 
 	err = b.ensureInstanceSymlink(instanceType, srcBackup.Project, srcBackup.Name, vol.MountPath())
@@ -1294,6 +1384,12 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 		}
 	}
 
+	// Strip unsafe symlinks, including any hidden in a copied-from snapshot.
+	err = b.stripInstanceMetadataLinks(inst, op)
+	if err != nil {
+		return err
+	}
+
 	reverter.Success()
 	return nil
 }
@@ -1702,6 +1798,26 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 		if err != nil {
 			return err
 		}
+
+		// Refresh any dependent custom volumes attached to the instance.
+		newDevices := inst.LocalDevices()
+		err = src.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {
+			// Load the pool for the disk.
+			diskPool, err := LoadByName(b.state, newDevices[dev.Name]["pool"])
+			if err != nil {
+				return fmt.Errorf("Failed loading storage pool: %w", err)
+			}
+
+			err = diskPool.RefreshCustomVolume(inst.Project().Name, src.Project().Name, newDevices[dev.Name]["source"], "", nil, dev.Config["pool"], dev.Config["source"], snapshots, false, op)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 	} else {
 		// We are copying volumes between storage pools so use migration system as it will
 		// be able to negotiate a common transfer method between pool types.
@@ -1722,6 +1838,28 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 			if err != nil {
 				return fmt.Errorf("Failed getting source disk size: %w", err)
 			}
+		}
+
+		newDevices := inst.LocalDevices().CloneNative()
+		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, inst.Project().Name, snapshots, newDevices, false)
+		if err != nil {
+			err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
+			return err
+		}
+
+		volumesWithTypes, err := DependentVolumesMatchMigrationType(b.state, dependentVolumesOffer, snapshots, newDevices, false)
+		if err != nil {
+			err := fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
+			return err
+		}
+
+		srcDependentVolumes := []localMigration.DependentVolumeArgs{}
+		dstDependentVolumes := []localMigration.DependentVolumeArgs{}
+		for _, volWithType := range volumesWithTypes {
+			srcDependentVolumes = append(srcDependentVolumes, localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], nil))
+
+			vol := localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], newDevices[*volWithType.Volume.DeviceName])
+			dstDependentVolumes = append(dstDependentVolumes, vol)
 		}
 
 		migrationSnapshots, err := VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, src.Project().Name, srcPool, contentType, volType, src.Name())
@@ -1752,6 +1890,7 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 				Info:               &localMigration.Info{Config: srcConfig},
 				VolumeOnly:         !snapshots,
 				StorageMove:        true,
+				DependentVolumes:   srcDependentVolumes,
 			}, op)
 		})
 
@@ -1766,6 +1905,7 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 				TrackProgress:      false, // Do not use a progress tracker on receiver.
 				VolumeOnly:         !snapshots,
 				StoragePool:        srcPool.Name(),
+				DependentVolumes:   dstDependentVolumes,
 			}, op)
 		})
 
@@ -1781,6 +1921,12 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 	}
 
 	err = inst.DeferTemplateApply(instance.TemplateTriggerCopy)
+	if err != nil {
+		return err
+	}
+
+	// Strip unsafe symlinks materialized from the refresh source.
+	err = b.stripInstanceMetadataLinks(inst, op)
 	if err != nil {
 		return err
 	}
@@ -1956,6 +2102,12 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 	}
 
 	err = b.ensureInstanceSymlink(inst.Type(), inst.Project().Name, inst.Name(), vol.MountPath())
+	if err != nil {
+		return err
+	}
+
+	// Strip unsafe symlinks introduced by the image.
+	err = b.stripInstanceMetadataLinks(inst, op)
 	if err != nil {
 		return err
 	}
@@ -2240,7 +2392,7 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 		}
 	}
 
-	if b.driver.Info().TargetFormat == drivers.BlockVolumeTypeQcow2 && (!b.driver.Info().Remote || args.ClusterMoveSourceName == "" || args.StoragePool != "") {
+	if b.driver.Info().TargetFormat == drivers.BlockVolumeTypeQcow2 && inst.Type() == instancetype.VM && (!b.driver.Info().Remote || args.ClusterMoveSourceName == "" || args.StoragePool != "") {
 		err = b.qcow2CreateVolumeFromMigration(vol, inst.Project().Name, conn, args, &preFiller, op)
 		if err != nil {
 			return err
@@ -2265,6 +2417,14 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 
 	if len(args.Snapshots) > 0 {
 		err = b.ensureInstanceSnapshotSymlink(inst.Type(), inst.Project().Name, inst.Name())
+		if err != nil {
+			return err
+		}
+	}
+
+	// Strip unsafe symlinks from migrated data, skipping intra-cluster moves (no new data, may not be locally mountable).
+	if !isRemoteClusterMove {
+		err = b.stripInstanceMetadataLinks(inst, op)
 		if err != nil {
 			return err
 		}
@@ -3645,13 +3805,20 @@ func (b *backend) CanRestoreInstanceSnapshot(inst instance.Instance, src instanc
 }
 
 // RestoreInstanceSnapshot restores an instance snapshot.
-func (b *backend) RestoreInstanceSnapshot(inst instance.Instance, src instance.Instance, op *operations.Operation) error {
+func (b *backend) RestoreInstanceSnapshot(inst instance.Instance, src instance.Instance, op *operations.Operation) (err error) {
 	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "src": src.Name()})
 	l.Debug("RestoreInstanceSnapshot started")
 	defer l.Debug("RestoreInstanceSnapshot finished")
 
 	reverter := revert.New()
 	defer reverter.Fail()
+
+	// Strip unsafe symlinks from restored content on all success paths (a snapshot may hide them and restore can't be reverted).
+	defer func() {
+		if err == nil {
+			err = b.stripInstanceMetadataLinks(inst, op)
+		}
+	}()
 
 	if inst.Type() != src.Type() {
 		return errors.New("Instance types must match")
@@ -5425,7 +5592,8 @@ func (b *backend) MigrateCustomVolume(projectName string, conn io.ReadWriteClose
 		return errors.New("Volume config is required")
 	}
 
-	if len(args.Snapshots) != len(args.Info.Config.VolumeSnapshots) {
+	// When refreshing, the number of snapshots in args can differ, as not every snapshot is sent.
+	if !args.Refresh && len(args.Snapshots) != len(args.Info.Config.VolumeSnapshots) {
 		return fmt.Errorf("Requested snapshots count (%d) doesn't match volume snapshot config count (%d)", len(args.Snapshots), len(args.Info.Config.VolumeSnapshots))
 	}
 
@@ -5585,7 +5753,7 @@ func (b *backend) CreateCustomVolumeFromMigration(projectName string, conn io.Re
 		}
 	}
 
-	if b.driver.Info().TargetFormat == drivers.BlockVolumeTypeQcow2 && (!b.driver.Info().Remote || args.ClusterMoveSourceName == "" || args.StoragePool != "") {
+	if b.driver.Info().TargetFormat == drivers.BlockVolumeTypeQcow2 && vol.ContentType() == drivers.ContentTypeBlock && (!b.driver.Info().Remote || args.ClusterMoveSourceName == "" || args.StoragePool != "") {
 		err = b.qcow2CreateVolumeFromMigration(vol, projectName, conn, args, nil, op)
 		if err != nil {
 			return err
@@ -9671,7 +9839,15 @@ func (b *backend) migrateDependentVolumes(inst instance.Instance, conn io.ReadWr
 		snapshotNames := []string{}
 		if !args.VolumeOnly {
 			for _, snap := range dependentVol.Snapshots {
-				snapshotNames = append(snapshotNames, *snap.Name)
+				// During a refresh only the new snapshots should be transferred. The root
+				// volume's args.Snapshots list has already been reduced to the snapshots the
+				// target is missing, and dependent volume snapshots share the same names, so
+				// use it as the source of truth and skip snapshots that aren't in it.
+				if args.Refresh && !slices.Contains(args.Snapshots, snap.GetName()) {
+					continue
+				}
+
+				snapshotNames = append(snapshotNames, snap.GetName())
 			}
 		}
 
@@ -9683,6 +9859,7 @@ func (b *backend) migrateDependentVolumes(inst instance.Instance, conn io.ReadWr
 			ContentType:        dependentVol.ContentType,
 			Info:               &localMigration.Info{Config: diskConfig},
 			VolumeOnly:         args.VolumeOnly,
+			Refresh:            args.Refresh,
 			Snapshots:          snapshotNames,
 		}
 
@@ -9697,6 +9874,10 @@ func (b *backend) migrateDependentVolumes(inst instance.Instance, conn io.ReadWr
 
 // createDependentVolumesFromMigration creates dependent volumes from a migration.
 func (b *backend) createDependentVolumesFromMigration(inst instance.Instance, conn io.ReadWriteCloser, args localMigration.VolumeTargetArgs, info *localMigration.Info, op *operations.Operation) (func(), error) {
+	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "args": fmt.Sprintf("%+v", args)})
+	l.Debug("createDependentVolumesFromMigration started")
+	defer l.Debug("createDependentVolumesFromMigration finished")
+
 	reverter := revert.New()
 	defer reverter.Fail()
 
@@ -9720,7 +9901,27 @@ func (b *backend) createDependentVolumesFromMigration(inst instance.Instance, co
 			return nil, fmt.Errorf("Failed loading storage pool: %w", err)
 		}
 
-		b.logger.Debug("createDependentVolumesFromMigration", logger.Ctx{"name": dependentVol.Name, "type": dependentVol.MigrationType, "size": dependentVol.VolumeSize})
+		b.logger.Debug("Creating dependent volume from migration", logger.Ctx{"name": dependentVol.Name, "type": dependentVol.MigrationType, "size": dependentVol.VolumeSize})
+
+		// During a refresh only the new snapshots should be received. The root volume's
+		// args.Snapshots list has already been reduced to the snapshots the target is
+		// missing, and dependent volume snapshots share the same names, so use it as the
+		// source of truth and drop any dependent volume snapshots that aren't in it.
+		snapshots := dependentVol.Snapshots
+		if args.Refresh {
+			rootSnapshotNames := make([]string, 0, len(args.Snapshots))
+			for _, snap := range args.Snapshots {
+				rootSnapshotNames = append(rootSnapshotNames, snap.GetName())
+			}
+
+			snapshots = make([]*migration.Snapshot, 0, len(dependentVol.Snapshots))
+			for _, snap := range dependentVol.Snapshots {
+				if slices.Contains(rootSnapshotNames, snap.GetName()) {
+					snapshots = append(snapshots, snap)
+				}
+			}
+		}
+
 		volumeArgs := localMigration.VolumeTargetArgs{
 			IndexHeaderVersion: localMigration.IndexHeaderVersion,
 			Name:               dependentVol.Name,
@@ -9728,8 +9929,9 @@ func (b *backend) createDependentVolumesFromMigration(inst instance.Instance, co
 			TrackProgress:      true,
 			ContentType:        dependentVol.ContentType,
 			VolumeOnly:         args.VolumeOnly,
+			Refresh:            args.Refresh,
 			Config:             info.Config.DependentVolumes[idx].Volume.Config,
-			Snapshots:          dependentVol.Snapshots,
+			Snapshots:          snapshots,
 			VolumeSize:         dependentVol.VolumeSize,
 		}
 
@@ -9771,7 +9973,7 @@ func (b *backend) GetInstanceNBD(inst instance.Instance, writable bool) (net.Con
 
 	if !inst.IsRunning() {
 		b.logger.Debug("NBD connection (offline mode)")
-		conn, disconnect, err := b.connectOfflineNBD(vol)
+		conn, disconnect, err := b.connectOfflineNBD(vol, writable)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -9877,7 +10079,7 @@ func (b *backend) GetCustomVolumeNBD(projectName string, volName string, writabl
 	if err != nil {
 		if errors.Is(err, ErrVolumeNotAttachedToRunningInstance) {
 			b.logger.Debug("NBD connection (offline mode)")
-			return b.connectOfflineNBD(vol)
+			return b.connectOfflineNBD(vol, writable)
 		}
 
 		return nil, nil, err
@@ -9885,7 +10087,7 @@ func (b *backend) GetCustomVolumeNBD(projectName string, volName string, writabl
 
 	if !inst.IsRunning() {
 		b.logger.Debug("NBD connection (offline mode)")
-		return b.connectOfflineNBD(vol)
+		return b.connectOfflineNBD(vol, writable)
 	}
 
 	if writable && inst.IsRunning() {
@@ -9915,10 +10117,13 @@ func (b *backend) GetCustomVolumeNBD(projectName string, volName string, writabl
 }
 
 // connectOfflineNBD spawns qemu-nbd for the given volume.
-func (b *backend) connectOfflineNBD(vol drivers.Volume) (net.Conn, func(), error) {
+func (b *backend) connectOfflineNBD(vol drivers.Volume, writable bool) (net.Conn, func(), error) {
 	socketPath := filepath.Join(internalUtil.RunPath(fmt.Sprintf("%s-nbd.sock", vol.Name())))
 
 	cmd := exec.Command("qemu-nbd", fmt.Sprintf("--socket=%s", socketPath))
+	if !writable {
+		cmd.Args = append(cmd.Args, "--read-only")
+	}
 
 	// Share the qemu-nbd process safely between the worker and this goroutine.
 	var procMu sync.Mutex
