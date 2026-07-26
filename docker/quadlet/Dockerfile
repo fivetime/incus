@@ -88,7 +88,7 @@ RUN apk add --no-cache \
 
 FROM alpine:${ALPINE_VERSION} AS lxc-build
 
-ARG LXC_REPOSITORY=https://github.com/fivetime/lxc.git
+ARG LXC_REPOSITORY=https://github.com/lxc/lxc.git
 ARG LXC_REF=main
 
 RUN apk add --no-cache \
