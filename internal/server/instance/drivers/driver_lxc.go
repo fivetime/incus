@@ -7354,6 +7354,14 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 		if sharedStorage && args.Live {
 			liveSharedStorageClaimed.Store(true)
+
+			// CreateInstanceFromMigration() only claims an existing shared volume
+			// and creates the target mount path. Mount it before CRIU restore so
+			// liblxc can access the rootfs referenced by the generated config.
+			_, err = pool.MountInstance(d, d.op)
+			if err != nil {
+				return fmt.Errorf("Failed mounting claimed shared storage on target: %w", err)
+			}
 		}
 
 		isRemoteClusterMove := clusterMove && pool.Driver().Info().Remote
@@ -7492,6 +7500,18 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			if err != nil {
 				d.cleanupFailedMigrationRestore()
 				return err
+			}
+
+			if sharedStorage && args.Live {
+				// The filesystem receiver pre-mounted the claimed shared volume
+				// so startCommon() could build a valid restore config. The CRIU
+				// restore path also mounted it for the running instance; drop the
+				// temporary pre-mount reference and keep the runtime reference.
+				releaseErr := pool.UnmountInstance(d, nil)
+				if releaseErr != nil && !errors.Is(releaseErr, storageDrivers.ErrInUse) {
+					_ = d.Stop(false)
+					return fmt.Errorf("Failed releasing temporary shared storage pre-mount: %w", releaseErr)
+				}
 			}
 
 			return nil
