@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	"github.com/lxc/incus/v7/internal/migration"
 	backupConfig "github.com/lxc/incus/v7/internal/server/backup/config"
 	"github.com/lxc/incus/v7/internal/server/operations"
@@ -313,7 +314,7 @@ func ProtobufToDependentVolume(volume *migration.DependentVolume, migrationType 
 		}
 
 		if overrides["source"] != "" {
-			volName = overrides["source"]
+			volName, _ = internalInstance.SplitVolumeSource(overrides["source"])
 		}
 	}
 
