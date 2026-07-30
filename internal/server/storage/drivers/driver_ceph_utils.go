@@ -257,40 +257,11 @@ again:
 	)
 	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 	cancel()
-	if timedOut {
-		if vol.contentType == ContentTypeFS && linux.IsMountPoint(vol.MountPath()) {
-			return fmt.Errorf("Timed out unmapping mounted RBD volume %q", rbdVol)
-		}
-
-		_, devPath, devErr := d.getRBDMappedDevPath(vol, false)
-		if devErr != nil {
-			return fmt.Errorf("Timed out unmapping RBD volume %q and failed locating its device: %w", rbdVol, devErr)
-		}
-
-		d.logger.Warn("RBD unmap timed out, forcing detached device removal", logger.Ctx{"volName": rbdVol, "dev": devPath})
-		forceCtx, forceCancel := context.WithTimeout(context.Background(), cephRBDUnmapTimeout)
-		_, forceErr := subprocess.RunCommandContext(
-			forceCtx,
-			"rbd",
-			"--id", d.config["ceph.user.name"],
-			"--cluster", d.config["ceph.cluster_name"],
-			"device", "unmap",
-			"--options", "force",
-			devPath,
-		)
-		forceCancel()
-		if forceErr != nil {
-			return fmt.Errorf("Failed force unmapping RBD volume %q from %q: %w", rbdVol, devPath, forceErr)
-		}
-
-		// A forced RBD unmap is asynchronous when the device still has open references.
-		// Retrying here would loop until those references disappear even though the
-		// kernel has already accepted the device removal request.
-		d.logger.Debug("Deactivated RBD volume", logger.Ctx{"volName": rbdVol})
-		return nil
-	}
-
 	if err != nil {
+		if timedOut {
+			return fmt.Errorf("Timed out unmapping RBD volume %q", rbdVol)
+		}
+
 		var runError subprocess.RunError
 		if errors.As(err, &runError) {
 			var exitError *exec.ExitError
