@@ -1259,7 +1259,7 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 		}
 
 		nvidiaRequireCuda := d.expandedConfig["nvidia.require.cuda"]
-		if nvidiaRequireCuda == "" {
+		if nvidiaRequireCuda != "" {
 			err = lxcSetConfigItem(cc, "lxc.environment", fmt.Sprintf("\"NVIDIA_REQUIRE_CUDA=%s\"", nvidiaRequireCuda))
 			if err != nil {
 				return nil, err
@@ -1267,7 +1267,7 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 		}
 
 		nvidiaRequireDriver := d.expandedConfig["nvidia.require.driver"]
-		if nvidiaRequireDriver == "" {
+		if nvidiaRequireDriver != "" {
 			err = lxcSetConfigItem(cc, "lxc.environment", fmt.Sprintf("\"NVIDIA_REQUIRE_DRIVER=%s\"", nvidiaRequireDriver))
 			if err != nil {
 				return nil, err
@@ -2742,8 +2742,16 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		}
 
 		// Configure network handling.
-		err = os.MkdirAll(filepath.Join(d.Path(), "network"), 0o711)
+		// Confine all writes to the instance directory to avoid following image-planted symlinks.
+		instRoot, err := os.OpenRoot(d.Path())
 		if err != nil {
+			return "", nil, err
+		}
+
+		defer logger.WarnOnError(instRoot.Close, "Failed to close instance root")
+
+		err = instRoot.Mkdir("network", 0o711)
+		if err != nil && !errors.Is(err, fs.ErrExist) {
 			return "", nil, err
 		}
 
@@ -2752,7 +2760,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 			return "", nil, err
 		}
 
-		err = os.WriteFile(filepath.Join(d.Path(), "network", "hosts"), fmt.Appendf(nil, `127.0.0.1   localhost
+		err = instRoot.WriteFile("network/hosts", fmt.Appendf(nil, `127.0.0.1   localhost
 127.0.1.1   %s
 
 ::1     localhost ip6-localhost ip6-loopback
@@ -2770,7 +2778,7 @@ ff02::2 ip6-allrouters
 			return "", nil, err
 		}
 
-		err = os.WriteFile(filepath.Join(d.Path(), "network", "hostname"), fmt.Appendf(nil, "%s\n", d.name), 0o644)
+		err = instRoot.WriteFile("network/hostname", fmt.Appendf(nil, "%s\n", d.name), 0o644)
 		if err != nil {
 			return "", nil, err
 		}
@@ -2794,7 +2802,7 @@ ff02::2 ip6-allrouters
 			fmt.Fprintf(&resolvConf, "domain %s\n", d.expandedConfig["oci.dns.domain"])
 		}
 
-		err = os.WriteFile(filepath.Join(d.Path(), "network", "resolv.conf"), []byte(resolvConf.String()), 0o644)
+		err = instRoot.WriteFile("network/resolv.conf", []byte(resolvConf.String()), 0o644)
 		if err != nil {
 			return "", nil, err
 		}
@@ -2824,7 +2832,7 @@ ff02::2 ip6-allrouters
 			return "", nil, err
 		}
 
-		err = os.WriteFile(filepath.Join(d.Path(), "network", "interfaces.json"), ifacesData, 0o644)
+		err = instRoot.WriteFile("network/interfaces.json", ifacesData, 0o644)
 		if err != nil {
 			return "", nil, err
 		}
