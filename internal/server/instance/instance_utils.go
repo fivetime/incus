@@ -910,6 +910,7 @@ func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operati
 			// Populate profile info that was already loaded.
 			newInstArgs := newArgs[dbInst.ID]
 			newInstArgs.Profiles = args.Profiles
+			newInstArgs.MigrationAttempt = args.MigrationAttempt
 			args = newInstArgs
 
 			return nil
@@ -976,6 +977,7 @@ func CreateInternal(s *state.State, args db.InstanceArgs, op *operations.Operati
 		// Populate profile info that was already loaded.
 		newInstArgs := newArgs[dbInst.ID]
 		newInstArgs.Profiles = args.Profiles
+		newInstArgs.MigrationAttempt = args.MigrationAttempt
 		args = newInstArgs
 
 		return nil

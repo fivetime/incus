@@ -20,6 +20,22 @@ CREATE TABLE "config" (
     value TEXT NOT NULL,
     UNIQUE (key)
 );
+CREATE TABLE migration_attempts (
+    token TEXT PRIMARY KEY NOT NULL,
+    project TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    started INTEGER NOT NULL DEFAULT 0,
+    finished INTEGER NOT NULL DEFAULT 0,
+    operation_uuid TEXT NOT NULL DEFAULT '',
+    idmap_base INTEGER NOT NULL DEFAULT -1,
+    idmap_size INTEGER NOT NULL DEFAULT 0,
+    daemon_start INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX migration_attempts_active_idmap
+    ON migration_attempts (idmap_base)
+    WHERE finished = 0 AND idmap_base >= 0;
 CREATE TABLE patches (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     name VARCHAR(255) NOT NULL,
@@ -34,5 +50,5 @@ CREATE TABLE raft_nodes (
     UNIQUE (address)
 );
 
-INSERT INTO schema (version, updated_at) VALUES (43, strftime("%s"))
+INSERT INTO schema (version, updated_at) VALUES (44, strftime("%s"))
 `

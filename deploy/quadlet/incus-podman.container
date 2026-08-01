@@ -1,34 +1,39 @@
 # Install this file as:
-#   install -Dm0644 incus.container /etc/containers/systemd/incus.container
+#   install -Dm0644 incus-podman.container /etc/containers/systemd/incus-podman.container
 # Then run:
-#   systemctl daemon-reload && systemctl enable --now incus.service
+#   systemctl daemon-reload
+#   systemctl enable --now incus-lxcfs.service incus-podman.service
 #
-# Pin Image to a tested release digest in production. This current template
-# runs lxcfs and incusd in one outer container. Do not use a systemctl restart
-# as a no-disruption Incus upgrade until lxcfs is split into its own service.
+# Pin Image to a tested release digest in production. The independently pinned
+# incus-lxcfs service owns the long-lived LXCFS data plane.
 
 [Unit]
-Description=Incus system-container node (Podman Quadlet)
+Description=Incus system-container control plane (Podman Quadlet)
 Documentation=https://linuxcontainers.org/incus/docs/main/
 Wants=network-online.target
 After=network-online.target
+Requires=incus-lxcfs.service
+After=incus-lxcfs.service
 
 # These must be provisioned by the node operator. RequiresMountsFor only
 # orders startup after their mounts; it does not create filesystems or loops.
-RequiresMountsFor=/var/lib/incus /var/log/incus
+RequiresMountsFor=/var/lib/incus /var/lib/lxcfs /var/log/incus
 AssertPathIsDirectory=/var/lib/incus
+AssertPathIsDirectory=/var/lib/lxcfs
 AssertPathIsDirectory=/var/log/incus
 
 [Container]
 Image=ghcr.io/fivetime/incus:quadlet
 ContainerName=incus
 Network=host
+Environment=INCUS_RUNTIME_ROLE=incusd
 Environment=INCUS_SOCKET_GID=42425
 
 # Incus data and runtime mounts require host-visible recursive shared
 # propagation so nested system-container mounts survive outer restarts.
 Volume=/dev:/dev
 Volume=/var/lib/incus:/var/lib/incus:rshared
+Volume=/var/lib/lxcfs:/var/lib/lxcfs:rshared
 Volume=/var/log/incus:/var/log/incus
 Volume=/run/incus-podman:/run/incus:rshared
 Volume=/lib/modules:/lib/modules:ro
@@ -45,6 +50,7 @@ PodmanArgs=--cgroups=no-conmon \
            --privileged \
            --pid=host \
            --uts=host \
+           --stop-signal=SIGTERM \
            --stop-timeout=120
 
 [Service]
@@ -56,6 +62,7 @@ RuntimeDirectory=incus-podman
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=restart
 ExecStartPre=/usr/bin/test -w /sys/kernel/security/apparmor/.load
+ExecStartPre=/usr/bin/test -r /var/lib/lxcfs/proc/meminfo
 LimitNOFILE=1048576
 
 [Install]

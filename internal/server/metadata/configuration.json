@@ -3631,10 +3631,31 @@
 						}
 					},
 					{
+						"volatile.migration.storage_delete_protection": {
+							"longdesc": "Whether deletion of this local instance record must preserve storage\nclaimed during a shared storage migration.",
+							"shortdesc": "Whether local instance deletion preserves shared migration storage",
+							"type": "bool"
+						}
+					},
+					{
 						"volatile.migration.storage_handover": {
-							"longdesc": "State of the shared storage handover of the instance's volumes during a\nmigration: \"pending\" while the handover is in flight, \"committed\" once the\ntarget server owns the volumes. In either state, deleting the instance\nleaves the volumes themselves untouched. A failed migration keeps the\n\"pending\" marker as the target may still have completed its claim; clear\nit manually once the target is confirmed to hold no claim.",
+							"longdesc": "State of the shared storage handover of the instance's volumes during a\nmigration: \"pending\" while the handover is in flight, \"committed\" once the\ntarget server owns the volumes. In either state, deleting the instance\nleaves the volumes themselves untouched. A failed migration keeps the\n\"pending\" marker as the target may still have completed its claim. After\npositively fencing and cleaning the target, use the storage handover API\nto restore source ownership.",
 							"shortdesc": "State of the shared storage handover of the instance's volumes",
 							"type": "string"
+						}
+					},
+					{
+						"volatile.migration.storage_handover_role": {
+							"longdesc": "Whether this local record is the source or target of a shared storage\nhandover. This disambiguates recovery of an interrupted migration.",
+							"shortdesc": "Role of the local record in a shared storage handover",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.migration.storage_receive_complete": {
+							"longdesc": "Whether this migration target completed receiving its shared storage.",
+							"shortdesc": "Whether shared migration storage receive completed",
+							"type": "bool"
 						}
 					},
 					{

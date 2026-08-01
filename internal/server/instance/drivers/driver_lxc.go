@@ -58,6 +58,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/device"
 	deviceConfig "github.com/lxc/incus/v7/internal/server/device/config"
 	"github.com/lxc/incus/v7/internal/server/device/nictype"
+	"github.com/lxc/incus/v7/internal/server/idmapreservation"
 	"github.com/lxc/incus/v7/internal/server/instance"
 	"github.com/lxc/incus/v7/internal/server/instance/instancetype"
 	"github.com/lxc/incus/v7/internal/server/instance/operationlock"
@@ -66,6 +67,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/locking"
 	"github.com/lxc/incus/v7/internal/server/metrics"
 	localMigration "github.com/lxc/incus/v7/internal/server/migration"
+	"github.com/lxc/incus/v7/internal/server/migrationattempt"
 	"github.com/lxc/incus/v7/internal/server/network"
 	"github.com/lxc/incus/v7/internal/server/operations"
 	"github.com/lxc/incus/v7/internal/server/project"
@@ -217,23 +219,24 @@ func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, partialDevic
 			state: s,
 			op:    op,
 
-			architecture: args.Architecture,
-			creationDate: args.CreationDate,
-			dbType:       args.Type,
-			description:  args.Description,
-			ephemeral:    args.Ephemeral,
-			expiryDate:   args.ExpiryDate,
-			id:           args.ID,
-			lastUsedDate: args.LastUsedDate,
-			localConfig:  args.Config,
-			localDevices: args.Devices,
-			logger:       logger.AddContext(logger.Ctx{"instanceType": args.Type, "instance": args.Name, "project": args.Project}),
-			name:         args.Name,
-			node:         args.Node,
-			profiles:     args.Profiles,
-			project:      p,
-			isSnapshot:   args.Snapshot,
-			stateful:     args.Stateful,
+			architecture:     args.Architecture,
+			creationDate:     args.CreationDate,
+			dbType:           args.Type,
+			description:      args.Description,
+			ephemeral:        args.Ephemeral,
+			expiryDate:       args.ExpiryDate,
+			id:               args.ID,
+			lastUsedDate:     args.LastUsedDate,
+			localConfig:      args.Config,
+			localDevices:     args.Devices,
+			logger:           logger.AddContext(logger.Ctx{"instanceType": args.Type, "instance": args.Name, "project": args.Project}),
+			migrationAttempt: args.MigrationAttempt,
+			name:             args.Name,
+			node:             args.Node,
+			profiles:         args.Profiles,
+			project:          p,
+			isSnapshot:       args.Snapshot,
+			stateful:         args.Stateful,
 		},
 	}
 
@@ -305,11 +308,14 @@ func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, partialDevic
 	// Setup the initial idmap config.
 	var idmapSet *idmap.Set
 	base := int64(0)
+	releaseIdmap := func() {}
 	if !d.IsPrivileged() {
-		idmapSet, base, err = d.findIdmap()
+		idmapSet, base, releaseIdmap, err = d.findIdmap()
 		if err != nil {
 			return nil, nil, err
 		}
+
+		defer releaseIdmap()
 	}
 
 	idmapSetJSON, err := idmapSet.ToJSON()
@@ -331,6 +337,7 @@ func lxcCreate(s *state.State, args db.InstanceArgs, p api.Project, partialDevic
 	}
 
 	err = d.VolatileSet(v)
+	releaseIdmap()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -416,23 +423,24 @@ func lxcInstantiate(s *state.State, args db.InstanceArgs, expandedDevices device
 		common: common{
 			state: s,
 
-			architecture: args.Architecture,
-			creationDate: args.CreationDate,
-			dbType:       args.Type,
-			description:  args.Description,
-			ephemeral:    args.Ephemeral,
-			expiryDate:   args.ExpiryDate,
-			id:           args.ID,
-			lastUsedDate: args.LastUsedDate,
-			localConfig:  args.Config,
-			localDevices: args.Devices,
-			logger:       logger.AddContext(logger.Ctx{"instanceType": args.Type, "instance": args.Name, "project": args.Project}),
-			name:         args.Name,
-			node:         args.Node,
-			profiles:     args.Profiles,
-			project:      p,
-			isSnapshot:   args.Snapshot,
-			stateful:     args.Stateful,
+			architecture:     args.Architecture,
+			creationDate:     args.CreationDate,
+			dbType:           args.Type,
+			description:      args.Description,
+			ephemeral:        args.Ephemeral,
+			expiryDate:       args.ExpiryDate,
+			id:               args.ID,
+			lastUsedDate:     args.LastUsedDate,
+			localConfig:      args.Config,
+			localDevices:     args.Devices,
+			logger:           logger.AddContext(logger.Ctx{"instanceType": args.Type, "instance": args.Name, "project": args.Project}),
+			migrationAttempt: args.MigrationAttempt,
+			name:             args.Name,
+			node:             args.Node,
+			profiles:         args.Profiles,
+			project:          p,
+			isSnapshot:       args.Snapshot,
+			stateful:         args.Stateful,
 		},
 	}
 
@@ -480,11 +488,19 @@ type lxc struct {
 	idmapset *idmap.Set
 }
 
-var idmapLock sync.Mutex
+func idmapRangesOverlap(baseA int64, sizeA int64, baseB int64, sizeB int64) bool {
+	return idmapreservation.RangesOverlap(baseA, sizeA, baseB, sizeB)
+}
 
-func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
+func idmapRangeFitsBefore(base int64, size int64, nextBase int64) bool {
+	return size >= 0 && base <= nextBase && size <= nextBase-base
+}
+
+func (d *lxc) findIdmap() (*idmap.Set, int64, func(), error) {
+	noRelease := func() {}
+
 	if d.state.OS.IdmapSet == nil {
-		return nil, 0, errors.New("System doesn't have a functional idmap setup")
+		return nil, 0, noRelease, errors.New("System doesn't have a functional idmap setup")
 	}
 
 	idmapSize := func(size string) (int64, error) {
@@ -513,7 +529,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 
 	rawMaps, err := idmap.NewSetFromIncusIDMap(d.expandedConfig["raw.idmap"])
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, noRelease, err
 	}
 
 	mkIdmap := func(offset int64, size int64) (*idmap.Set, error) {
@@ -541,7 +557,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 		if d.expandedConfig["security.idmap.size"] != "" {
 			size, err := idmapSize(d.expandedConfig["security.idmap.size"])
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, noRelease, err
 			}
 
 			for k, ent := range newIdmapset.Entries {
@@ -557,41 +573,29 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 		for _, ent := range rawMaps.Entries {
 			err := newIdmapset.AddSafe(ent)
 			if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
-				return nil, 0, err
+				return nil, 0, noRelease, err
 			}
 		}
 
-		return &newIdmapset, 0, nil
+		return &newIdmapset, 0, noRelease, nil
 	}
 
 	size, err := idmapSize(d.expandedConfig["security.idmap.size"])
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, noRelease, err
 	}
 
-	if d.expandedConfig["security.idmap.base"] != "" {
-		offset, err := strconv.ParseInt(d.expandedConfig["security.idmap.base"], 10, 64)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		set, err := mkIdmap(offset, size)
-		if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
-			return nil, 0, err
-		}
-
-		return set, offset, nil
+	unlockIDMap, err := locking.Lock(context.TODO(), idmapreservation.LockName)
+	if err != nil {
+		return nil, 0, noRelease, err
 	}
 
-	idmapLock.Lock()
-	defer idmapLock.Unlock()
+	defer unlockIDMap()
 
 	cts, err := instance.LoadNodeAll(d.state, instancetype.Container)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, noRelease, err
 	}
-
-	offset := d.state.OS.IdmapSet.Entries[0].HostID + 65536
 
 	mapentries := idmap.ByHostID{}
 	for _, container := range cts {
@@ -612,38 +616,145 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 			continue
 		}
 
-		if container.ExpandedConfig()["volatile.idmap.base"] == "" {
+		baseValue := container.ExpandedConfig()["volatile.idmap.base"]
+		if baseValue == "" {
+			baseValue = container.ExpandedConfig()["security.idmap.base"]
+		}
+
+		if baseValue == "" {
 			continue
 		}
 
-		cBase, err := strconv.ParseInt(container.ExpandedConfig()["volatile.idmap.base"], 10, 64)
+		cBase, err := strconv.ParseInt(baseValue, 10, 64)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, noRelease, err
 		}
 
 		cSize, err := idmapSize(container.ExpandedConfig()["security.idmap.size"])
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, noRelease, err
 		}
 
 		mapentries.Entries = append(mapentries.Entries, idmap.Entry{HostID: int64(cBase), MapRange: cSize})
 	}
 
+	for instanceID, reservation := range idmapreservation.Transient() {
+		if instanceID == d.id {
+			continue
+		}
+
+		mapentries.Entries = append(mapentries.Entries, idmap.Entry{HostID: reservation.Base, MapRange: reservation.Size})
+	}
+
+	attemptReservations, err := migrationattempt.New(d.state.DB.Node).IDMapReservations(context.TODO())
+	if err != nil {
+		return nil, 0, noRelease, fmt.Errorf("Failed loading migration idmap reservations: %w", err)
+	}
+
+	ownAttemptReservationFound := false
+	for _, reservation := range attemptReservations {
+		if reservation.Token == d.migrationAttempt {
+			if reservation.Project != d.project.Name || reservation.ResourceType != migrationattempt.ResourceTypeInstance || reservation.ResourceName != d.name {
+				return nil, 0, noRelease, migrationattempt.ErrBindingMismatch
+			}
+
+			requestedBase := d.expandedConfig["security.idmap.base"]
+			requestedSize := d.expandedConfig["security.idmap.size"]
+			if !util.IsTrue(d.expandedConfig["security.idmap.isolated"]) || requestedBase == "" {
+				return nil, 0, noRelease, errors.New("Migration attempt reserves an isolated idmap but the instance does not request a fixed isolated idmap")
+			}
+
+			base, err := strconv.ParseInt(requestedBase, 10, 64)
+			if err != nil {
+				return nil, 0, noRelease, err
+			}
+
+			configuredSize, err := idmapSize(requestedSize)
+			if err != nil {
+				return nil, 0, noRelease, err
+			}
+
+			if base != reservation.IDMapBase || configuredSize != reservation.IDMapSize {
+				return nil, 0, noRelease, fmt.Errorf("Migration attempt idmap reservation %d-%d does not match requested instance range %d-%d",
+					reservation.IDMapBase,
+					reservation.IDMapBase+reservation.IDMapSize-1,
+					base,
+					base+configuredSize-1)
+			}
+
+			ownAttemptReservationFound = true
+			continue
+		}
+
+		mapentries.Entries = append(mapentries.Entries, idmap.Entry{HostID: reservation.IDMapBase, MapRange: reservation.IDMapSize})
+	}
+
+	if d.migrationAttempt != "" && !ownAttemptReservationFound {
+		attempt, err := migrationattempt.New(d.state.DB.Node).Get(context.TODO(), d.migrationAttempt)
+		if err != nil {
+			return nil, 0, noRelease, fmt.Errorf("Failed loading migration attempt idmap reservation: %w", err)
+		}
+
+		if attempt.IDMapBase >= 0 {
+			return nil, 0, noRelease, errors.New("Migration attempt idmap reservation is no longer active")
+		}
+	}
+
 	sort.Sort(mapentries)
+
+	reserve := func(offset int64) func() {
+		reservation := idmapreservation.Reservation{Base: offset, Size: size}
+		idmapreservation.SetTransient(d.id, reservation)
+
+		var once sync.Once
+		return func() {
+			once.Do(func() {
+				unlockIDMap, err := locking.Lock(context.TODO(), idmapreservation.LockName)
+				if err != nil {
+					d.logger.Error("Failed locking isolated idmap reservations for release", logger.Ctx{"err": err})
+					return
+				}
+
+				defer unlockIDMap()
+				idmapreservation.ClearTransient(d.id, reservation)
+			})
+		}
+	}
+
+	makeReservedIdmap := func(offset int64) (*idmap.Set, int64, func(), error) {
+		set, err := mkIdmap(offset, size)
+		if err != nil {
+			return nil, 0, noRelease, err
+		}
+
+		return set, offset, reserve(offset), nil
+	}
+
+	if d.expandedConfig["security.idmap.base"] != "" {
+		offset, err := strconv.ParseInt(d.expandedConfig["security.idmap.base"], 10, 64)
+		if err != nil {
+			return nil, 0, noRelease, err
+		}
+
+		for _, entry := range mapentries.Entries {
+			if idmapRangesOverlap(offset, size, entry.HostID, entry.MapRange) {
+				return nil, 0, noRelease, fmt.Errorf("Requested isolated idmap range %d-%d overlaps an existing isolated instance range %d-%d", offset, offset+size-1, entry.HostID, entry.HostID+entry.MapRange-1)
+			}
+		}
+
+		return makeReservedIdmap(offset)
+	}
+
+	offset := d.state.OS.IdmapSet.Entries[0].HostID + 65536
 
 	for i := range mapentries.Entries {
 		if i == 0 {
-			if mapentries.Entries[0].HostID < offset+size {
+			if !idmapRangeFitsBefore(offset, size, mapentries.Entries[0].HostID) {
 				offset = mapentries.Entries[0].HostID + mapentries.Entries[0].MapRange
 				continue
 			}
 
-			set, err := mkIdmap(offset, size)
-			if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
-				return nil, 0, err
-			}
-
-			return set, offset, nil
+			return makeReservedIdmap(offset)
 		}
 
 		if mapentries.Entries[i-1].HostID+mapentries.Entries[i-1].MapRange > offset {
@@ -652,28 +763,18 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, error) {
 		}
 
 		offset = mapentries.Entries[i-1].HostID + mapentries.Entries[i-1].MapRange
-		if offset+size < mapentries.Entries[i].HostID {
-			set, err := mkIdmap(offset, size)
-			if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
-				return nil, 0, err
-			}
-
-			return set, offset, nil
+		if idmapRangeFitsBefore(offset, size, mapentries.Entries[i].HostID) {
+			return makeReservedIdmap(offset)
 		}
 
 		offset = mapentries.Entries[i].HostID + mapentries.Entries[i].MapRange
 	}
 
 	if offset+size <= d.state.OS.IdmapSet.Entries[0].HostID+d.state.OS.IdmapSet.Entries[0].MapRange {
-		set, err := mkIdmap(offset, size)
-		if err != nil && errors.Is(err, idmap.ErrHostIDIsSubID) {
-			return nil, 0, err
-		}
-
-		return set, offset, nil
+		return makeReservedIdmap(offset)
 	}
 
-	return nil, 0, errors.New("Not enough uid/gid available for the container")
+	return nil, 0, noRelease, errors.New("Not enough uid/gid available for the container")
 }
 
 func (d *lxc) init() error {
@@ -2103,13 +2204,14 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		// Check if we need to change idmap.
 		if nextMap != nil && d.state.OS.IdmapSet != nil && !d.state.OS.IdmapSet.Includes(nextMap) {
 			// Update the idmap.
-			idmapSet, base, err := d.findIdmap()
+			idmapSet, base, releaseIdmap, err := d.findIdmap()
 			if err != nil {
 				return "", nil, fmt.Errorf("Failed to get ID map: %w", err)
 			}
 
 			idmapSetJSON, err := idmapSet.ToJSON()
 			if err != nil {
+				releaseIdmap()
 				return "", nil, fmt.Errorf("Failed to encode ID map: %w", err)
 			}
 
@@ -2117,6 +2219,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 				"volatile.idmap.next": idmapSetJSON,
 				"volatile.idmap.base": fmt.Sprintf("%v", base),
 			})
+			releaseIdmap()
 			if err != nil {
 				return "", nil, fmt.Errorf("Failed to update volatile idmap: %w", err)
 			}
@@ -5207,13 +5310,16 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 	if slices.Contains(changedConfig, "security.idmap.isolated") || slices.Contains(changedConfig, "security.idmap.base") || slices.Contains(changedConfig, "security.idmap.size") || slices.Contains(changedConfig, "raw.idmap") || slices.Contains(changedConfig, "security.privileged") {
 		var idmapSet *idmap.Set
 		base := int64(0)
+		releaseIdmap := func() {}
 		if !d.IsPrivileged() {
 			// Update the idmap.
-			idmapSet, base, err = d.findIdmap()
+			idmapSet, base, releaseIdmap, err = d.findIdmap()
 			if err != nil {
 				return fmt.Errorf("Failed to get ID map: %w", err)
 			}
 		}
+
+		defer releaseIdmap()
 
 		jsonIdmap, err := idmapSet.ToJSON()
 		if err != nil {
@@ -6231,7 +6337,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		if fsid != "" {
 			offerHeader.CephFsid = proto.String(fsid)
 			offerHeader.CephPool = proto.String(osdPool)
-			offerHeader.CephDriver = proto.String(pool.Driver().Info().Name)
+			offerHeader.CephDriver = proto.String(sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name))
 		}
 	}
 
@@ -6302,6 +6408,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		SharedStorage:      offerHeader.GetCephFsid() != "" && respHeader.GetSharedStorage(),
 		DependentVolumes:   dependentVolumes,
 	}
+
 	liveSharedStorage := args.Live && volSourceArgs.SharedStorage && isCephSharedStorageDriver(pool.Driver().Info().Name)
 
 	// Only send the snapshots that the target requests when refreshing.
@@ -6332,11 +6439,15 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 	// can ever leave the target owning the volumes while this marker is missing
 	// (which would let a later deletion of the source instance delete the
 	// volumes in use on the target). The marker is upgraded to "committed" once
-	// the target has confirmed the claim and cleared again if the migration
-	// fails; both states prevent the source's deletion from touching the
-	// volumes, so any failure at worst leaks them, it can never double delete.
+	// the target has confirmed the claim. A failure keeps "pending" unless the
+	// source can prove the target never claimed storage; both states prevent
+	// source deletion from touching the volumes, so uncertainty can leak but
+	// cannot delete storage owned by the target.
 	if volSourceArgs.SharedStorage {
-		err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "pending"})
+		err := d.VolatileSet(map[string]string{
+			internalInstance.ConfigVolatileMigrationStorageHandover:     "pending",
+			internalInstance.ConfigVolatileMigrationStorageHandoverRole: internalInstance.StorageHandoverRoleSource,
+		})
 		if err != nil {
 			err = fmt.Errorf("Failed marking instance storage handover as pending: %w", err)
 			op.Done(err)
@@ -6402,6 +6513,13 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 		if !liveSharedStorage {
 			d.logger.Debug("Starting storage migration phase")
+
+			if volSourceArgs.SharedStorage {
+				err = releaseAndSignalSharedStorageHandover(d.unmount, filesystemConn)
+				if err != nil {
+					return err
+				}
+			}
 
 			err = pool.MigrateInstance(d, filesystemConn, volSourceArgs, d.op)
 			if err != nil {
@@ -6477,6 +6595,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					StateDir:     checkpointDir,
 					Function:     "migration",
 				}
+
 				err = d.migrate(&criuMigrationArgs)
 				if err != nil && preDumpDir != "" && d.IsRunning() {
 					// A process created after the last pre-dump can leave CRIU
@@ -6511,6 +6630,11 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				// The target filesystem receiver has waited without claiming
 				// the volume. Trigger handover only after source unmount.
 				liveSharedHandoverStarted.Store(true)
+				err = signalSharedStorageHandoverReady(filesystemConn)
+				if err != nil {
+					return err
+				}
+
 				err = pool.MigrateInstance(d, filesystemConn, volSourceArgs, d.op)
 				if err != nil {
 					return err
@@ -6742,12 +6866,16 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					ActionScript: false,
 					DumpDir:      "final",
 				}
+
 				recoveryErr := d.migrate(&recoveryArgs)
 				if recoveryErr != nil {
 					err = errors.Join(err, fmt.Errorf("Failed restoring source after live shared storage migration failure: %w", recoveryErr))
 				} else {
 					_ = os.RemoveAll(liveSharedCheckpointDir)
-					markerErr := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": ""})
+					markerErr := d.VolatileSet(map[string]string{
+						internalInstance.ConfigVolatileMigrationStorageHandover:     "",
+						internalInstance.ConfigVolatileMigrationStorageHandoverRole: "",
+					})
 					if markerErr != nil {
 						err = errors.Join(err, fmt.Errorf("Failed clearing storage handover marker after restoring source: %w", markerErr))
 					}
@@ -6769,7 +6897,10 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					// The final CRIU dump failed before the source volume was
 					// unmounted or offered to the target, so the source still
 					// has sole ownership and pending is safe to clear.
-					markerErr := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": ""})
+					markerErr := d.VolatileSet(map[string]string{
+						internalInstance.ConfigVolatileMigrationStorageHandover:     "",
+						internalInstance.ConfigVolatileMigrationStorageHandoverRole: "",
+					})
 					if markerErr != nil {
 						err = errors.Join(err, fmt.Errorf("Failed clearing unstarted storage handover marker: %w", markerErr))
 					}
@@ -6786,7 +6917,10 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 			// The target confirmed the claim, record that the ownership transfer
 			// completed. A failure here fails the migration while keeping the
 			// pending marker, so the volumes stay protected either way.
-			err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "committed"})
+			err := d.VolatileSet(map[string]string{
+				internalInstance.ConfigVolatileMigrationStorageHandover:     "committed",
+				internalInstance.ConfigVolatileMigrationStorageHandoverRole: internalInstance.StorageHandoverRoleSource,
+			})
 			if err != nil {
 				err = fmt.Errorf("Failed marking instance storage handover as committed: %w", err)
 				op.Done(err)
@@ -6964,6 +7098,11 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	d.logger.Debug("Migration receive starting")
 	defer d.logger.Debug("Migration receive stopped")
 
+	err := withMigrationAttemptGuard(args.MigrationAttemptGuard, "before negotiation", nil)
+	if err != nil {
+		return err
+	}
+
 	// Wait for essential migration connections before negotiation.
 	connectionsCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
@@ -7138,7 +7277,9 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	liveSharedHandover := args.Live && offerHeader.GetCriu() == migration.CRIUType_CRIU_RSYNC && isCephSharedStorageDriver(pool.Driver().Info().Name)
 	fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 	if offerHeader.GetCephFsid() != "" && !clusterMove && !args.Refresh && (stoppedSharedHandover || liveSharedHandover) {
-		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() && pool.Driver().Info().Name == offerHeader.GetCephDriver() {
+		if fsid == offerHeader.GetCephFsid() &&
+			osdPool == offerHeader.GetCephPool() &&
+			sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name) == offerHeader.GetCephDriver() {
 			sharedStorage = true
 			respHeader.SharedStorage = proto.Bool(true)
 		}
@@ -7186,7 +7327,8 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	defer reverter.Fail()
 
 	g, ctx := errgroup.WithContext(context.Background())
-	var liveSharedStorageClaimed atomic.Bool
+	var sharedStorageClaimed atomic.Bool
+	var storageReceiveCompletionErr error
 
 	// Start control connection monitor.
 	g.Go(func() error {
@@ -7355,14 +7497,22 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			}
 		}
 
-		err = pool.CreateInstanceFromMigration(d, filesystemConn, volTargetArgs, d.op)
+		err = withMigrationAttemptGuard(args.MigrationAttemptGuard, "before storage receive", func() error {
+			return withSharedStorageMigrationTargetProtection(sharedStorage, pool.Driver().Info().Name, d.VolatileSet, func() error {
+				return claimSharedStorageMigrationTarget(sharedStorage, filesystemConn, args.MigrationAttemptGuard, func() error {
+					return pool.CreateInstanceFromMigration(d, filesystemConn, volTargetArgs, d.op)
+				})
+			})
+		})
 		if err != nil {
 			return fmt.Errorf("Failed creating instance on target: %w", err)
 		}
 
-		if sharedStorage && args.Live {
-			liveSharedStorageClaimed.Store(true)
+		if sharedStorage {
+			sharedStorageClaimed.Store(true)
+		}
 
+		if sharedStorage && args.Live {
 			// CreateInstanceFromMigration() only claims an existing shared volume
 			// and creates the target mount path. Mount it before CRIU restore so
 			// liblxc can access the rootfs referenced by the generated config.
@@ -7403,6 +7553,14 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			err = d.DeferTemplateApply(instance.TemplateTriggerCopy)
 			if err != nil {
 				return err
+			}
+		}
+
+		if !args.Live {
+			err = markSharedStorageMigrationTargetReceiveComplete(sharedStorage, pool.Driver().Info().Name, d.VolatileSet)
+			if err != nil {
+				storageReceiveCompletionErr = fmt.Errorf("Failed recording completed shared storage receive: %w", err)
+				return storageReceiveCompletionErr
 			}
 		}
 
@@ -7522,6 +7680,20 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 				}
 			}
 
+			err = markSharedStorageMigrationTargetReceiveComplete(sharedStorage, pool.Driver().Info().Name, d.VolatileSet)
+			if err != nil {
+				completeErr := fmt.Errorf("Failed recording completed shared storage receive: %w", err)
+				storageReceiveCompletionErr = completeErr
+				if d.IsRunning() {
+					stopErr := d.Stop(false)
+					if stopErr != nil {
+						return errors.Join(completeErr, fmt.Errorf("Failed stopping target after receive completion persistence failure: %w", stopErr))
+					}
+				}
+
+				return completeErr
+			}
+
 			return nil
 		})
 	}
@@ -7533,40 +7705,37 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			<-stateTransferDone
 		}
 
+		if storageReceiveCompletionErr != nil {
+			args.Disconnect()
+		}
+
 		// If context is cancelled by this stage, then an error has occurred.
 		// Wait for all routines to finish and collect the first error that occurred.
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || storageReceiveCompletionErr != nil {
 			err := g.Wait()
-			sharedStorageReleased := !liveSharedStorageClaimed.Load()
+			if err == nil {
+				err = storageReceiveCompletionErr
+			}
 
-			// A failed live shared Ceph receive must release its local claim before
-			// the source may safely restore the checkpoint. Never claim release
-			// if the target is running or the cleanup did not fully succeed.
-			if sharedStorage && args.Live && isCephSharedStorageDriver(pool.Driver().Info().Name) && liveSharedStorageClaimed.Load() {
-				if d.IsRunning() {
-					err = errors.Join(err, errors.New("Target instance is running; shared storage claim was not released"))
+			sharedStorageReleased := !sharedStorageClaimed.Load()
+
+			// A failed shared storage receive must release its local claim before
+			// the attempt can be settled. This applies to cold and live receives.
+			if sharedStorage && isCephSharedStorageDriver(pool.Driver().Info().Name) && sharedStorageClaimed.Load() {
+				releaseErr := releaseSharedStorageMigrationTargetClaim(
+					pool.Driver().Info().Name,
+					d.IsRunning,
+					func() error { return d.Stop(false) },
+					func() error {
+						return pool.UnmountInstance(d, nil)
+					},
+					d.VolatileSet,
+					func() error { return pool.DeleteInstance(d, nil) },
+				)
+				if releaseErr != nil {
+					err = errors.Join(err, releaseErr)
 				} else {
-					// DeleteInstance removes the local database record but does
-					// not unmount an already claimed volume. Unmount first so
-					// the release acknowledgement proves the RBD mapping and
-					// watcher are gone before the source attempts recovery.
-					releaseErr := pool.UnmountInstance(d, nil)
-					if releaseErr == nil && pool.Driver().Info().Name == "ceph" {
-						// This target only claimed a root that the source rollback
-						// still needs. Prevent normal target record cleanup from
-						// deleting the Incus-owned RBD image.
-						releaseErr = d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "pending"})
-					}
-
-					if releaseErr == nil {
-						releaseErr = pool.DeleteInstance(d, nil)
-					}
-
-					if releaseErr != nil {
-						err = errors.Join(err, fmt.Errorf("Failed releasing target shared storage claim: %w", releaseErr))
-					} else {
-						sharedStorageReleased = true
-					}
+					sharedStorageReleased = true
 				}
 			}
 
@@ -7598,7 +7767,24 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		err := args.ControlSend(&msg)
 		if err != nil {
 			d.logger.Warn("Failed sending migration success to source", logger.Ctx{"err": err})
-			return fmt.Errorf("Failed sending migration success to source: %w", err)
+			sendErr := fmt.Errorf("Failed sending migration success to source: %w", err)
+			if sharedStorage && isCephSharedStorageDriver(pool.Driver().Info().Name) && sharedStorageClaimed.Load() {
+				releaseErr := releaseSharedStorageMigrationTargetClaim(
+					pool.Driver().Info().Name,
+					d.IsRunning,
+					func() error { return d.Stop(false) },
+					func() error {
+						return pool.UnmountInstance(d, nil)
+					},
+					d.VolatileSet,
+					func() error { return pool.DeleteInstance(d, nil) },
+				)
+				if releaseErr != nil {
+					return errors.Join(sendErr, releaseErr)
+				}
+			}
+
+			return sendErr
 		}
 
 		// Wait for all routines to finish (in this case it will be the control monitor) but do

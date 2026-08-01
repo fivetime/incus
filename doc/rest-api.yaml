@@ -2423,6 +2423,14 @@ definitions:
                 example: false
                 type: boolean
                 x-go-name: Live
+            migration_attempt:
+                description: |-
+                    Durable target-side attempt token (for migration)
+
+                    API extension: migration_attempt_fencing
+                example: 1721ae08-b6a8-416a-9614-3f89302466e1
+                type: string
+                x-go-name: MigrationAttempt
             mode:
                 description: Whether to use pull or push mode (for migration)
                 example: pull
@@ -2803,6 +2811,26 @@ definitions:
         title: InstanceStatePut represents the modifiable fields of an instance's state.
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
+    InstanceStorageHandoverPut:
+        properties:
+            migration_attempt:
+                description: Committed target migration attempt token (required for owned).
+                example: 1721ae08-b6a8-416a-9614-3f89302466e1
+                type: string
+                x-go-name: MigrationAttempt
+            operation_uuid:
+                description: Target receive operation UUID bound to the migration attempt (required for owned).
+                example: 7a0c9c7e-e55d-4d36-8e3a-5165708bc640
+                type: string
+                x-go-name: OperationUUID
+            state:
+                description: Shared storage ownership state (protected, owned or source-owned).
+                example: protected
+                type: string
+                x-go-name: State
+        title: InstanceStorageHandoverPut represents a shared storage ownership transition.
+        type: object
+        x-go-package: github.com/lxc/incus/v7/shared/api
     InstanceType:
         title: InstanceType represents the type if instance being returned or requested via the API.
         type: string
@@ -2958,6 +2986,95 @@ definitions:
         properties:
             configs:
                 $ref: '#/definitions/MetadataConfig'
+        type: object
+        x-go-package: github.com/lxc/incus/v7/shared/api
+    MigrationAttempt:
+        properties:
+            finished:
+                description: Whether target work and rollback have settled
+                example: false
+                type: boolean
+                x-go-name: Finished
+            idmap_base:
+                description: Host ID base reserved for a fixed isolated idmap
+                example: 1000000
+                format: int64
+                type: integer
+                x-go-name: IDMapBase
+            idmap_size:
+                description: Size reserved for a fixed isolated idmap
+                example: 65536
+                format: int64
+                type: integer
+                x-go-name: IDMapSize
+            operation_uuid:
+                description: Target operation UUID, when known
+                example: 7a0c9c7e-e55d-4d36-8e3a-5165708bc640
+                type: string
+                x-go-name: OperationUUID
+            project:
+                description: Project containing the target resource
+                example: default
+                type: string
+                x-go-name: Project
+            resource_name:
+                description: Resource name bound to the token
+                example: c1
+                type: string
+                x-go-name: ResourceName
+            resource_type:
+                description: Resource type bound to the token
+                example: instance
+                type: string
+                x-go-name: ResourceType
+            started:
+                description: Whether target creation has started
+                example: true
+                type: boolean
+                x-go-name: Started
+            state:
+                description: Current attempt state
+                example: active
+                type: string
+                x-go-name: State
+            token:
+                description: Attempt token
+                example: 1721ae08-b6a8-416a-9614-3f89302466e1
+                type: string
+                x-go-name: Token
+        title: MigrationAttempt represents a durable target-side migration fence.
+        type: object
+        x-go-package: github.com/lxc/incus/v7/shared/api
+    MigrationAttemptPut:
+        properties:
+            idmap_base:
+                description: Host ID base reserved for a fixed isolated idmap
+                example: 1000000
+                format: int64
+                type: integer
+                x-go-name: IDMapBase
+            idmap_size:
+                description: Size reserved for a fixed isolated idmap
+                example: 65536
+                format: int64
+                type: integer
+                x-go-name: IDMapSize
+            resource_name:
+                description: Resource name bound to the token
+                example: c1
+                type: string
+                x-go-name: ResourceName
+            resource_type:
+                description: Resource type bound to the token
+                example: instance
+                type: string
+                x-go-name: ResourceType
+            state:
+                description: Requested state (active, aborted or settled)
+                example: active
+                type: string
+                x-go-name: State
+        title: MigrationAttemptPut represents the requested state of an inbound migration attempt.
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
     Network:
@@ -12909,6 +13026,55 @@ paths:
             summary: Change the state
             tags:
                 - instances
+    /1.0/instances/{name}/storage-handover:
+        put:
+            consumes:
+                - application/json
+            description: |-
+                Marks an Incus-owned shared Ceph root as protected from local deletion or
+                clears completed target handover state for Ceph and externally owned Ceph
+                roots, or restores an explicitly identified fenced source after the migration
+                target has been fenced and cleaned up.
+                Protection requires an existing negotiated handover marker. Ownership
+                requires a completed target receive and its committed migration-attempt
+                proof.
+                Source ownership recovery only clears local migration metadata and never
+                deletes or otherwise modifies the shared storage.
+            operationId: instance_storage_handover_put
+            parameters:
+                - description: Instance name
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                - description: Project name
+                  example: default
+                  in: query
+                  name: project
+                  type: string
+                - description: Shared storage ownership state
+                  in: body
+                  name: state
+                  schema:
+                    $ref: '#/definitions/InstanceStorageHandoverPut'
+            produces:
+                - application/json
+            responses:
+                "200":
+                    $ref: '#/responses/EmptySyncResponse'
+                "400":
+                    $ref: '#/responses/BadRequest'
+                "403":
+                    $ref: '#/responses/Forbidden'
+                "404":
+                    $ref: '#/responses/NotFound'
+                "409":
+                    $ref: '#/responses/Conflict'
+                "500":
+                    $ref: '#/responses/InternalServerError'
+            summary: Update shared storage ownership state
+            tags:
+                - instances
     /1.0/instances/{name}?recursion=1:
         get:
             description: |-
@@ -13153,6 +13319,85 @@ paths:
             summary: Get metrics
             tags:
                 - metrics
+    /1.0/migration-attempts/{token}:
+        delete:
+            description: |-
+                Only attempts whose target work and rollback have finished can be deleted.
+                A deleted token remains invalid for any late instance create request.
+            operationId: migration_attempt_delete
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  type: string
+            responses:
+                "200":
+                    description: Empty success response
+            summary: Delete a terminal inbound migration attempt
+            tags:
+                - migration-attempts
+        get:
+            description: |-
+                Returns the durable target-side state and operation UUID for an inbound
+                migration attempt.
+            operationId: migration_attempt_get
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  type: string
+            produces:
+                - application/json
+            responses:
+                "200":
+                    description: Migration attempt
+                    schema:
+                        properties:
+                            metadata:
+                                $ref: '#/definitions/MigrationAttempt'
+                        type: object
+            summary: Get an inbound migration attempt
+            tags:
+                - migration-attempts
+        put:
+            consumes:
+                - application/json
+            description: |-
+                An active registration must precede an instance migration create using the
+                same token. An abort permanently fences a late create or receive unless the
+                target already committed.
+            operationId: migration_attempt_put
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  type: string
+                - in: body
+                  name: attempt
+                  schema:
+                    $ref: '#/definitions/MigrationAttemptPut'
+            produces:
+                - application/json
+            responses:
+                "200":
+                    description: Migration attempt
+                    schema:
+                        properties:
+                            metadata:
+                                $ref: '#/definitions/MigrationAttempt'
+                        type: object
+            summary: Register or abort an inbound migration attempt
+            tags:
+                - migration-attempts
     /1.0/network-acls:
         get:
             description: Returns a list of network ACLs (URLs).

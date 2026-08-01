@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 #
 # Kubernetes-side Incus client image. It is deliberately not an Incus daemon
-# runtime: the node-local Quadlet owns incusd, LXC monitors, lxcfs and storage
-# tooling. This image only connects to the host Unix API socket.
+# runtime: the node-local incus and incus-lxcfs Quadlets own incusd, LXC
+# monitors, lxcfs and storage tooling. This image only connects to the host
+# Unix API socket.
 #
 # Build context must be the repository root:
 #   docker build -f docker/kubelet/Dockerfile .

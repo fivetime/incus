@@ -517,12 +517,36 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// migration: "pending" while the handover is in flight, "committed" once the
 	// target server owns the volumes. In either state, deleting the instance
 	// leaves the volumes themselves untouched. A failed migration keeps the
-	// "pending" marker as the target may still have completed its claim; clear
-	// it manually once the target is confirmed to hold no claim.
+	// "pending" marker as the target may still have completed its claim. After
+	// positively fencing and cleaning the target, use the storage handover API
+	// to restore source ownership.
 	// ---
 	//  type: string
 	//  shortdesc: State of the shared storage handover of the instance's volumes
 	"volatile.migration.storage_handover": validate.Optional(validate.IsOneOf("pending", "committed")),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.storage_handover_role)
+	// Whether this local record is the source or target of a shared storage
+	// handover. This disambiguates recovery of an interrupted migration.
+	// ---
+	//  type: string
+	//  shortdesc: Role of the local record in a shared storage handover
+	"volatile.migration.storage_handover_role": validate.Optional(validate.IsOneOf(StorageHandoverRoleSource, StorageHandoverRoleTarget)),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.storage_delete_protection)
+	// Whether deletion of this local instance record must preserve storage
+	// claimed during a shared storage migration.
+	// ---
+	//  type: bool
+	//  shortdesc: Whether local instance deletion preserves shared migration storage
+	"volatile.migration.storage_delete_protection": validate.Optional(validate.IsBool),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.storage_receive_complete)
+	// Whether this migration target completed receiving its shared storage.
+	// ---
+	//  type: bool
+	//  shortdesc: Whether shared migration storage receive completed
+	"volatile.migration.storage_receive_complete": validate.Optional(validate.IsBool),
 
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.rebalance.last_move)
 	//

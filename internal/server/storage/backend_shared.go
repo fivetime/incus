@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	"github.com/lxc/incus/v7/internal/server/db"
 	"github.com/lxc/incus/v7/internal/server/storage/drivers"
 )
@@ -40,6 +41,10 @@ func PoolSharedIdentity(pool Pool) (string, string) {
 	}
 
 	return fsid, config["ceph.osd.pool_name"]
+}
+
+func instanceStorageVolumeShouldDelete(volExists bool, config map[string]string) bool {
+	return volExists && !internalInstance.StorageDeleteProtected(config)
 }
 
 // checkExternalVolumeClaimUnique returns an error when another volume in the

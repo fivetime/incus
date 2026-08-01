@@ -1,0 +1,46 @@
+# Install this file as:
+#   install -Dm0644 incus-lxcfs.container /etc/containers/systemd/incus-lxcfs.container
+# Then run:
+#   systemctl daemon-reload
+#   systemctl enable --now incus-lxcfs.service
+#
+# Pin Image independently from incus-podman.container in production. Updating or
+# restarting this data-plane service disconnects the LXCFS mounts of every
+# running system container and therefore requires a guest maintenance window.
+
+[Unit]
+Description=Incus LXCFS data plane (Podman Quadlet)
+Documentation=https://linuxcontainers.org/lxcfs/
+After=local-fs.target
+
+# The operator must provision this as a shared or recursively shared host
+# mount. The container entrypoint rejects private mount propagation.
+RequiresMountsFor=/var/lib/lxcfs
+AssertPathIsDirectory=/var/lib/lxcfs
+
+[Container]
+Image=ghcr.io/fivetime/incus:quadlet
+ContainerName=incus-lxcfs
+Network=none
+Environment=INCUS_RUNTIME_ROLE=lxcfs
+
+Volume=/dev/fuse:/dev/fuse
+Volume=/var/lib/lxcfs:/var/lib/lxcfs:rshared
+
+PodmanArgs=--cgroupns=host \
+           --security-opt=apparmor=unconfined \
+           --privileged \
+           --pid=host \
+           --stop-signal=SIGTERM \
+           --stop-timeout=30
+
+[Service]
+Restart=always
+RestartSec=5s
+TimeoutStartSec=30
+TimeoutStopSec=45
+ExecStartPre=/usr/bin/test -c /dev/fuse
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

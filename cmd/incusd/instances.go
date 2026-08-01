@@ -66,6 +66,19 @@ var instanceStateCmd = APIEndpoint{
 	Put: APIEndpointAction{Handler: instanceStatePut, AccessHandler: allowPermission(auth.ObjectTypeInstance, auth.EntitlementCanUpdateState, "name")},
 }
 
+const (
+	instanceStorageHandoverAuthObjectType             = auth.ObjectTypeInstance
+	instanceStorageHandoverAuthEntitlement            = auth.EntitlementCanEdit
+	instanceStorageHandoverSourceOwnedAuthEntitlement = auth.EntitlementCanEdit
+)
+
+var instanceStorageHandoverCmd = APIEndpoint{
+	Name: "instanceStorageHandover",
+	Path: "instances/{name}/storage-handover",
+
+	Put: APIEndpointAction{Handler: instanceStorageHandoverPut, AccessHandler: allowPermission(instanceStorageHandoverAuthObjectType, instanceStorageHandoverAuthEntitlement, "name")},
+}
+
 var instanceSFTPCmd = APIEndpoint{
 	Name: "instanceFile",
 	Path: "instances/{name}/sftp",

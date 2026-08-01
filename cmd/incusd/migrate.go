@@ -218,6 +218,7 @@ type migrationSink struct {
 	clusterMoveSourceName string
 	refresh               bool
 	refreshExcludeOlder   bool
+	migrationAttemptGuard func() error
 }
 
 // MigrationSinkArgs arguments to configure migration sink.
@@ -236,6 +237,7 @@ type migrationSinkArgs struct {
 	Refresh               bool
 	RefreshExcludeOlder   bool
 	ClusterMoveSourceName string
+	MigrationAttemptGuard func() error
 	Snapshots             []*migration.Snapshot
 
 	// Storage specific fields

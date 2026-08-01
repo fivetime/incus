@@ -91,13 +91,21 @@ jobs:
               command -v ip6tables-legacy-restore
               command -v lxcfs
               test -x /usr/local/sbin/start.sh
+              test -x /usr/local/sbin/lxcfs-start.sh
               test -x /usr/local/sbin/healthcheck.sh
+              sh -n /usr/local/sbin/start.sh
+              sh -n /usr/local/sbin/lxcfs-start.sh
+              sh -n /usr/local/sbin/healthcheck.sh
+              ! grep -Eq "^[[:space:]]*lxcfs .*&" /usr/local/sbin/start.sh
               tar --help 2>&1 | grep -q -- "--no-unquote"
               ! ldd /usr/sbin/incusd | grep -q "not found"
               ! ldd /usr/local/sbin/criu | grep -q "not found"
               ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found"
               strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor"
             '
+            test "$(docker image inspect \
+              --format "{{.Config.StopSignal}}" \
+              incus-quadlet-test:${{ matrix.arch }})" = "SIGTERM"
           fi
 
       - name: Build and push image

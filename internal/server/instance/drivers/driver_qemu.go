@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -8133,7 +8134,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		if fsid != "" {
 			offerHeader.CephFsid = proto.String(fsid)
 			offerHeader.CephPool = proto.String(osdPool)
-			offerHeader.CephDriver = proto.String(pool.Driver().Info().Name)
+			offerHeader.CephDriver = proto.String(sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name))
 		}
 	}
 
@@ -8212,11 +8213,15 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	// can ever leave the target owning the volumes while this marker is missing
 	// (which would let a later deletion of the source instance delete the
 	// volumes in use on the target). The marker is upgraded to "committed" once
-	// the target has confirmed the claim and cleared again if the migration
-	// fails; both states prevent the source's deletion from touching the
-	// volumes, so any failure at worst leaks them, it can never double delete.
+	// the target has confirmed the claim. A failure keeps "pending" unless the
+	// source can prove the target never claimed storage; both states prevent
+	// source deletion from touching the volumes, so uncertainty can leak but
+	// cannot delete storage owned by the target.
 	if volSourceArgs.SharedStorage {
-		err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "pending"})
+		err := d.VolatileSet(map[string]string{
+			internalInstance.ConfigVolatileMigrationStorageHandover:     "pending",
+			internalInstance.ConfigVolatileMigrationStorageHandoverRole: internalInstance.StorageHandoverRoleSource,
+		})
 		if err != nil {
 			err = fmt.Errorf("Failed marking instance storage handover as pending: %w", err)
 			op.Done(err)
@@ -8312,6 +8317,13 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 				}
 			}
 
+			if volSourceArgs.SharedStorage {
+				err = releaseAndSignalSharedStorageHandover(d.unmount, filesystemConn)
+				if err != nil {
+					return err
+				}
+			}
+
 			err = pool.MigrateInstance(d, filesystemConn, volSourceArgs, d.op)
 			if err != nil {
 				return err
@@ -8345,7 +8357,10 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 			// The target confirmed the claim, record that the ownership transfer
 			// completed. A failure here fails the migration while keeping the
 			// pending marker, so the volumes stay protected either way.
-			err := d.VolatileSet(map[string]string{"volatile.migration.storage_handover": "committed"})
+			err := d.VolatileSet(map[string]string{
+				internalInstance.ConfigVolatileMigrationStorageHandover:     "committed",
+				internalInstance.ConfigVolatileMigrationStorageHandoverRole: internalInstance.StorageHandoverRoleSource,
+			})
 			if err != nil {
 				err = fmt.Errorf("Failed marking instance storage handover as committed: %w", err)
 				op.Done(err)
@@ -8954,6 +8969,11 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	d.logger.Debug("Migration receive starting")
 	defer d.logger.Debug("Migration receive stopped")
 
+	err := withMigrationAttemptGuard(args.MigrationAttemptGuard, "before negotiation", nil)
+	if err != nil {
+		return err
+	}
+
 	// Wait for essential migration connections before negotiation.
 	connectionsCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
@@ -9116,7 +9136,9 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	sharedStorage := false
 	if offerHeader.GetCephFsid() != "" && offerHeader.Criu == nil && !clusterMove && !args.Refresh && !args.Live {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
-		if fsid == offerHeader.GetCephFsid() && osdPool == offerHeader.GetCephPool() && pool.Driver().Info().Name == offerHeader.GetCephDriver() {
+		if fsid == offerHeader.GetCephFsid() &&
+			osdPool == offerHeader.GetCephPool() &&
+			sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name) == offerHeader.GetCephDriver() {
 			sharedStorage = true
 			respHeader.SharedStorage = proto.Bool(true)
 		}
@@ -9144,6 +9166,8 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	defer reverter.Fail()
 
 	g, ctx := errgroup.WithContext(context.Background())
+	var sharedStorageClaimed atomic.Bool
+	var storageReceiveCompletionErr error
 
 	// Start control connection monitor.
 	g.Go(func() error {
@@ -9305,9 +9329,19 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			}
 		}
 
-		err = pool.CreateInstanceFromMigration(d, filesystemConn, volTargetArgs, d.op)
+		err = withMigrationAttemptGuard(args.MigrationAttemptGuard, "before storage receive", func() error {
+			return withSharedStorageMigrationTargetProtection(sharedStorage, pool.Driver().Info().Name, d.VolatileSet, func() error {
+				return claimSharedStorageMigrationTarget(sharedStorage, filesystemConn, args.MigrationAttemptGuard, func() error {
+					return pool.CreateInstanceFromMigration(d, filesystemConn, volTargetArgs, d.op)
+				})
+			})
+		})
 		if err != nil {
 			return fmt.Errorf("Failed creating instance on target: %w", err)
+		}
+
+		if sharedStorage {
+			sharedStorageClaimed.Store(true)
 		}
 
 		isRemoteClusterMove := clusterMove && poolInfo.Remote
@@ -9416,6 +9450,12 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			}
 		}
 
+		err = markSharedStorageMigrationTargetReceiveComplete(sharedStorage, pool.Driver().Info().Name, d.VolatileSet)
+		if err != nil {
+			storageReceiveCompletionErr = fmt.Errorf("Failed recording completed shared storage receive: %w", err)
+			return storageReceiveCompletionErr
+		}
+
 		return nil
 	})
 
@@ -9423,14 +9463,41 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		// Wait until the filesystem transfer routine has finished.
 		<-fsTransferDone
 
+		if storageReceiveCompletionErr != nil {
+			args.Disconnect()
+		}
+
 		// If context is cancelled by this stage, then an error has occurred.
 		// Wait for all routines to finish and collect the first error that occurred.
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || storageReceiveCompletionErr != nil {
 			err := g.Wait()
+			if err == nil {
+				err = storageReceiveCompletionErr
+			}
+
+			sharedStorageReleased := !sharedStorageClaimed.Load()
+			if sharedStorage && isCephSharedStorageDriver(pool.Driver().Info().Name) && sharedStorageClaimed.Load() {
+				releaseErr := releaseSharedStorageMigrationTargetClaim(
+					pool.Driver().Info().Name,
+					d.IsRunning,
+					func() error { return d.Stop(false) },
+					func() error {
+						return pool.UnmountInstance(d, nil)
+					},
+					d.VolatileSet,
+					func() error { return pool.DeleteInstance(d, nil) },
+				)
+				if releaseErr != nil {
+					err = errors.Join(err, releaseErr)
+				} else {
+					sharedStorageReleased = true
+				}
+			}
 
 			// Send failure response to source.
 			msg := migration.MigrationControl{
-				Success: proto.Bool(err == nil),
+				Success:               proto.Bool(err == nil),
+				SharedStorageReleased: proto.Bool(sharedStorageReleased),
 			}
 
 			if err != nil {
@@ -9455,7 +9522,24 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 		err := args.ControlSend(&msg)
 		if err != nil {
 			d.logger.Warn("Failed sending migration success to source", logger.Ctx{"err": err})
-			return fmt.Errorf("Failed sending migration success to source: %w", err)
+			sendErr := fmt.Errorf("Failed sending migration success to source: %w", err)
+			if sharedStorage && isCephSharedStorageDriver(pool.Driver().Info().Name) && sharedStorageClaimed.Load() {
+				releaseErr := releaseSharedStorageMigrationTargetClaim(
+					pool.Driver().Info().Name,
+					d.IsRunning,
+					func() error { return d.Stop(false) },
+					func() error {
+						return pool.UnmountInstance(d, nil)
+					},
+					d.VolatileSet,
+					func() error { return pool.DeleteInstance(d, nil) },
+				)
+				if releaseErr != nil {
+					return errors.Join(sendErr, releaseErr)
+				}
+			}
+
+			return sendErr
 		}
 
 		// Wait for all routines to finish (in this case it will be the control monitor) but do

@@ -2632,22 +2632,23 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 	// Must come before DB VolumeDBDelete so that the volume ID is still available.
 	l.Debug("Deleting instance volume", logger.Ctx{"volName": volStorageName})
 
-	volExists, err := b.driver.HasVolume(vol)
-	if err != nil {
-		return err
-	}
-
 	// When the volume was (or may have been) handed over to another server as part
-	// of a shared storage migration, only the local records are removed. The
-	// "pending" state also protects the volumes: it means a handover was in
-	// flight, and deleting the volumes of a possibly completed handover would
-	// destroy the target's data, whereas not deleting them at worst leaks them.
-	handedOver := inst.LocalConfig()["volatile.migration.storage_handover"] != ""
-
-	if volExists && !handedOver {
-		err = b.driver.DeleteVolume(vol, op)
+	// of a shared storage migration, only the local records are removed. Source
+	// handover state and target delete protection both prefer a recoverable leak
+	// over deleting storage whose authoritative owner may be remote.
+	localConfig := inst.LocalConfig()
+	deleteProtected := internalInstance.StorageDeleteProtected(localConfig)
+	if !deleteProtected {
+		volExists, err := b.driver.HasVolume(vol)
 		if err != nil {
-			return fmt.Errorf("Error deleting storage volume: %w", err)
+			return err
+		}
+
+		if instanceStorageVolumeShouldDelete(volExists, localConfig) {
+			err = b.driver.DeleteVolume(vol, op)
+			if err != nil {
+				return fmt.Errorf("Error deleting storage volume: %w", err)
+			}
 		}
 	}
 
@@ -3646,11 +3647,6 @@ func (b *backend) DeleteInstanceSnapshot(inst instance.Instance, op *operations.
 		return err
 	}
 
-	volExists, err := b.driver.HasVolume(vol)
-	if err != nil {
-		return err
-	}
-
 	// Lock this operation to ensure only one snapshot is deleted at a time.
 	// Other operations will wait until this one completes.
 	unlock, err := locking.Lock(context.TODO(), drivers.OperationLockName("DeleteInstanceSnapshot", b.name, vol.Type(), vol.ContentType(), parentName))
@@ -3667,26 +3663,32 @@ func (b *backend) DeleteInstanceSnapshot(inst instance.Instance, op *operations.
 
 	// When the parent volume was (or may have been) handed over to another server
 	// as part of a shared storage migration its snapshots belong to that server
-	// too, so only the local records are removed. See DeleteInstance for why the
-	// "pending" state is also protected.
-	handedOver := src.LocalConfig()["volatile.migration.storage_handover"] != ""
+	// too, so only the local records are removed.
+	localConfig := src.LocalConfig()
+	deleteProtected := internalInstance.StorageDeleteProtected(localConfig)
+	if !deleteProtected {
+		volExists, err := b.driver.HasVolume(vol)
+		if err != nil {
+			return err
+		}
 
-	if volExists && !handedOver {
-		if parentDBVol.Config["block.type"] == drivers.BlockVolumeTypeQcow2 {
-			parentVol := b.GetVolume(volType, contentType, parentStorageName, parentDBVol.Config)
-			rootDiskName, _, err := internalInstance.GetRootDiskDevice(inst.ExpandedDevices().CloneNative())
-			if err != nil {
-				return err
-			}
+		if instanceStorageVolumeShouldDelete(volExists, localConfig) {
+			if parentDBVol.Config["block.type"] == drivers.BlockVolumeTypeQcow2 {
+				parentVol := b.GetVolume(volType, contentType, parentStorageName, parentDBVol.Config)
+				rootDiskName, _, err := internalInstance.GetRootDiskDevice(inst.ExpandedDevices().CloneNative())
+				if err != nil {
+					return err
+				}
 
-			err = b.qcow2DeleteSnapshot(parentVol, vol, src.Project().Name, src, rootDiskName, op)
-			if err != nil {
-				return err
-			}
-		} else {
-			err = b.driver.DeleteVolumeSnapshot(vol, op)
-			if err != nil {
-				return err
+				err = b.qcow2DeleteSnapshot(parentVol, vol, src.Project().Name, src, rootDiskName, op)
+				if err != nil {
+					return err
+				}
+			} else {
+				err = b.driver.DeleteVolumeSnapshot(vol, op)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}

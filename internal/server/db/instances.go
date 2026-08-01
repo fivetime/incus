@@ -31,9 +31,10 @@ type InstanceArgs struct {
 	Snapshot bool
 
 	// Creation only
-	Project      string
-	BaseImage    string
-	CreationDate time.Time
+	Project          string
+	BaseImage        string
+	CreationDate     time.Time
+	MigrationAttempt string
 
 	Architecture int
 	Config       map[string]string

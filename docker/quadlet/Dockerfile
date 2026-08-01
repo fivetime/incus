@@ -185,7 +185,7 @@ RUN apk add --no-cache \
       so:libuv.so.1 \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subuid \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subgid \
-    && mkdir -p /etc/criu /var/lib/lxcfs /var/log/incus \
+    && mkdir -p /etc/criu /run/lxcfs /var/lib/lxcfs /var/log/incus \
     && printf '%s\n' 'enable-external-masters' > /etc/criu/default.conf
 
 COPY --from=incus-build /out/incusd /usr/sbin/incusd
@@ -205,12 +205,14 @@ RUN test "$(incusd --version)" = "7.2" \
     && strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor" \
     && ! ldd /usr/local/sbin/criu | grep -q "not found"
 
-COPY docker/quadlet/start.sh docker/quadlet/healthcheck.sh /usr/local/sbin/
-RUN sed -i 's/\r$//' /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh \
-    && chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/healthcheck.sh
+COPY docker/quadlet/start.sh docker/quadlet/lxcfs-start.sh docker/quadlet/healthcheck.sh /usr/local/sbin/
+RUN sed -i 's/\r$//' /usr/local/sbin/start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh \
+    && chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh
 
-VOLUME ["/var/lib/incus"]
-STOPSIGNAL SIGPWR
+# SIGTERM is Incus' control-plane reload signal and deliberately leaves LXC
+# instances running. Full node maintenance must use `incus admin shutdown`
+# before the lxcfs data-plane service is stopped.
+STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD ["/usr/local/sbin/healthcheck.sh"]
 

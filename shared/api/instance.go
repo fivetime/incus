@@ -148,6 +148,25 @@ type InstancePostTarget struct {
 	Websockets map[string]string `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 }
 
+// InstanceStorageHandoverPut represents a shared storage ownership transition.
+//
+// swagger:model
+//
+// API extension: instance_storage_handover.
+type InstanceStorageHandoverPut struct {
+	// Shared storage ownership state (protected, owned or source-owned).
+	// Example: protected
+	State string `json:"state" yaml:"state"`
+
+	// Committed target migration attempt token (required for owned).
+	// Example: 1721ae08-b6a8-416a-9614-3f89302466e1
+	MigrationAttempt string `json:"migration_attempt,omitempty" yaml:"migration_attempt,omitempty"`
+
+	// Target receive operation UUID bound to the migration attempt (required for owned).
+	// Example: 7a0c9c7e-e55d-4d36-8e3a-5165708bc640
+	OperationUUID string `json:"operation_uuid,omitempty" yaml:"operation_uuid,omitempty"`
+}
+
 // InstancePut represents the modifiable fields of an instance.
 //
 // swagger:model
@@ -345,6 +364,12 @@ type InstanceSource struct {
 	// Remote operation URL (for migration)
 	// Example: https://1.2.3.4:8443/1.0/operations/1721ae08-b6a8-416a-9614-3f89302466e1
 	Operation string `json:"operation,omitempty" yaml:"operation,omitempty"`
+
+	// Durable target-side attempt token (for migration)
+	// Example: 1721ae08-b6a8-416a-9614-3f89302466e1
+	//
+	// API extension: migration_attempt_fencing
+	MigrationAttempt string `json:"migration_attempt,omitempty" yaml:"migration_attempt,omitempty"`
 
 	// Map of migration websockets (for migration)
 	// Example: {"criu": "RANDOM-STRING", "rsync": "RANDOM-STRING"}

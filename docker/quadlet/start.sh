@@ -10,7 +10,32 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
 }
 
+mount_fstype_matches() {
+  awk -v path="$1" -v pattern="$2" '
+    $5 == path {
+      for (i = 6; i <= NF; i++) {
+        if ($i == "-") {
+          if ($(i + 1) ~ pattern)
+            found = 1
+          break
+        }
+      }
+    }
+    END { exit !found }' /proc/self/mountinfo
+}
+
 [ "$(id -u)" -eq 0 ] || fail "Incus must run as root"
+
+case "${INCUS_RUNTIME_ROLE:-incusd}" in
+  incusd) ;;
+  lxcfs)
+    exec /usr/local/sbin/lxcfs-start.sh
+    ;;
+  *)
+    fail "INCUS_RUNTIME_ROLE must be either incusd or lxcfs"
+    ;;
+esac
+
 mkdir -p /run/incus
 mountpoint -q /run/incus \
   || fail "/run/incus must be a host bind mount so running instances survive outer container restarts"
@@ -30,13 +55,20 @@ grep -qw allow /proc/sys/kernel/seccomp/actions_avail || fail "Kernel seccomp fi
 [ -d /sys/kernel/security/apparmor ] || fail "AppArmor securityfs is unavailable; mount /sys/kernel/security"
 [ -w /sys/kernel/security/apparmor/.load ] || fail "AppArmor policy loading is unavailable"
 
+mountpoint -q /var/lib/lxcfs \
+  || fail "/var/lib/lxcfs must be the stable host bind shared with incus-lxcfs"
+mount_fstype_matches /var/lib/lxcfs '^fuse(\.lxcfs)?$' \
+  || fail "/var/lib/lxcfs is not backed by the incus-lxcfs FUSE mount"
+timeout 5 head -n 1 /var/lib/lxcfs/proc/meminfo >/dev/null \
+  || fail "The incus-lxcfs FUSE mount is not responding"
+
 CURRENT_PROFILE=$(cat /proc/1/attr/current 2>/dev/null || true)
 case "$CURRENT_PROFILE" in
   unconfined*) ;;
   *) fail "The outer Podman container must use --security-opt apparmor=unconfined" ;;
 esac
 
-for command_name in aa-exec apparmor_parser criu incus incusd ip6tables-legacy-restore ip6tables-restore iptables-legacy-restore iptables-restore lxcfs newgidmap newuidmap nft; do
+for command_name in aa-exec apparmor_parser criu incus incusd ip6tables-legacy-restore ip6tables-restore iptables-legacy-restore iptables-restore newgidmap newuidmap nft; do
   require_command "$command_name"
 done
 
@@ -47,7 +79,7 @@ done
 grep -q '^root:[0-9][0-9]*:[0-9][0-9]*$' /etc/subuid || fail "A root subordinate UID range is required"
 grep -q '^root:[0-9][0-9]*:[0-9][0-9]*$' /etc/subgid || fail "A root subordinate GID range is required"
 
-mkdir -p /usr/lib/lxc/rootfs /var/lib/lxcfs /var/log/incus
+mkdir -p /usr/lib/lxc/rootfs /var/log/incus
 
 DAEMON_ARGS=""
 if [ -n "${INCUS_SOCKET_GID:-}" ]; then
@@ -58,6 +90,5 @@ if [ -n "${INCUS_SOCKET_GID:-}" ]; then
   DAEMON_ARGS="--group incus-admin"
 fi
 
-lxcfs /var/lib/lxcfs --enable-loadavg --enable-cfs &
 # shellcheck disable=SC2086
 exec incusd ${DAEMON_ARGS}

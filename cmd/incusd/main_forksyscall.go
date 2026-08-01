@@ -354,6 +354,7 @@ static void mount_emulate(void)
 		fprintf(stderr, "mount: failed to resolve namespace fd: %d", errno);
 		_exit(EXIT_FAILURE);
 	}
+
 	use_fuse = (atoi(advance_arg(true)) == 1);
 	if (!use_fuse) {
 		source = advance_arg(true);

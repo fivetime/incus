@@ -15,6 +15,7 @@ import (
 	deviceConfig "github.com/lxc/incus/v7/internal/server/device/config"
 	"github.com/lxc/incus/v7/internal/server/instance"
 	"github.com/lxc/incus/v7/internal/server/instance/instancetype"
+	"github.com/lxc/incus/v7/internal/server/migrationattempt"
 	storagePools "github.com/lxc/incus/v7/internal/server/storage"
 	internalUtil "github.com/lxc/incus/v7/internal/util"
 	"github.com/lxc/incus/v7/shared/api"
@@ -459,6 +460,64 @@ func (s *containerTestSuite) TestContainer_findIdmap_mixed() {
 		s.Req.Equal(int64(0), map2.Entries[i].NSID, "nsid nonzero")
 		s.Req.Equal(int64(65536), map2.Entries[i].MapRange, "incorrect maprange")
 	}
+}
+
+func (s *containerTestSuite) TestContainer_findIdmap_migrationReservation() {
+	manager := migrationattempt.New(s.d.State().DB.Node)
+	token := "905fdf8d-4215-40ad-a133-76db764cc073"
+	base := s.d.os.IdmapSet.Entries[0].HostID + 3*65536
+
+	_, err := manager.Register(context.Background(), token, api.ProjectDefaultName, migrationattempt.ResourceTypeInstance, "migration-idmap", base, 65536)
+	s.Req.NoError(err)
+
+	// A normal create must see the durable migration reservation.
+	_, _, _, err = instance.CreateInternal(s.d.State(), db.InstanceArgs{
+		Type: instancetype.Container,
+		Name: "conflicting-idmap",
+		Config: map[string]string{
+			"security.idmap.isolated": "true",
+			"security.idmap.base":     fmt.Sprintf("%d", base),
+			"security.idmap.size":     "65536",
+		},
+	}, nil, true, true, false)
+	s.Req.Error(err)
+
+	_, err = manager.Begin(context.Background(), token, api.ProjectDefaultName, migrationattempt.ResourceTypeInstance, "migration-idmap", s.d.State().StartTime.UnixNano())
+	s.Req.NoError(err)
+
+	_, _, _, err = instance.CreateInternal(s.d.State(), db.InstanceArgs{
+		Type:             instancetype.Container,
+		Name:             "migration-idmap",
+		MigrationAttempt: token,
+		Config: map[string]string{
+			"security.idmap.isolated": "true",
+			"security.idmap.base":     fmt.Sprintf("%d", base+1),
+			"security.idmap.size":     "65536",
+		},
+	}, nil, true, true, false)
+	s.Req.Error(err)
+
+	migrated, op, _, err := instance.CreateInternal(s.d.State(), db.InstanceArgs{
+		Type:             instancetype.Container,
+		Name:             "migration-idmap",
+		MigrationAttempt: token,
+		Config: map[string]string{
+			"security.idmap.isolated": "true",
+			"security.idmap.base":     fmt.Sprintf("%d", base),
+			"security.idmap.size":     "65536",
+		},
+	}, nil, true, true, false)
+	s.Req.NoError(err)
+	op.Done(nil)
+	defer func() { _ = migrated.Delete(true, true) }()
+
+	nextIDMap, err := migrated.(instance.Container).NextIdmap()
+	s.Req.NoError(err)
+	for _, entry := range nextIDMap.Entries {
+		s.Req.Equal(base, entry.HostID)
+	}
+
+	s.Req.NoError(manager.Commit(context.Background(), token))
 }
 
 func (s *containerTestSuite) TestContainer_findIdmap_raw() {

@@ -100,6 +100,7 @@ var updates = map[int]schema.Update{
 	41: updateFromV40,
 	42: updateFromV41,
 	43: updateFromV42,
+	44: updateFromV43,
 }
 
 // UpdateFromPreClustering is the last schema version where clustering support
@@ -107,6 +108,30 @@ var updates = map[int]schema.Update{
 const UpdateFromPreClustering = 36
 
 // Schema updates begin here
+
+// updateFromV43 adds durable fencing records for inbound migration attempts.
+func updateFromV43(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE migration_attempts (
+    token TEXT PRIMARY KEY NOT NULL,
+    project TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    started INTEGER NOT NULL DEFAULT 0,
+    finished INTEGER NOT NULL DEFAULT 0,
+    operation_uuid TEXT NOT NULL DEFAULT '',
+    idmap_base INTEGER NOT NULL DEFAULT -1,
+    idmap_size INTEGER NOT NULL DEFAULT 0,
+    daemon_start INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX migration_attempts_active_idmap
+    ON migration_attempts (idmap_base)
+    WHERE finished = 0 AND idmap_base >= 0;
+`
+	_, err := tx.Exec(stmt)
+	return err
+}
 
 // updateFromV42 ensures key and value fields in config table are TEXT NOT NULL.
 func updateFromV42(ctx context.Context, tx *sql.Tx) error {

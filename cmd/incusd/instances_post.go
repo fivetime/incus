@@ -28,6 +28,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/instance/instancetype"
 	"github.com/lxc/incus/v7/internal/server/instance/operationlock"
 	"github.com/lxc/incus/v7/internal/server/lifecycle"
+	"github.com/lxc/incus/v7/internal/server/migrationattempt"
 	"github.com/lxc/incus/v7/internal/server/operations"
 	"github.com/lxc/incus/v7/internal/server/project"
 	"github.com/lxc/incus/v7/internal/server/request"
@@ -44,6 +45,7 @@ import (
 	"github.com/lxc/incus/v7/shared/osarch"
 	"github.com/lxc/incus/v7/shared/revert"
 	"github.com/lxc/incus/v7/shared/util"
+	"github.com/lxc/incus/v7/shared/validate"
 )
 
 func ensureDownloadedImageFitWithinBudget(ctx context.Context, s *state.State, r *http.Request, op *operations.Operation, p api.Project, imgAlias string, source api.InstanceSource, imgType string) (*api.Image, error) {
@@ -236,19 +238,55 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		return response.BadRequest(fmt.Errorf("Instance type not supported %q", req.Type))
 	}
 
+	var attemptManager *migrationattempt.Manager
+	attemptRunOwnsCleanup := false
+	if req.Source.MigrationAttempt != "" {
+		err = validate.IsUUID(req.Source.MigrationAttempt)
+		if err != nil {
+			return response.BadRequest(err)
+		}
+
+		if req.Source.Refresh {
+			return response.BadRequest(errors.New("Migration attempts cannot be used for refresh"))
+		}
+
+		attemptManager = migrationattempt.New(s.DB.Node)
+		_, err = attemptManager.Begin(ctx, req.Source.MigrationAttempt, projectName, migrationattempt.ResourceTypeInstance, req.Name, s.StartTime.UnixNano())
+		if err != nil {
+			return migrationAttemptError(err)
+		}
+
+		defer func() {
+			if attemptRunOwnsCleanup {
+				return
+			}
+
+			err := attemptManager.FinishFailure(context.Background(), req.Source.MigrationAttempt)
+			if err != nil {
+				logger.Error("Failed settling migration attempt after synchronous create failure", logger.Ctx{
+					"attempt":  req.Source.MigrationAttempt,
+					"project":  projectName,
+					"instance": req.Name,
+					"err":      err,
+				})
+			}
+		}()
+	}
+
 	// Prepare the instance creation request.
 	args := db.InstanceArgs{
-		Project:      projectName,
-		Architecture: architecture,
-		BaseImage:    req.Source.BaseImage,
-		Config:       req.Config,
-		Type:         dbType,
-		Devices:      deviceConfig.NewDevices(req.Devices),
-		Description:  req.Description,
-		Ephemeral:    req.Ephemeral,
-		Name:         req.Name,
-		Profiles:     profiles,
-		Stateful:     req.Stateful,
+		Project:          projectName,
+		Architecture:     architecture,
+		BaseImage:        req.Source.BaseImage,
+		Config:           req.Config,
+		Type:             dbType,
+		Devices:          deviceConfig.NewDevices(req.Devices),
+		Description:      req.Description,
+		Ephemeral:        req.Ephemeral,
+		MigrationAttempt: req.Source.MigrationAttempt,
+		Name:             req.Name,
+		Profiles:         profiles,
+		Stateful:         req.Stateful,
 	}
 
 	storagePool, storagePoolProfile, localRootDiskDeviceKey, localRootDiskDevice, resp := instanceFindStoragePool(ctx, s, projectName, req)
@@ -400,6 +438,12 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		StoragePool:           storagePool,
 	}
 
+	if attemptManager != nil {
+		migrationArgs.MigrationAttemptGuard = func() error {
+			return attemptManager.CheckActive(context.Background(), req.Source.MigrationAttempt)
+		}
+	}
+
 	// Check if the pool is changing at all.
 	if r != nil && isClusterNotification(r) && inst != nil {
 		_, currentPool, _ := internalInstance.GetRootDiskDevice(inst.ExpandedDevices().CloneNative())
@@ -417,13 +461,57 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 	runReverter := reverter.Clone()
 
 	run := func(op *operations.Operation) error {
-		defer runReverter.Fail()
+		attemptCommitted := false
+		attemptCleanupIncomplete := false
+		if attemptManager != nil {
+			defer func() {
+				if attemptCommitted || attemptCleanupIncomplete {
+					return
+				}
+
+				err := attemptManager.FinishFailure(context.Background(), req.Source.MigrationAttempt)
+				if err != nil {
+					logger.Error("Failed settling migration attempt after target rollback", logger.Ctx{
+						"attempt":  req.Source.MigrationAttempt,
+						"project":  projectName,
+						"instance": req.Name,
+						"err":      err,
+					})
+				}
+			}()
+		}
+
+		defer func() {
+			if attemptCleanupIncomplete {
+				// Keep the target record and its durable attempt unfinished so
+				// external reconciliation can retry cleanup safely.
+				runReverter.Success()
+				return
+			}
+
+			runReverter.Fail()
+		}()
+
+		if attemptManager != nil {
+			err := attemptManager.BindOperation(context.Background(), req.Source.MigrationAttempt, op.ID())
+			if err != nil {
+				return err
+			}
+		}
 
 		sink.instance.SetOperation(op)
+
+		if attemptManager != nil {
+			err := attemptManager.CheckActive(context.Background(), req.Source.MigrationAttempt)
+			if err != nil {
+				return err
+			}
+		}
 
 		// And finally run the migration.
 		err = sink.do(instOp)
 		if err != nil {
+			attemptCleanupIncomplete = errors.Is(err, instance.ErrMigrationTargetCleanupIncomplete)
 			err = fmt.Errorf("Error transferring instance data: %w", err)
 			instOp.Done(err) // Complete operation that was created earlier, to release lock.
 
@@ -507,8 +595,23 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 			}
 		}
 
-		runReverter.Success()
+		if attemptManager != nil {
+			err = instanceCreateFinish(s, req, args, op)
+			if err != nil {
+				return err
+			}
 
+			err = attemptManager.Commit(context.Background(), req.Source.MigrationAttempt)
+			if err != nil {
+				return err
+			}
+
+			attemptCommitted = true
+			runReverter.Success()
+			return nil
+		}
+
+		runReverter.Success()
 		return instanceCreateFinish(s, req, args, op)
 	}
 
@@ -522,13 +625,19 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 			return response.InternalError(err)
 		}
 	} else {
-		op, err = operations.OperationCreate(s, projectName, operations.OperationClassTask, operationtype.InstanceCreate, resources, nil, run, nil, nil, r)
+		var onCancel func(*operations.Operation) error
+		if attemptManager != nil {
+			onCancel = sink.Cancel
+		}
+
+		op, err = operations.OperationCreate(s, projectName, operations.OperationClassTask, operationtype.InstanceCreate, resources, nil, run, onCancel, nil, r)
 		if err != nil {
 			return response.InternalError(err)
 		}
 	}
 
 	reverter.Success()
+	attemptRunOwnsCleanup = attemptManager != nil
 	return operations.OperationResponse(op)
 }
 

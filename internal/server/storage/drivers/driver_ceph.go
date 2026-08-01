@@ -27,6 +27,12 @@ var (
 	cephLoaded  bool
 )
 
+const cephRBDNameCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._"
+
+func isCephRBDNameCharacter(r rune) bool {
+	return strings.ContainsRune(cephRBDNameCharacters, r)
+}
+
 type ceph struct {
 	common
 }
@@ -404,7 +410,7 @@ func (d *ceph) Validate(config map[string]string) error {
 		//  shortdesc: Per-server prefix for image volume names, allowing multiple servers to share an OSD pool
 		"ceph.rbd.image_prefix": validate.Optional(func(value string) error {
 			for _, r := range value {
-				if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '_') {
+				if !isCephRBDNameCharacter(r) {
 					return fmt.Errorf("Invalid character %q in image prefix, only alphanumeric characters and \"-\", \".\", \"_\" are allowed", r)
 				}
 			}

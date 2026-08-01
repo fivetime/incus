@@ -78,25 +78,26 @@ type common struct {
 	op    *operations.Operation
 	state *state.State
 
-	architecture    int
-	creationDate    time.Time
-	dbType          instancetype.Type
-	description     string
-	ephemeral       bool
-	expandedConfig  map[string]string
-	expandedDevices deviceConfig.Devices
-	expiryDate      time.Time
-	id              int
-	lastUsedDate    time.Time
-	localConfig     map[string]string
-	localDevices    deviceConfig.Devices
-	logger          logger.Logger
-	name            string
-	node            string
-	profiles        []api.Profile
-	project         api.Project
-	isSnapshot      bool
-	stateful        bool
+	architecture     int
+	creationDate     time.Time
+	dbType           instancetype.Type
+	description      string
+	ephemeral        bool
+	expandedConfig   map[string]string
+	expandedDevices  deviceConfig.Devices
+	expiryDate       time.Time
+	id               int
+	lastUsedDate     time.Time
+	localConfig      map[string]string
+	localDevices     deviceConfig.Devices
+	logger           logger.Logger
+	migrationAttempt string
+	name             string
+	node             string
+	profiles         []api.Profile
+	project          api.Project
+	isSnapshot       bool
+	stateful         bool
 
 	// Cached handles.
 	// Do not use these variables directly, instead use their associated get functions so they

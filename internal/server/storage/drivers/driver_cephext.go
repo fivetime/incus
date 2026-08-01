@@ -99,7 +99,7 @@ func (d *cephext) commonVolumeRules() map[string]func(value string) error {
 		}
 
 		for _, r := range value {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '_') {
+			if !isCephRBDNameCharacter(r) {
 				return fmt.Errorf("Invalid character %q in RBD image name, only alphanumeric characters and \"-\", \".\", \"_\" are allowed", r)
 			}
 		}

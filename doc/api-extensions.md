@@ -3308,10 +3308,23 @@ them over. The source instance tracks the handover through the
 in flight and "committed" once the target owns the volumes. In either state
 the source's deletion only removes the local records and leaves the volumes
 untouched. A failed migration keeps the "pending" marker as the target may
-still have completed its claim; it should only be cleared manually once the
-target is confirmed to hold no claim. The driver types must match so that Incus-owned (`ceph`) and
+still have completed its claim. The marker can only be cleared through the
+storage handover API after the target is positively confirmed to hold no
+claim. A separate `volatile.migration.storage_handover_role` value identifies
+the source and target records so an ambiguous target can never be restored as
+the source. The driver types must match so that Incus-owned (`ceph`) and
 externally-owned (`cephext`) volumes can never be handed over across ownership
-semantics.
+semantics. The negotiated driver identity also includes the handover readiness
+protocol version, so mixed daemon versions decline the zero-copy handover
+instead of bypassing its ordering guarantees.
+
+Before claiming storage, the target durably installs its local deletion
+protection and waits on the filesystem migration connection for a readiness
+marker. The source sends that marker only after its `pending` protection is
+durable and its root is fully unmounted. The target rechecks any
+migration-attempt fence after receiving the marker and before claiming the
+volume. A missing marker, a fenced attempt, an unmount failure, or a dropped
+connection fails closed without a target claim.
 
 The handover is only negotiated for stopped instances on non-live,
 non-refresh migrations.
@@ -3429,3 +3442,113 @@ server configuration keys:
 
 * `acme.eab.kid`
 * `acme.eab.hmac`
+
+## `instance_storage_handover`
+
+This adds `PUT /1.0/instances/{name}/storage-handover` for an external
+orchestrator to reconcile shared Ceph storage ownership after migration.
+
+The `protected` state preserves an Incus-owned `ceph` volume while deleting a
+local instance record. The `owned` state clears target handover metadata after
+a completed receive. The `source-owned` state restores an original source from
+a pending or committed handover after the orchestrator has positively fenced
+the target and received proof that its claim was cleaned up.
+
+Ambiguous and mixed source/target states are rejected. The `source-owned`
+transition only clears local volatile migration protection; it does not
+delete, resize, map, unmap, or otherwise modify the shared RBD volume.
+
+The endpoint requires `can_edit` on the instance. `protected` only adds
+deletion protection. `owned` additionally requires a committed node-local
+migration attempt and its exact bound operation UUID, as described by
+`instance_storage_handover_proof`. `source-owned` depends on external target
+fencing evidence that the server cannot derive locally and therefore also
+requires the server `can_edit` entitlement.
+
+## `migration_attempt_fencing`
+
+This adds `GET`, `PUT` and `DELETE` on
+`/1.0/migration-attempts/{token}`. An orchestrator registers a UUID token on
+the target before submitting an instance migration and includes it as
+`source.migration_attempt` in the instance create request.
+
+All three attempt operations require `can_edit` on the instance name bound to
+the token. This object-level check also applies to a new registration before
+the target instance exists. The records are node-local: in a cluster, the
+`target` query parameter must select the member that will receive the
+migration. Because an authorized caller can abort and cancel the bound target
+operation, deployments should grant this entitlement only to the migration
+control-plane principal, not to ordinary instance creators.
+
+The target records the operation UUID and atomically commits the token only
+after migration receive succeeds. An abort races with that commit: an abort
+that wins permanently rejects a late create or receive and retains its record
+until target rollback finishes; a commit that wins rejects the abort. This
+allows an orchestrator to recover safely when the instance create response is
+lost and it is not known whether the target accepted the request.
+The first target operation bound to an attempt is immutable; a retry may bind
+the same UUID, but cannot redirect an attempt to another operation.
+
+The registration can also reserve a fixed isolated idmap with `idmap_base` and
+`idmap_size`. The reservation is durable and participates in normal local
+idmap allocation until it is transferred to the target instance or rollback
+finishes.
+
+`state=settled` is an explicit reconciliation action for an aborted attempt
+whose recorded target operation has disappeared and whose target resource no
+longer exists. It is rejected while the original daemon can still be between
+accepting the request and publishing its operation. Normal operation failures
+settle themselves after target rollback.
+
+For shared Ceph storage, rollback is considered finished only after the target
+has stopped, unmounted the volume, persisted deletion protection where needed,
+and removed its local storage claim. If any step cannot be proven, the target
+instance record and aborted attempt remain unfinished for explicit
+orchestrator reconciliation.
+
+Deleting a terminal attempt retires it as a durable tombstone rather than
+removing its token. A delayed or retried active registration therefore cannot
+resurrect a completed migration. A committed attempt cannot be aborted; a
+higher-level orchestrator that reverts a completed move must perform a new
+reverse migration with a new attempt token. Retired rows retain only the UUID
+token and terminal state, but are intentionally permanent. Operators should
+account for one small node-database row per completed unique attempt; automatic
+time-based pruning would re-enable delayed token replay and is not performed.
+
+## `migration_shared_ceph_storage_ready_fence`
+
+This adds an ordered readiness handshake to zero-copy migration on shared
+`ceph` and `cephext` storage.
+
+The source first persists deletion protection and releases its mounted root,
+then sends a versioned readiness marker. The target persists its own deletion
+protection before waiting for that marker, rechecks the migration-attempt
+fence, and only then claims the shared volume. Missing or malformed markers,
+source release failures and fenced attempts fail before the target claim.
+
+The storage-driver identity exchanged during negotiation includes the
+readiness protocol version. A mixed-version migration therefore cannot
+negotiate the zero-copy path without this ordering guarantee. External
+orchestrators should require this extension on both endpoints before relying
+on shared-storage handover.
+
+## `instance_storage_handover_proof`
+
+This strengthens the `owned` transition of
+`PUT /1.0/instances/{name}/storage-handover`.
+
+An `owned` request must include both:
+
+* `migration_attempt`: the target migration cleanup token;
+* `operation_uuid`: the target receive operation UUID.
+
+The server verifies that its node-local migration-attempt record is committed,
+started and finished; is bound to the selected project and instance; and has
+the exact supplied operation UUID. The instance must independently contain
+the target role and durable receive-completion marker. Only then is target
+deletion protection cleared.
+
+The fields are rejected for `protected` and `source-owned`. Repeating an
+`owned` request with the same committed proof is idempotent until the
+migration attempt is retired. External orchestrators must commit ownership
+before retiring that attempt.
