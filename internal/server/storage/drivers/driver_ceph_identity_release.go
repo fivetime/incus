@@ -307,8 +307,15 @@ func (d *ceph) releaseCephVolumeLocalState(vol Volume, expectedStorageIdentity s
 	return d.releaseCephVolumeLocalStateLocked(vol, identity, false)
 }
 
+// releaseCephVolumeLocalStateLocked releases host-local state for an identity-verified volume.
+// With unmount=false any mount reference or mountpoint aborts the release (conservative path for
+// callers that have not proven exclusive teardown rights). With unmount=true the caller has proven
+// the claim is failed or abandoned (no database record, or an authorized identity-bound delete), so
+// leftover mounts and in-memory mount references are the stale state being released: a legitimate
+// user always holds the volume's database record, and a failed migration receive can leak both the
+// mountpoint and its reference count, which would otherwise deadlock fencing forever.
 func (d *ceph) releaseCephVolumeLocalStateLocked(vol Volume, identity cephRBDVolumeIdentity, unmount bool) error {
-	if vol.MountInUse() {
+	if !unmount && vol.MountInUse() {
 		return fmt.Errorf("Cannot release Ceph volume local state while references remain: %w", ErrInUse)
 	}
 

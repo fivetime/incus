@@ -1323,6 +1323,25 @@ func (d *ceph) ReleaseVolumeLocalState(vol Volume, expectedStorageIdentity strin
 	return d.releaseCephVolumeLocalState(vol, expectedStorageIdentity)
 }
 
+// ReleaseVolumeDetachedLocalState tears down host-local state left behind by a failed or
+// abandoned claim, including leaked mounts and mount references that a failed migration
+// receive can strand. The caller must have proven the volume has no database record (or be
+// deleting it) before invoking this.
+func (d *ceph) ReleaseVolumeDetachedLocalState(vol Volume, expectedStorageIdentity string) error {
+	identity, err := parseCanonicalRBDVolumeIdentity(expectedStorageIdentity)
+	if err != nil {
+		return err
+	}
+
+	unlock, err := vol.MountLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	return d.releaseCephVolumeLocalStateLocked(vol, identity, true)
+}
+
 func runVolumeIdentityBoundAction(vol Volume, expectedStorageIdentity string, getIdentity func(Volume) (string, error), action func() error) error {
 	err := verifyVolumeIdentity(vol, expectedStorageIdentity, getIdentity)
 	if err != nil {

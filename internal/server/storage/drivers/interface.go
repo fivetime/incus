@@ -49,6 +49,16 @@ type VolumeLocalStateReleaser interface {
 	ReleaseVolumeLocalState(vol Volume, expectedStorageIdentity string) error
 }
 
+// VolumeDetachedLocalStateReleaser tears down host-local state that provably belongs to a failed
+// or abandoned claim. Unlike VolumeLocalStateReleaser it treats leftover mounts and in-memory
+// mount references as the stale state being released rather than as evidence of a live user:
+// a legitimate user always holds the volume's database record, which the caller has proven
+// absent (or is deleting) before invoking this.
+type VolumeDetachedLocalStateReleaser interface {
+	VolumeLocalStateProvider
+	ReleaseVolumeDetachedLocalState(vol Volume, expectedStorageIdentity string) error
+}
+
 // VolumeIdentityBoundDeleter deletes or releases a volume while holding its local volume lock after identity verification.
 type VolumeIdentityBoundDeleter interface {
 	DeleteVolumeWithIdentity(vol Volume, expectedStorageIdentity string, op *operations.Operation) error

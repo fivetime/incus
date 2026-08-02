@@ -325,7 +325,9 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 		}
 		vol := pool.GetVolume(drivers.VolumeTypeContainer, drivers.ContentTypeFS, attempt.StorageVolume, config)
 		if !deleteBackend {
-			if err := storagePools.ReleaseVolumeLocalState(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
+			// The attempt has failed and its volume record is being torn down, so leftover
+			// mounts or references are stale state from the failed receive, not live users.
+			if err := storagePools.ReleaseVolumeLocalStateDetached(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
 				return fmt.Errorf("Release failed materialization storage local state: %w", err)
 			}
 		} else {
@@ -349,7 +351,9 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 	}
 	vol := pool.GetVolume(drivers.VolumeTypeContainer, drivers.ContentTypeFS, attempt.StorageVolume, config)
 	if !deleteBackend {
-		if err := storagePools.ReleaseVolumeLocalState(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
+		// No database record exists for this claim, so any leftover mount or mount
+		// reference was leaked by a failed receive and is exactly what must be released.
+		if err := storagePools.ReleaseVolumeLocalStateDetached(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
 			return fmt.Errorf("Release detached Ceph local claim state: %w", err)
 		}
 

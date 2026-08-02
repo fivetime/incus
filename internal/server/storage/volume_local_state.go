@@ -31,6 +31,24 @@ func releaseVolumeLocalState(driver any, vol drivers.Volume, expectedStorageIden
 	return nil
 }
 
+// ReleaseVolumeLocalStateDetached tears down host-local state that provably belongs to a failed
+// or abandoned claim, including leaked mounts and mount references. The caller must have proven
+// the volume has no database record (or be deleting it) before invoking this; drivers without
+// detached release support fall back to the conservative release.
+func ReleaseVolumeLocalStateDetached(driver drivers.Driver, vol drivers.Volume, expectedStorageIdentity string) error {
+	detachedReleaser, ok := any(driver).(drivers.VolumeDetachedLocalStateReleaser)
+	if !ok {
+		return releaseVolumeLocalState(driver, vol, expectedStorageIdentity)
+	}
+
+	err := detachedReleaser.ReleaseVolumeDetachedLocalState(vol, expectedStorageIdentity)
+	if err != nil {
+		return err
+	}
+
+	return validateVolumeLocalStateReleased(detachedReleaser, vol, expectedStorageIdentity)
+}
+
 // ValidateVolumeLocalStateReleased proves that a volume has no host-local state.
 func ValidateVolumeLocalStateReleased(driver drivers.Driver, vol drivers.Volume, expectedStorageIdentity string) error {
 	provider, ok := driver.(drivers.VolumeLocalStateProvider)
