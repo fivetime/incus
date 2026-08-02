@@ -566,6 +566,37 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	//  shortdesc: Whether shared migration storage receive completed
 	"volatile.migration.storage_receive_complete": validate.Optional(validate.IsBool),
 
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rootfs_idmap.release_token)
+	// Binds the final release of the instance's root storage to one
+	// materialization attempt. Written by the storage release receipt
+	// protocol; a record carrying it can only be deleted with a complete
+	// receipt binding.
+	// ---
+	//  type: string
+	//  shortdesc: Materialization attempt bound to the final storage release
+	"volatile.rootfs_idmap.release_token": validate.Optional(validate.IsUUID),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rootfs_idmap.release_owner)
+	// The external owner identity bound to the final storage release.
+	// ---
+	//  type: string
+	//  shortdesc: External owner bound to the final storage release
+	"volatile.rootfs_idmap.release_owner": validate.Optional(validate.IsUUID),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rootfs_idmap.allocation_id)
+	// The fleet-wide ID map allocation generation bound to the release receipt.
+	// ---
+	//  type: string
+	//  shortdesc: Fleet-wide ID map allocation bound to the release receipt
+	"volatile.rootfs_idmap.allocation_id": validate.Optional(validate.IsUUID),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rootfs_idmap.compute_id)
+	// The persistent compute identity bound to the release receipt.
+	// ---
+	//  type: string
+	//  shortdesc: Persistent compute identity bound to the release receipt
+	"volatile.rootfs_idmap.compute_id": validate.Optional(validate.IsUUID),
+
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.rebalance.last_move)
 	//
 	// ---

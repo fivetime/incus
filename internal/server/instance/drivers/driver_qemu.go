@@ -10666,6 +10666,15 @@ func (d *qemu) UpdateBackupFile() error {
 	// Write the current instance state to backup file.
 	pool, err := d.getStoragePool()
 	if err != nil {
+		// A record without a resolvable storage pool (mid migration receive
+		// or teardown) has nowhere to write a backup.yaml; the refresh is a
+		// convenience copy of database state, not something the caller's
+		// operation may fail over.
+		if api.StatusErrorCheck(err, http.StatusNotFound) {
+			d.logger.Debug("Skipping backup.yaml refresh for an instance without a storage pool", logger.Ctx{"err": err})
+			return nil
+		}
+
 		return err
 	}
 
