@@ -989,6 +989,10 @@ func (d *btrfs) RefreshVolume(vol Volume, srcVol Volume, srcSnapshots []Volume, 
 // DeleteVolume deletes a volume of the storage device. If any snapshots of the volume remain then
 // this function will return an error.
 func (d *btrfs) DeleteVolume(vol Volume, op *operations.Operation) error {
+	return d.deleteVolume(vol, "", op)
+}
+
+func (d *btrfs) deleteVolume(vol Volume, expectedStorageIdentity string, op *operations.Operation) error {
 	// Check that we don't have snapshots.
 	snapshots, err := d.VolumeSnapshots(vol, op)
 	if err != nil {
@@ -1009,6 +1013,11 @@ func (d *btrfs) DeleteVolume(vol Volume, op *operations.Operation) error {
 	volPath := GetVolumeMountPath(d.name, vol.volType, volName)
 	if !util.PathExists(volPath) {
 		return nil
+	}
+
+	err = verifyVolumeIdentity(vol, expectedStorageIdentity, d.GetVolumeIdentity)
+	if err != nil {
+		return err
 	}
 
 	// Delete the volume (and any subvolumes).

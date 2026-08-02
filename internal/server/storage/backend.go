@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,10 +53,13 @@ import (
 	"github.com/lxc/incus/v7/internal/server/storage/drivers"
 	"github.com/lxc/incus/v7/internal/server/storage/memorypipe"
 	"github.com/lxc/incus/v7/internal/server/storage/s3"
+	"github.com/lxc/incus/v7/internal/server/storagematerializationattempt"
+	"github.com/lxc/incus/v7/internal/server/storagereleasereceipt"
 	localUtil "github.com/lxc/incus/v7/internal/server/util"
 	internalUtil "github.com/lxc/incus/v7/internal/util"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/archive"
+	"github.com/lxc/incus/v7/shared/idmap"
 	"github.com/lxc/incus/v7/shared/ioprogress"
 	"github.com/lxc/incus/v7/shared/logger"
 	"github.com/lxc/incus/v7/shared/revert"
@@ -653,6 +657,12 @@ func (b *backend) CreateInstance(inst instance.Instance, op *operations.Operatio
 		return err
 	}
 
+	unlockMaterialization, err := b.lockInstanceStorageMaterialization(inst)
+	if err != nil {
+		return err
+	}
+	defer unlockMaterialization()
+
 	volType, err := InstanceTypeToVolumeType(inst.Type())
 	if err != nil {
 		return err
@@ -695,6 +705,11 @@ func (b *backend) CreateInstance(inst instance.Instance, op *operations.Operatio
 		return err
 	}
 
+	err = b.validateInstanceStorageMaterialization(inst, vol)
+	if err != nil {
+		return err
+	}
+
 	var filler *drivers.VolumeFiller
 	if inst.Type() == instancetype.Container {
 		filler = &drivers.VolumeFiller{
@@ -716,6 +731,11 @@ func (b *backend) CreateInstance(inst instance.Instance, op *operations.Operatio
 	}
 
 	reverter.Add(func() { _ = b.DeleteInstance(inst, op) })
+
+	err = b.markInstanceStorageMaterialized(inst, vol)
+	if err != nil {
+		return err
+	}
 
 	err = b.ensureInstanceSymlink(inst.Type(), inst.Project().Name, inst.Name(), vol.MountPath())
 	if err != nil {
@@ -1129,6 +1149,10 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 
 	err := b.isStatusReady()
 	if err != nil {
+		return err
+	}
+
+	if err := b.checkInstanceStorageMaterializationFence(inst); err != nil {
 		return err
 	}
 
@@ -1988,6 +2012,12 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 		return err
 	}
 
+	unlockMaterialization, err := b.lockInstanceStorageMaterialization(inst)
+	if err != nil {
+		return err
+	}
+	defer unlockMaterialization()
+
 	volType, err := InstanceTypeToVolumeType(inst.Type())
 	if err != nil {
 		return err
@@ -2032,6 +2062,11 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 	volStorageName := project.Instance(inst.Project().Name, inst.Name())
 	vol := b.GetVolume(volType, contentType, volStorageName, volumeConfig)
 	err = b.applyInstanceRootDiskOverrides(inst, &vol)
+	if err != nil {
+		return err
+	}
+
+	err = b.validateInstanceStorageMaterialization(inst, vol)
 	if err != nil {
 		return err
 	}
@@ -2105,6 +2140,11 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 		}
 	}
 
+	err = b.markInstanceStorageMaterialized(inst, vol)
+	if err != nil {
+		return err
+	}
+
 	err = b.ensureInstanceSymlink(inst.Type(), inst.Project().Name, inst.Name(), vol.MountPath())
 	if err != nil {
 		return err
@@ -2136,6 +2176,12 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 	if err != nil {
 		return err
 	}
+
+	unlockMaterialization, err := b.lockInstanceStorageMaterialization(inst)
+	if err != nil {
+		return err
+	}
+	defer unlockMaterialization()
 
 	if args.Config != nil {
 		return errors.New("Migration VolumeTargetArgs.Config cannot be set for instances")
@@ -2225,6 +2271,11 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 		if err != nil {
 			return fmt.Errorf("Failed filling volume config: %w", err)
 		}
+	}
+
+	err = b.validateInstanceStorageMaterialization(inst, vol)
+	if err != nil {
+		return err
 	}
 
 	// Check if the volume exists on storage.
@@ -2406,6 +2457,11 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 		if err != nil {
 			return err
 		}
+	}
+
+	err = b.markInstanceStorageMaterialized(inst, vol)
+	if err != nil {
+		return err
 	}
 
 	if !isRemoteClusterMove && !args.SharedStorage {
@@ -2625,8 +2681,39 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 	volStorageName := project.Instance(inst.Project().Name, inst.Name())
 	contentType := InstanceContentType(inst)
 
-	// There's no need to pass config as it's not needed when deleting a volume.
-	vol := b.GetVolume(volType, contentType, volStorageName, nil)
+	// Externally managed RBD volumes require their persisted image name when
+	// checking, unmapping and releasing the local claim.
+	var volConfig map[string]string
+	if b.driver.Info().Name == "cephext" {
+		dbVol, err := VolumeDBGet(b, inst.Project().Name, inst.Name(), volType)
+		if err != nil {
+			if !response.IsNotFoundError(err) {
+				return err
+			}
+
+			// A crash after a complete receipt and VolumeDBDelete, but before
+			// instance DB deletion, must remain retryable without recreating the
+			// local claim. The complete receipt is the only safe source for the
+			// external image name in this narrow window.
+			token := inst.LocalConfig()[internalInstance.ConfigVolatileRootfsIDMapReleaseToken]
+			receipt, receiptErr := storagereleasereceipt.New(b.state.DB.Node).Get(context.Background(), token)
+			if receiptErr != nil || !storageReleaseReceiptCanRecoverInstance(receipt, inst.LocalConfig(), inst.Project().Name, inst.Name(), b.name) {
+				return err
+			}
+
+			volConfig = map[string]string{"ceph.rbd.image_name": receipt.RBDImage}
+		} else {
+			volConfig = instanceStorageVolumeConfigForDelete(b.driver.Info().Name, dbVol.Config)
+		}
+	}
+
+	vol := b.GetVolume(volType, contentType, volStorageName, volConfig)
+	if b.driver.Info().Name == "cephext" {
+		err = b.applyInstanceRootDiskOverrides(inst, &vol)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Delete the volume from the storage device. Must come after snapshots are removed.
 	// Must come before DB VolumeDBDelete so that the volume ID is still available.
@@ -2638,16 +2725,43 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 	// over deleting storage whose authoritative owner may be remote.
 	localConfig := inst.LocalConfig()
 	deleteProtected := internalInstance.StorageDeleteProtected(localConfig)
+	releaseReceipt, err := b.instanceStorageReleaseReceipt(inst, vol, deleteProtected)
+	if err != nil {
+		return err
+	}
+
 	if !deleteProtected {
 		volExists, err := b.driver.HasVolume(vol)
 		if err != nil {
 			return err
 		}
 
-		if instanceStorageVolumeShouldDelete(volExists, localConfig) {
-			err = b.driver.DeleteVolume(vol, op)
+		if releaseReceipt != nil {
+			releaseReceipt, err = b.releaseInstanceStorageWithReceipt(inst, vol, volExists, *releaseReceipt, op)
 			if err != nil {
-				return fmt.Errorf("Error deleting storage volume: %w", err)
+				return err
+			}
+		} else if instanceStorageVolumeShouldDelete(volExists, localConfig) {
+			err = b.deleteInstanceStorageVolume(inst, vol, volExists, "", op)
+			if err != nil {
+				return err
+			}
+		}
+	} else if releaseReceipt != nil {
+		volExists, err := b.driver.HasVolume(vol)
+		if err != nil {
+			return err
+		}
+
+		releaseReceipt, err = b.beginDetachedInstanceStorageRelease(vol, volExists, *releaseReceipt)
+		if err != nil {
+			return err
+		}
+
+		if releaseReceipt.State != storagereleasereceipt.StateComplete {
+			err = ReleaseVolumeLocalState(b.driver, vol, releaseReceipt.StorageIdentity)
+			if err != nil {
+				return fmt.Errorf("Release detached root storage local state: %w", err)
 			}
 		}
 	}
@@ -2663,16 +2777,750 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 		return err
 	}
 
+	if releaseReceipt != nil {
+		volExists, err := b.driver.HasVolume(vol)
+		if err != nil {
+			return fmt.Errorf("Check root storage before deleting its database record: %w", err)
+		}
+
+		if releaseReceipt.State == storagereleasereceipt.StateComplete {
+			err = b.validateCompletedInstanceStorageRelease(vol, volExists, *releaseReceipt)
+		} else {
+			err = b.validatePendingInstanceStorageRelease(vol, volExists, *releaseReceipt)
+		}
+		if err != nil {
+			return fmt.Errorf("Prove root storage release before deleting its database record: %w", err)
+		}
+	}
+
 	// Remove the volume record from the database.
 	err = VolumeDBDelete(b, inst.Project().Name, inst.Name(), vol.Type())
-	if err != nil {
+	if err != nil && !(response.IsNotFoundError(err) && storageReleaseReceiptAllowsMissingVolumeDB(releaseReceipt)) {
 		return err
+	}
+
+	if releaseReceipt != nil && releaseReceipt.Outcome == storagereleasereceipt.OutcomeDetached && releaseReceipt.State != storagereleasereceipt.StateComplete {
+		volExists, err := b.driver.HasVolume(vol)
+		if err != nil {
+			return fmt.Errorf("Check detached root storage before completing its receipt: %w", err)
+		}
+
+		err = b.validatePendingInstanceStorageRelease(vol, volExists, *releaseReceipt)
+		if err == nil {
+			_, err = storagereleasereceipt.New(b.state.DB.Node).Complete(context.Background(), *releaseReceipt)
+		}
+		if err != nil {
+			return fmt.Errorf("Complete detached root storage release receipt: %w", err)
+		}
 	}
 
 	// Record volume deletion with authorizer.
 	err = b.state.Authorizer.DeleteStoragePoolVolume(b.state.ShutdownCtx, inst.Project().Name, b.Name(), vol.Type().Singular(), inst.Name(), "")
 	if err != nil {
 		logger.Error("Failed to remove storage volume from authorizer", logger.Ctx{"name": inst.Name(), "type": vol.Type(), "pool": b.Name(), "project": inst.Project().Name, "error": err})
+	}
+
+	return nil
+}
+
+func storageReleaseReceiptAllowsMissingVolumeDB(receipt *db.StorageReleaseReceipt) bool {
+	if receipt == nil {
+		return false
+	}
+
+	if receipt.Outcome == storagereleasereceipt.OutcomeDetached {
+		return receipt.State == storagereleasereceipt.StatePending || receipt.State == storagereleasereceipt.StateComplete
+	}
+
+	return (receipt.Outcome == storagereleasereceipt.OutcomeDeleted || receipt.Outcome == storagereleasereceipt.OutcomeNormalized) && receipt.State == storagereleasereceipt.StateComplete
+}
+
+func storageReleaseReceiptRequiresLocalStateProof(receipt *db.StorageReleaseReceipt) bool {
+	return receipt != nil && (receipt.StorageDriver == "ceph" || receipt.StorageDriver == "cephext")
+}
+
+func validateRequiredStorageReleaseLocalState(receipt *db.StorageReleaseReceipt, validate func() error) error {
+	if !storageReleaseReceiptRequiresLocalStateProof(receipt) {
+		return nil
+	}
+
+	return validate()
+}
+
+func storageReleaseReceiptCanRecoverInstance(receipt *db.StorageReleaseReceipt, localConfig map[string]string, projectName string, instanceName string, poolName string) bool {
+	if receipt == nil || (receipt.Outcome != storagereleasereceipt.OutcomeNormalized && receipt.Outcome != storagereleasereceipt.OutcomeDetached) {
+		return false
+	}
+
+	if receipt.Outcome == storagereleasereceipt.OutcomeNormalized && receipt.State != storagereleasereceipt.StateComplete {
+		return false
+	}
+
+	if receipt.Outcome == storagereleasereceipt.OutcomeDetached && receipt.State != storagereleasereceipt.StatePending && receipt.State != storagereleasereceipt.StateComplete {
+		return false
+	}
+
+	return receipt.Token != "" &&
+		receipt.Token == receipt.MaterializationID &&
+		receipt.Token == localConfig[internalInstance.ConfigVolatileRootfsIDMapReleaseToken] &&
+		receipt.AllocationID == localConfig[internalInstance.ConfigVolatileRootfsIDMapAllocationID] &&
+		receipt.ComputeID == localConfig[internalInstance.ConfigVolatileRootfsIDMapComputeID] &&
+		receipt.MaterializationID == localConfig[internalInstance.ConfigOpenStackRootfsMaterializationID] &&
+		receipt.AllocationID == localConfig[internalInstance.ConfigOpenStackIDMapAllocationID] &&
+		receipt.ComputeID == localConfig[internalInstance.ConfigOpenStackComputeID] &&
+		receipt.Owner == localConfig[internalInstance.ConfigVolatileRootfsIDMapReleaseOwner] &&
+		receipt.Owner == localConfig["user.openstack.uuid"] &&
+		receipt.Project == projectName &&
+		receipt.InstanceName == instanceName &&
+		receipt.StorageDriver == "cephext" &&
+		receipt.StoragePool == poolName &&
+		receipt.RBDImage != "" &&
+		receipt.StorageIdentity != "" &&
+		receipt.BaselineClean &&
+		receipt.CleanupDisposition == storagematerializationattempt.CleanupDetach
+}
+
+func (b *backend) beginDetachedInstanceStorageRelease(vol drivers.Volume, volExists bool, expected db.StorageReleaseReceipt) (*db.StorageReleaseReceipt, error) {
+	manager := storagereleasereceipt.New(b.state.DB.Node)
+	current, err := manager.Get(context.Background(), expected.Token)
+	if err != nil && !errors.Is(err, storagereleasereceipt.ErrNotFound) {
+		return nil, fmt.Errorf("Load detached root storage release receipt: %w", err)
+	}
+
+	if current != nil {
+		current, err = manager.Begin(context.Background(), expected)
+		if err != nil {
+			return nil, fmt.Errorf("Validate detached root storage release receipt: %w", err)
+		}
+
+		if current.State == storagereleasereceipt.StateComplete {
+			err = b.validateCompletedInstanceStorageRelease(vol, volExists, *current)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return current, nil
+	}
+
+	if !volExists {
+		return nil, errors.New("Protected root storage is absent without a prior pending detached receipt")
+	}
+
+	identity, err := storageVolumeIdentity(b.driver, vol)
+	if err != nil {
+		return nil, fmt.Errorf("Read protected root storage identity: %w", err)
+	}
+
+	if identity == "" {
+		return nil, errors.New("Protected root storage driver cannot provide immutable identity")
+	}
+
+	if identity != expected.StorageIdentity {
+		return nil, errors.New("Protected root storage identity does not match its committed materialization")
+	}
+
+	current, err = manager.Begin(context.Background(), expected)
+	if err != nil {
+		return nil, fmt.Errorf("Persist pending detached root storage release receipt: %w", err)
+	}
+
+	return current, nil
+}
+
+func (b *backend) instanceStorageReleaseReceipt(inst instance.Instance, vol drivers.Volume, deleteProtected bool) (*db.StorageReleaseReceipt, error) {
+	config := inst.LocalConfig()
+	token := config[internalInstance.ConfigVolatileRootfsIDMapReleaseToken]
+	owner := config[internalInstance.ConfigVolatileRootfsIDMapReleaseOwner]
+	allocationID := config[internalInstance.ConfigVolatileRootfsIDMapAllocationID]
+	computeID := config[internalInstance.ConfigVolatileRootfsIDMapComputeID]
+	configured := 0
+	for _, value := range []string{token, owner, allocationID, computeID} {
+		if value != "" {
+			configured++
+		}
+	}
+
+	if configured == 0 {
+		return nil, nil
+	}
+
+	if configured != 4 {
+		return nil, errors.New("Incomplete rootfs ID map release binding")
+	}
+
+	if owner != config["user.openstack.uuid"] || token != config[internalInstance.ConfigOpenStackRootfsMaterializationID] || allocationID != config[internalInstance.ConfigOpenStackIDMapAllocationID] || computeID != config[internalInstance.ConfigOpenStackComputeID] {
+		return nil, errors.New("Rootfs ID map release binding does not match the authoritative local instance provenance")
+	}
+
+	attempt, err := storagematerializationattempt.New(b.state.DB.Node).Get(context.Background(), token)
+	if err != nil {
+		return nil, fmt.Errorf("Load root storage materialization generation before release: %w", err)
+	}
+	switch attempt.State {
+	case storagematerializationattempt.StateCommitted:
+		if !attempt.Started || !attempt.Finished || attempt.StoragePhase != storagematerializationattempt.PhaseMaterialized {
+			return nil, errors.New("Committed root storage materialization is incomplete")
+		}
+	case storagematerializationattempt.StateAborted, storagematerializationattempt.StateClean:
+		// Failed materialization cleanup is proven by the attempt itself and must
+		// not create a release receipt that can only retire a committed attempt.
+		return nil, nil
+	default:
+		return nil, errors.New("Cannot release an active root storage materialization generation")
+	}
+
+	container, ok := inst.(instance.Container)
+	if !ok || inst.Type() != instancetype.Container {
+		return nil, errors.New("Rootfs ID map release receipts require a container")
+	}
+
+	baseValue := inst.ExpandedConfig()["security.idmap.base"]
+	sizeValue := inst.ExpandedConfig()["security.idmap.size"]
+	base, err := strconv.ParseInt(baseValue, 10, 64)
+	if err != nil || base < 0 {
+		return nil, fmt.Errorf("Invalid fixed rootfs ID map base %q", baseValue)
+	}
+
+	size, err := strconv.ParseInt(sizeValue, 10, 64)
+	if err != nil || size <= 0 {
+		return nil, fmt.Errorf("Invalid fixed rootfs ID map size %q", sizeValue)
+	}
+
+	const idmapIDSpaceSize = int64(1 << 32)
+	if size > idmapIDSpaceSize || base > idmapIDSpaceSize-size {
+		return nil, errors.New("Fixed rootfs ID map exceeds the 32-bit UID/GID space")
+	}
+
+	currentIDMap, err := container.CurrentIdmap()
+	if err != nil {
+		return nil, fmt.Errorf("Load current rootfs ID map: %w", err)
+	}
+
+	if !rootfsIDMapMatchesReleaseGeneration(currentIDMap, base, size) {
+		return nil, errors.New("Current rootfs ID map does not match the fixed release generation")
+	}
+
+	outcome := instanceStorageReleaseOutcome(b.driver.Info().Name, deleteProtected)
+	expectedAttempt := &db.StorageMaterializationAttempt{
+		Token:              token,
+		AllocationID:       allocationID,
+		ComputeID:          computeID,
+		Owner:              owner,
+		Project:            inst.Project().Name,
+		InstanceName:       inst.Name(),
+		IDMapBase:          base,
+		IDMapSize:          size,
+		StorageDriver:      b.driver.Info().Name,
+		StoragePool:        b.name,
+		StorageVolume:      vol.Name(),
+		RBDImage:           vol.Config()["ceph.rbd.image_name"],
+		StorageIdentity:    attempt.StorageIdentity,
+		BaselineClean:      attempt.BaselineClean,
+		CleanupDisposition: attempt.CleanupDisposition,
+	}
+	if !storagematerializationattempt.SameBinding(attempt, expectedAttempt) {
+		return nil, storagematerializationattempt.ErrBindingMismatch
+	}
+
+	return &db.StorageReleaseReceipt{
+		Token:              token,
+		AllocationID:       allocationID,
+		ComputeID:          computeID,
+		MaterializationID:  token,
+		Owner:              owner,
+		Project:            inst.Project().Name,
+		InstanceName:       inst.Name(),
+		IDMapBase:          base,
+		IDMapSize:          size,
+		StorageDriver:      b.driver.Info().Name,
+		StoragePool:        b.name,
+		StorageVolume:      vol.Name(),
+		RBDImage:           vol.Config()["ceph.rbd.image_name"],
+		StorageIdentity:    attempt.StorageIdentity,
+		BaselineClean:      attempt.BaselineClean,
+		CleanupDisposition: attempt.CleanupDisposition,
+		Outcome:            outcome,
+	}, nil
+}
+
+func instanceStorageReleaseOutcome(driverName string, deleteProtected bool) string {
+	if deleteProtected {
+		return storagereleasereceipt.OutcomeDetached
+	}
+
+	if driverName == "cephext" {
+		return storagereleasereceipt.OutcomeNormalized
+	}
+
+	return storagereleasereceipt.OutcomeDeleted
+}
+
+func rootfsIDMapMatchesReleaseGeneration(currentIDMap *idmap.Set, base int64, size int64) bool {
+	uidMatch := false
+	gidMatch := false
+	if currentIDMap == nil {
+		return false
+	}
+
+	for _, entry := range currentIDMap.Entries {
+		if entry.NSID != 0 || entry.HostID != base || entry.MapRange != size || (!entry.IsUID && !entry.IsGID) {
+			return false
+		}
+
+		uidMatch = uidMatch || entry.IsUID
+		gidMatch = gidMatch || entry.IsGID
+	}
+
+	return uidMatch && gidMatch
+}
+
+func (b *backend) releaseInstanceStorageWithReceipt(inst instance.Instance, vol drivers.Volume, volExists bool, expected db.StorageReleaseReceipt, op *operations.Operation) (*db.StorageReleaseReceipt, error) {
+	manager := storagereleasereceipt.New(b.state.DB.Node)
+	current, err := manager.Get(context.Background(), expected.Token)
+	if err != nil && !errors.Is(err, storagereleasereceipt.ErrNotFound) {
+		return nil, fmt.Errorf("Load root storage release receipt: %w", err)
+	}
+
+	if current != nil {
+		_, err = manager.Begin(context.Background(), expected)
+		if err != nil {
+			return nil, fmt.Errorf("Validate root storage release receipt: %w", err)
+		}
+
+		if current.State == storagereleasereceipt.StateComplete {
+			if current.Outcome == storagereleasereceipt.OutcomeDeleted {
+				err = b.deleteInstanceStorageVolume(inst, vol, volExists, current.StorageIdentity, op)
+				if err != nil {
+					return nil, fmt.Errorf("Reconcile completed root storage deletion receipt: %w", err)
+				}
+
+				volExists, err = b.driver.HasVolume(vol)
+				if err != nil {
+					return nil, fmt.Errorf("Check reconciled root storage deletion receipt: %w", err)
+				}
+			}
+
+			err = b.validateCompletedInstanceStorageRelease(vol, volExists, *current)
+			return current, err
+		}
+	}
+
+	if !volExists {
+		if current == nil {
+			return nil, errors.New("Root storage is absent without a prior pending release receipt")
+		}
+
+		if expected.Outcome != storagereleasereceipt.OutcomeDeleted {
+			return nil, errors.New("Externally retained root storage disappeared before normalization could be proven")
+		}
+
+	} else {
+		identity, err := storageVolumeIdentity(b.driver, vol)
+		if err != nil {
+			return nil, fmt.Errorf("Read root storage identity: %w", err)
+		}
+
+		if current == nil {
+			if expected.StorageIdentity != identity {
+				return nil, errors.New("Root storage identity does not match its committed materialization")
+			}
+
+			_, err = manager.Begin(context.Background(), expected)
+			if err != nil {
+				return nil, fmt.Errorf("Persist pending root storage release receipt: %w", err)
+			}
+		} else if expected.Outcome != storagereleasereceipt.OutcomeDeleted && expected.StorageIdentity != identity {
+			return nil, errors.New("Root storage identity changed during release retry")
+		}
+	}
+
+	err = b.deleteInstanceStorageVolume(inst, vol, volExists, expected.StorageIdentity, op)
+	if err != nil {
+		return nil, err
+	}
+
+	if expected.Outcome == storagereleasereceipt.OutcomeNormalized || expected.Outcome == storagereleasereceipt.OutcomeDetached {
+		err = ReleaseVolumeLocalState(b.driver, vol, expected.StorageIdentity)
+		if err != nil {
+			return nil, fmt.Errorf("Release retained root storage local state: %w", err)
+		}
+
+	}
+
+	volExists, err = b.driver.HasVolume(vol)
+	if err != nil {
+		return nil, fmt.Errorf("Check root storage before completing its receipt: %w", err)
+	}
+
+	err = b.validatePendingInstanceStorageRelease(vol, volExists, expected)
+	if err != nil {
+		return nil, fmt.Errorf("Prove root storage release before completing its receipt: %w", err)
+	}
+
+	current, err = manager.Complete(context.Background(), expected)
+	if err != nil {
+		return nil, fmt.Errorf("Complete root storage release receipt: %w", err)
+	}
+
+	return current, nil
+}
+
+func (b *backend) validatePendingInstanceStorageRelease(vol drivers.Volume, volExists bool, receipt db.StorageReleaseReceipt) error {
+	err := validateDeletedStorageIdentityAbsent(b.driver, vol, receipt)
+	if err != nil {
+		return fmt.Errorf("Root storage exact identity remains after deletion: %w", err)
+	}
+
+	err = validateRequiredStorageReleaseLocalState(&receipt, func() error {
+		return ValidateVolumeLocalStateReleased(b.driver, vol, receipt.StorageIdentity)
+	})
+	if err != nil {
+		return fmt.Errorf("Root storage has residual local state: %w", err)
+	}
+
+	identity := ""
+	if volExists {
+		var err error
+		identity, err = storageVolumeIdentity(b.driver, vol)
+		if err != nil {
+			return err
+		}
+	}
+
+	return validatePendingStorageReleaseBinding(volExists, identity, receipt)
+}
+
+func validatePendingStorageReleaseBinding(volExists bool, storageIdentity string, receipt db.StorageReleaseReceipt) error {
+	if receipt.Outcome == storagereleasereceipt.OutcomeDeleted {
+		if volExists && storageIdentity == receipt.StorageIdentity {
+			return errors.New("Deleted root storage identity reappeared before receipt completion")
+		}
+
+		return nil
+	}
+
+	if !volExists {
+		return errors.New("Retained root storage disappeared before release receipt completion")
+	}
+
+	if storageIdentity != receipt.StorageIdentity {
+		return errors.New("Root storage identity changed before release receipt completion")
+	}
+
+	return nil
+}
+
+func (b *backend) validateCompletedInstanceStorageRelease(vol drivers.Volume, volExists bool, receipt db.StorageReleaseReceipt) error {
+	err := validateDeletedStorageIdentityAbsent(b.driver, vol, receipt)
+	if err != nil {
+		return fmt.Errorf("Completed root storage exact identity still exists: %w", err)
+	}
+
+	err = validateRequiredStorageReleaseLocalState(&receipt, func() error {
+		return ValidateVolumeLocalStateReleased(b.driver, vol, receipt.StorageIdentity)
+	})
+	if err != nil {
+		return fmt.Errorf("Completed root storage release receipt has residual local state: %w", err)
+	}
+
+	if receipt.Outcome == storagereleasereceipt.OutcomeDeleted {
+		if volExists {
+			identity, err := storageVolumeIdentity(b.driver, vol)
+			if err != nil {
+				return err
+			}
+			if identity == receipt.StorageIdentity {
+				return errors.New("Completed root storage deletion receipt conflicts with the deleted identity")
+			}
+		}
+
+		return nil
+	}
+
+	if !volExists {
+		return nil
+	}
+
+	identity, err := storageVolumeIdentity(b.driver, vol)
+	if err != nil {
+		return err
+	}
+
+	if identity != receipt.StorageIdentity {
+		return errors.New("Completed root storage release receipt refers to another storage object")
+	}
+
+	return nil
+}
+
+func validateDeletedStorageIdentityAbsent(driver any, vol drivers.Volume, receipt db.StorageReleaseReceipt) error {
+	if receipt.Outcome != storagereleasereceipt.OutcomeDeleted || receipt.StorageDriver != "ceph" {
+		return nil
+	}
+
+	provider, ok := driver.(drivers.VolumeIdentityPresenceProvider)
+	if !ok {
+		return errors.New("Ceph storage driver cannot prove exact identity deletion")
+	}
+
+	exists, err := provider.HasVolumeIdentity(vol, receipt.StorageIdentity)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return errors.New("Exact deleted storage identity still exists")
+	}
+
+	return nil
+}
+
+func storageVolumeIdentity(driver drivers.Driver, vol drivers.Volume) (string, error) {
+	provider, ok := driver.(drivers.VolumeIdentityProvider)
+	if !ok {
+		return "", nil
+	}
+
+	identity, err := provider.GetVolumeIdentity(vol)
+	if err != nil {
+		return "", err
+	}
+
+	if identity == "" {
+		return "", errors.New("Storage driver returned an empty volume identity")
+	}
+
+	return identity, nil
+}
+
+func (b *backend) lockInstanceStorageMaterialization(inst instance.Instance) (func(), error) {
+	unlock, err := locking.Lock(context.TODO(), "storage_materialization_instance_"+inst.Project().Name+"_"+inst.Name())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := b.checkInstanceStorageMaterializationFence(inst); err != nil {
+		unlock()
+		return nil, err
+	}
+
+	return unlock, nil
+}
+
+func (b *backend) checkInstanceStorageMaterializationFence(inst instance.Instance) error {
+	if inst.LocalConfig()[internalInstance.ConfigOpenStackRootfsMaterializationID] != "" {
+		return nil
+	}
+
+	attempt, err := storagematerializationattempt.New(b.state.DB.Node).GetByInstance(context.Background(), inst.Project().Name, inst.Name())
+	if err == nil {
+		return fmt.Errorf("Instance name is fenced by storage materialization attempt %q", attempt.Token)
+	}
+	if !errors.Is(err, storagematerializationattempt.ErrNotFound) {
+		return fmt.Errorf("Check storage materialization instance fence: %w", err)
+	}
+
+	return nil
+}
+
+func (b *backend) instanceStorageMaterializationBinding(inst instance.Instance, vol drivers.Volume) (*db.StorageMaterializationAttempt, error) {
+	config := inst.LocalConfig()
+	token := config[internalInstance.ConfigOpenStackRootfsMaterializationID]
+	if token == "" {
+		attempt, err := storagematerializationattempt.New(b.state.DB.Node).GetByInstance(context.Background(), inst.Project().Name, inst.Name())
+		if err == nil {
+			return nil, fmt.Errorf("Instance name is fenced by storage materialization attempt %q", attempt.Token)
+		}
+		if !errors.Is(err, storagematerializationattempt.ErrNotFound) {
+			return nil, fmt.Errorf("Check storage materialization instance fence: %w", err)
+		}
+
+		return nil, nil
+	}
+
+	base, err := strconv.ParseInt(config["security.idmap.base"], 10, 64)
+	if err != nil || base < 0 {
+		return nil, errors.New("Storage materialization requires a valid fixed security.idmap.base")
+	}
+
+	size, err := strconv.ParseInt(config["security.idmap.size"], 10, 64)
+	if err != nil || size <= 0 {
+		return nil, errors.New("Storage materialization requires a valid fixed security.idmap.size")
+	}
+
+	attempt, err := storagematerializationattempt.New(b.state.DB.Node).Get(context.Background(), token)
+	if err != nil {
+		return nil, fmt.Errorf("Load storage materialization attempt: %w", err)
+	}
+
+	expected := &db.StorageMaterializationAttempt{
+		Token:              token,
+		AllocationID:       config[internalInstance.ConfigOpenStackIDMapAllocationID],
+		ComputeID:          config[internalInstance.ConfigOpenStackComputeID],
+		Owner:              config["user.openstack.uuid"],
+		Project:            inst.Project().Name,
+		InstanceName:       inst.Name(),
+		IDMapBase:          base,
+		IDMapSize:          size,
+		StorageDriver:      b.driver.Info().Name,
+		StoragePool:        b.name,
+		StorageVolume:      vol.Name(),
+		RBDImage:           vol.Config()["ceph.rbd.image_name"],
+		StorageIdentity:    attempt.StorageIdentity,
+		BaselineClean:      attempt.BaselineClean,
+		CleanupDisposition: attempt.CleanupDisposition,
+	}
+
+	if !storagematerializationattempt.SameBinding(attempt, expected) {
+		return nil, storagematerializationattempt.ErrBindingMismatch
+	}
+
+	if !attempt.Started || attempt.Finished || (attempt.State != storagematerializationattempt.StateActive && attempt.State != storagematerializationattempt.StateAborted) {
+		return nil, errors.New("Storage materialization attempt is not an active started attempt")
+	}
+
+	return attempt, nil
+}
+
+func (b *backend) validateInstanceStorageMaterialization(inst instance.Instance, vol drivers.Volume) error {
+	_, err := b.instanceStorageMaterializationBinding(inst, vol)
+	return err
+}
+
+func (b *backend) markInstanceStorageMaterialized(inst instance.Instance, vol drivers.Volume) error {
+	attempt, err := b.instanceStorageMaterializationBinding(inst, vol)
+	if err != nil || attempt == nil {
+		return err
+	}
+
+	if attempt.StorageIdentity == "" {
+		initializer, ok := b.driver.(drivers.VolumeIdentityInitializer)
+		if ok {
+			err := initializer.InitializeVolumeIdentity(vol)
+			if err != nil {
+				return fmt.Errorf("Initialize materialized root storage identity: %w", err)
+			}
+		}
+	}
+
+	identity, err := storageVolumeIdentity(b.driver, vol)
+	if err != nil {
+		return fmt.Errorf("Read materialized root storage identity: %w", err)
+	}
+
+	if err := persistStorageMaterializationOwnership(b.driver, vol, attempt, identity); err != nil {
+		return err
+	}
+
+	err = storagematerializationattempt.New(b.state.DB.Node).SetStoragePhase(context.Background(), attempt.Token, storagematerializationattempt.PhaseMaterialized, identity)
+	if err != nil {
+		return fmt.Errorf("Persist materialized root storage identity: %w", err)
+	}
+
+	return nil
+}
+
+func (b *backend) deleteInstanceStorageVolume(inst instance.Instance, vol drivers.Volume, volExists bool, expectedStorageIdentity string, op *operations.Operation) error {
+	if instanceStorageVolumeShouldNormalizeRootfs(b.driver.Info().Name, volExists, inst.LocalConfig()) {
+		err := b.normalizeExternalInstanceRootfsIDMap(inst, vol, expectedStorageIdentity, op)
+		if err != nil {
+			return fmt.Errorf("Normalize externally managed rootfs ID map: %w", err)
+		}
+	}
+
+	var err error
+	if expectedStorageIdentity != "" {
+		identityBoundDeleter, ok := b.driver.(drivers.VolumeIdentityBoundDeleter)
+		if !ok {
+			return errors.New("Storage driver cannot delete a committed materialization with immutable identity protection")
+		}
+
+		err = identityBoundDeleter.DeleteVolumeWithIdentity(vol, expectedStorageIdentity, op)
+	} else {
+		err = b.driver.DeleteVolume(vol, op)
+	}
+	if err != nil {
+		return fmt.Errorf("Error deleting storage volume: %w", err)
+	}
+
+	return nil
+}
+
+func runInstanceStorageIdentityBoundAction(expectedStorageIdentity string, getIdentity func() (string, error), action func() error) error {
+	if expectedStorageIdentity != "" {
+		identity, err := getIdentity()
+		if err != nil {
+			return fmt.Errorf("Read mounted root storage identity: %w", err)
+		}
+
+		if identity == "" || identity != expectedStorageIdentity {
+			return errors.New("Mounted root storage identity changed before ID map normalization")
+		}
+	}
+
+	return action()
+}
+
+func (b *backend) normalizeExternalInstanceRootfsIDMap(inst instance.Instance, vol drivers.Volume, expectedStorageIdentity string, op *operations.Operation) error {
+	container, ok := inst.(instance.Container)
+	if !ok {
+		return errors.New("Externally managed filesystem root volume does not belong to a container")
+	}
+
+	_, err := b.MountInstance(inst, op)
+	if err != nil {
+		return fmt.Errorf("Mount externally managed root volume: %w", err)
+	}
+
+	normalizeErr := runInstanceStorageIdentityBoundAction(expectedStorageIdentity, func() (string, error) {
+		return storageVolumeIdentity(b.driver, vol)
+	}, func() error {
+		legacyIDMap, err := container.DiskIdmap()
+		if err != nil {
+			return fmt.Errorf("Load legacy rootfs ID map: %w", err)
+		}
+
+		setDiskIDMap := func(idmapJSON string) error {
+			if inst.LocalConfig()["volatile.last_state.idmap"] == idmapJSON {
+				return nil
+			}
+
+			return inst.VolatileSet(map[string]string{"volatile.last_state.idmap": idmapJSON})
+		}
+
+		apply := func(from *idmap.Set, to *idmap.Set) error {
+			return drivers.RemapRootfsIDMap(inst.RootfsPath(), b.driver.Info().Name, from, to)
+		}
+
+		syncFS := func() error { return linux.SyncFS(inst.Path()) }
+		diskIDMap, err := internalInstance.RecoverRootfsIDMapProvenance(inst.Path(), legacyIDMap, apply, syncFS, setDiskIDMap)
+		if err != nil {
+			return err
+		}
+
+		if diskIDMap != nil && util.IsTrue(inst.ExpandedConfig()["security.protection.shift"]) {
+			return errors.New("Container is protected against filesystem shifting")
+		}
+
+		err = internalInstance.TransitionRootfsIDMapProvenance(inst.Path(), diskIDMap, nil, apply, syncFS, setDiskIDMap)
+		if err != nil {
+			return err
+		}
+
+		return internalInstance.ValidateNormalizedRootfsIDMapProvenance(inst.Path())
+	})
+
+	unmountErr := b.UnmountInstance(inst, op)
+	if normalizeErr != nil {
+		if unmountErr != nil {
+			return errors.Join(normalizeErr, fmt.Errorf("Unmount externally managed root volume: %w", unmountErr))
+		}
+
+		return normalizeErr
+	}
+
+	if unmountErr != nil {
+		return fmt.Errorf("Unmount externally managed root volume: %w", unmountErr)
 	}
 
 	return nil

@@ -3554,3 +3554,160 @@ The fields are rejected for `protected` and `source-owned`. Repeating an
 `owned` request with the same committed proof is idempotent until the
 migration attempt is retired. External orchestrators must commit ownership
 before retiring that attempt.
+
+## `storage_cephext_rootfs_idmap_provenance`
+
+This adds durable on-disk ID map provenance for container root volumes on
+`cephext` storage pools. The provenance journal is stored in the volume beside
+the `rootfs/` directory, so it follows external RBD snapshots and clones while
+remaining outside the guest-visible filesystem.
+
+Before changing physical rootfs ownership, Incus records and syncs a transition
+from the old map to the new map. It then remaps and syncs the filesystem,
+atomically records the stable new map, and finally mirrors that map into
+`volatile.last_state.idmap`. Interrupted transitions are replayed idempotently.
+Non-identical maps with overlapping host ID ranges are rejected.
+
+Claiming a snapshot or clone as a new `cephext` root reads the durable map and
+remaps it before the container starts. Existing volumes without provenance are
+seeded from a non-empty `volatile.last_state.idmap`. New root images are
+published with `/.incus-idmap` at the raw filesystem top level, beside
+`rootfs/`, containing the canonical normalized state
+`{"version":1,"state":"stable","idmap":[]}` with mode `0600`. The publisher
+must durably write this marker before exposing the image to snapshot or clone
+workflows. Every `cephext` claim validates it, including a powered-off claim.
+
+The one-time `initial.ceph.rbd.idmap_provenance=normalized` root device
+assertion is reserved for trusted offline operator repair when the volume is
+provably normalized. Normal orchestrators must not send it during instance
+creation, and it must never be used for a retained volume or snapshot.
+Markerless roots without non-empty legacy evidence or an explicit repair
+assertion fail closed. Historical snapshots without provenance cannot safely
+describe a physically shifted root and must not bypass the `cephext` claim
+path.
+
+An authoritative final instance deletion normalizes a retained external root
+volume to namespace ID 0 and commits an empty stable map before releasing the
+local claim. A shared-storage migration record protected from storage deletion
+does not read, modify, normalize, or release the volume provenance. Migration
+targets acquire this protection before claiming the shared image; failed or
+losing target cleanup retains it until an orchestrator proves ownership.
+
+## `storage_release_receipt_v2`
+
+This adds materialization-scoped, durable node-local root storage release
+receipts and `GET` and `DELETE` on
+`/1.0/storage-release-receipts/{materialization_id}`. The final instance
+`DELETE` supplies the materialization UUID (`T`), allocation UUID (`A`),
+persistent compute UUID (`H`), and the instance's local
+`user.openstack.uuid` owner. Incus accepts them only when they exactly match
+the authoritative instance-local `user.openstack.*` values and persists that
+immutable binding before any storage side effect.
+
+The receipt is first recorded as `pending`. For an Incus-owned root it becomes
+`complete` only after the root volume is absent. For a retained `cephext` root
+it becomes `complete` only after durable normalization to namespace ID 0,
+filesystem sync, unmount, and local claim release. Deleting a storage-handover
+protected record produces `detached` only after the local volume database claim
+is gone while the shared storage object and its identity remain unchanged.
+
+Receipts bind `A/H/T` and the owner to the project, instance name, fixed idmap
+base and size, storage driver, pool, internal volume, external RBD image,
+immutable storage identity, proven-clean materialization baseline, cleanup
+disposition, and outcome. The receipt token is exactly `T`; it cannot be rebound
+to another allocation, compute, or materialization attempt. Every committed
+Ceph generation is identity checked before storage mutation. Legacy ID-map
+normalization rechecks after mounting, whose RBD watcher pins the exact image;
+retained-root release and object deletion recheck while holding the local volume
+lock. A same-name RBD recreated with a different identity therefore fails before
+the corresponding storage mutation.
+The GET remains available after instance and volume database records are
+deleted, returns only a completed receipt after the instance is absent,
+requires `A/H/T`, project, owner, instance name and idmap range to match, and
+revalidates a still-existing RBD image identity. Every Ceph outcome, including
+`deleted`, also proves that no local mapping remains before receipt completion,
+volume database deletion, first GET, and acknowledgement. It returns the complete
+storage binding and a canonical SHA-256 receipt digest. If the
+external owner has already deleted the image, absence is accepted because the
+old object cannot be reached through a recreated image name; a recreated image
+with a different identity is rejected.
+
+After persisting an immutable external copy, an allocator acknowledges the
+same complete binding and receipt digest with DELETE. Incus changes the receipt
+to a permanent `retired` tombstone rather than deleting it, so the same `T`
+can never be rebound. A repeated acknowledgement with the original digest is
+idempotent without revalidating storage that may legitimately have been reused
+after retirement. GET does not expose retired receipts. Missing roots
+without a pre-existing matching pending receipt never create proof. A pending
+retained-root receipt cannot be completed merely because the RBD disappeared.
+
+This extension does not provide a pre-create reservation or a `not-created`
+receipt. An instance lookup returning 404 cannot prove that storage was never
+materialized after a lost create response. Orchestrators must therefore retain
+the allocation claim unless they hold separate durable proof that the create
+attempt never crossed its materialization point.
+
+## `storage_materialization_attempt_v1`
+
+This adds durable node-local rootfs creation fences and `GET`, `PUT`, and
+`DELETE` on `/1.0/storage-materialization-attempts/{materialization_id}`.
+Before creating an instance, an orchestrator registers one canonical UUID token
+`T` bound to allocation `A`, compute `H`, owner `U`, project, instance, fixed
+ID map, storage driver, pool, internal volume name, and optional external RBD
+image. The immutable binding also records a cleanup disposition: `delete` for
+a newly materialized Incus-owned volume, `detach` for externally owned storage,
+or `handover` for an existing ordinary Ceph volume claimed by a migration
+target. `handover` records can only commit atomically with the matching
+migration attempt; their failure cleanup releases local state without deleting
+the backend, while the committed target becomes the final deletion owner. A
+`cephext` attempt must use `detach`; reconciliation can unmount and unmap its
+local claim but can never delete the external RBD image. Tokens are permanent
+and can never be rebound. Only one non-retired attempt can fence a given
+project and instance name, which prevents a second token or a tokenless create
+from reusing the name during cleanup.
+
+Registration of `delete` and `handover` cleanup fails closed unless the storage
+driver provides immutable identities, durable materialization ownership
+evidence, and identity-bound deletion. A `handover` baseline additionally
+requires the ordinary `ceph` driver, the existing exact backend identity, and
+proof that no target-local claim state exists.
+
+Only `image`, `none`, and `migration` instance sources can consume a registered
+attempt. Copy, refresh, and backup paths reject the provenance keys. Incus
+atomically starts an attempt before instance or root-volume side effects and
+binds it to the create operation. Storage creation validates the full binding
+again, then changes the phase monotonically from `none` to `pending` to
+`materialized`. Ceph-backed roots record the immutable RBD identity before the
+attempt can commit. A migration target must supply its own `H` and `T`; values
+transferred from the source cannot satisfy the target binding.
+
+Aborting an attempt that never started returns a persisted
+`not-materialized` proof. Aborting a started attempt does not prove absence:
+Incus first requests operation cancellation, waits for a terminal operation or
+a daemon-generation boundary, and reconciles the exact instance record, volume
+database claim, backend volume, mount, and mapping. Only verified absence
+produces a persisted `reconciled-clean` proof. For `cephext`, the proof concerns
+the local database claim and RBD mapping only; the externally owned RBD image
+is expected to remain and its mere existence or absence is never used as the
+materialization decision.
+
+Both proofs contain a canonical SHA-256 digest over `A/H/T/U`, project,
+instance, ID map, storage driver, pool, volume, RBD image, immutable storage
+identity, cleanup disposition, and outcome. `DELETE` is a proof
+acknowledgement and must repeat the proof digest, `A/H/U`, instance name, and ID
+map in query parameters. A missing or mismatched generation cannot retire the
+record. Retiring an attempt preserves its binding and proof, so a lost DELETE
+response can be retried and audited without making `T` reusable.
+An operation cancellation request, an instance 404, or an RBD name match alone
+is not a cleanup proof. Identity mismatch, running instances, incomplete
+backend cleanup, and unavailable storage all fail closed and retain the
+unfinished attempt for later reconciliation. On daemon restart, Incus scans
+started unfinished attempts from older daemon generations and applies the same
+conservative reconciliation rules before starting instances.
+
+For migration targets, starting and binding the materialization attempt to the
+real operation UUID is one database CAS. The migration handover and rootfs
+materialization records are committed in one local database transaction after
+verifying that both records refer to the same project, instance, and operation
+generation. They therefore cannot expose a committed handover whose target is
+subsequently removed by materialization rollback.

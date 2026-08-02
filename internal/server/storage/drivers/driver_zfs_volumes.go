@@ -1675,17 +1675,17 @@ func (d *zfs) DeleteVolume(vol Volume, op *operations.Operation) error {
 		for _, filesystem := range blockBackedAllowedFilesystems {
 			tmpVol.config["block.filesystem"] = filesystem
 
-			err := d.deleteVolume(tmpVol, op)
+			err := d.deleteVolume(tmpVol, "", op)
 			if err != nil {
 				return err
 			}
 		}
 	}
 
-	return d.deleteVolume(vol, op)
+	return d.deleteVolume(vol, "", op)
 }
 
-func (d *zfs) deleteVolume(vol Volume, op *operations.Operation) error {
+func (d *zfs) deleteVolume(vol Volume, expectedStorageIdentity string, op *operations.Operation) error {
 	// Check that we have a dataset to delete.
 	exists, err := d.datasetExists(d.dataset(vol, false))
 	if err != nil {
@@ -1695,6 +1695,15 @@ func (d *zfs) deleteVolume(vol Volume, op *operations.Operation) error {
 	if exists {
 		// Handle clones.
 		clones, err := d.getClones(d.dataset(vol, false))
+		if err != nil {
+			return err
+		}
+
+		err = verifyVolumeIdentity(vol, expectedStorageIdentity, d.GetVolumeIdentity)
+		if err != nil {
+			return err
+		}
+		err = validateZFSIdentityBoundDeletion(expectedStorageIdentity, len(clones))
 		if err != nil {
 			return err
 		}
@@ -1711,6 +1720,8 @@ func (d *zfs) deleteVolume(vol Volume, op *operations.Operation) error {
 				return err
 			}
 		}
+	} else if expectedStorageIdentity != "" {
+		return nil
 	}
 
 	if vol.contentType == ContentTypeFS {

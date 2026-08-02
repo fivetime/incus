@@ -6770,6 +6770,133 @@ definitions:
                 x-go-name: Name
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
+    StorageMaterializationAttempt:
+        properties:
+            allocation_id:
+                type: string
+                x-go-name: AllocationID
+            baseline_clean:
+                type: boolean
+                x-go-name: BaselineClean
+            cleanup_disposition:
+                type: string
+                x-go-name: CleanupDisposition
+            compute_id:
+                type: string
+                x-go-name: ComputeID
+            daemon_start:
+                format: int64
+                type: integer
+                x-go-name: DaemonStart
+            finished:
+                type: boolean
+                x-go-name: Finished
+            idmap_base:
+                format: int64
+                type: integer
+                x-go-name: IDMapBase
+            idmap_size:
+                format: int64
+                type: integer
+                x-go-name: IDMapSize
+            instance_name:
+                type: string
+                x-go-name: InstanceName
+            operation_uuid:
+                type: string
+                x-go-name: OperationUUID
+            owner:
+                type: string
+                x-go-name: Owner
+            project:
+                type: string
+                x-go-name: Project
+            proof:
+                $ref: '#/definitions/StorageMaterializationProof'
+            rbd_image:
+                type: string
+                x-go-name: RBDImage
+            started:
+                type: boolean
+                x-go-name: Started
+            state:
+                type: string
+                x-go-name: State
+            storage_driver:
+                type: string
+                x-go-name: StorageDriver
+            storage_identity:
+                type: string
+                x-go-name: StorageIdentity
+            storage_phase:
+                type: string
+                x-go-name: StoragePhase
+            storage_pool:
+                type: string
+                x-go-name: StoragePool
+            storage_volume:
+                type: string
+                x-go-name: StorageVolume
+            token:
+                type: string
+                x-go-name: Token
+        title: StorageMaterializationAttempt is a durable rootfs create fence and cleanup record.
+        type: object
+        x-go-package: github.com/lxc/incus/v7/shared/api
+    StorageMaterializationAttemptPut:
+        properties:
+            allocation_id:
+                type: string
+                x-go-name: AllocationID
+            cleanup_disposition:
+                type: string
+                x-go-name: CleanupDisposition
+            compute_id:
+                type: string
+                x-go-name: ComputeID
+            idmap_base:
+                format: int64
+                type: integer
+                x-go-name: IDMapBase
+            idmap_size:
+                format: int64
+                type: integer
+                x-go-name: IDMapSize
+            instance_name:
+                type: string
+                x-go-name: InstanceName
+            owner:
+                type: string
+                x-go-name: Owner
+            rbd_image:
+                type: string
+                x-go-name: RBDImage
+            state:
+                type: string
+                x-go-name: State
+            storage_driver:
+                type: string
+                x-go-name: StorageDriver
+            storage_pool:
+                type: string
+                x-go-name: StoragePool
+            storage_volume:
+                type: string
+                x-go-name: StorageVolume
+        title: StorageMaterializationAttemptPut registers or fences one rootfs materialization attempt.
+        type: object
+        x-go-package: github.com/lxc/incus/v7/shared/api
+    StorageMaterializationProof:
+        properties:
+            digest:
+                type: string
+                x-go-name: Digest
+            outcome:
+                type: string
+                x-go-name: Outcome
+        title: StorageMaterializationProof proves either that materialization never began or that all local artifacts were reconciled.
+        type: object
+        x-go-package: github.com/lxc/incus/v7/shared/api
     StoragePool:
         properties:
             config:
@@ -6874,6 +7001,99 @@ definitions:
                 example: local
                 type: string
                 x-go-name: Name
+        type: object
+        x-go-package: github.com/lxc/incus/v7/shared/api
+    StorageReleaseReceipt:
+        properties:
+            allocation_id:
+                description: Fleet-wide ID map allocation generation UUID
+                type: string
+                x-go-name: AllocationID
+            baseline_clean:
+                description: Whether the materialization began from a proven clean storage baseline
+                type: boolean
+                x-go-name: BaselineClean
+            cleanup_disposition:
+                description: Materialization cleanup disposition
+                type: string
+                x-go-name: CleanupDisposition
+            completed_at:
+                description: Unix timestamp when the storage outcome completed
+                format: int64
+                type: integer
+                x-go-name: CompletedAt
+            compute_id:
+                description: Persistent Nova compute-node UUID
+                type: string
+                x-go-name: ComputeID
+            created_at:
+                description: Unix timestamp when pending intent was persisted
+                format: int64
+                type: integer
+                x-go-name: CreatedAt
+            digest:
+                description: Canonical SHA-256 digest required to acknowledge this complete receipt
+                type: string
+                x-go-name: Digest
+            idmap_base:
+                description: Released host ID map base
+                format: int64
+                type: integer
+                x-go-name: IDMapBase
+            idmap_size:
+                description: Released host ID map size
+                format: int64
+                type: integer
+                x-go-name: IDMapSize
+            instance_name:
+                description: Deleted instance name
+                type: string
+                x-go-name: InstanceName
+            materialization_id:
+                description: Per-create rootfs materialization UUID
+                type: string
+                x-go-name: MaterializationID
+            outcome:
+                description: Proven local storage outcome (deleted, normalized or detached)
+                type: string
+                x-go-name: Outcome
+            owner:
+                description: External owner UUID
+                type: string
+                x-go-name: Owner
+            project:
+                description: Project containing the deleted instance
+                type: string
+                x-go-name: Project
+            rbd_image:
+                description: External RBD image name, when applicable
+                type: string
+                x-go-name: RBDImage
+            state:
+                description: Receipt state
+                type: string
+                x-go-name: State
+            storage_driver:
+                description: Storage driver
+                type: string
+                x-go-name: StorageDriver
+            storage_identity:
+                description: Immutable storage object identity
+                type: string
+                x-go-name: StorageIdentity
+            storage_pool:
+                description: Storage pool
+                type: string
+                x-go-name: StoragePool
+            storage_volume:
+                description: Internal storage volume name
+                type: string
+                x-go-name: StorageVolume
+            token:
+                description: Materialization UUID used as the receipt token
+                type: string
+                x-go-name: Token
+        title: StorageReleaseReceipt is durable node-local proof that one rootfs materialization was released.
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
     StorageVolume:
@@ -10286,6 +10506,22 @@ paths:
                   example: default
                   in: query
                   name: project
+                  type: string
+                - description: Rootfs materialization UUID used for a durable storage release receipt
+                  in: query
+                  name: rootfs-idmap-release-token
+                  type: string
+                - description: External owner UUID bound to the release receipt
+                  in: query
+                  name: rootfs-idmap-release-owner
+                  type: string
+                - description: Fleet-wide ID map allocation generation UUID
+                  in: query
+                  name: rootfs-idmap-allocation-id
+                  type: string
+                - description: Persistent Nova compute-node UUID
+                  in: query
+                  name: rootfs-idmap-compute-id
                   type: string
             produces:
                 - application/json
@@ -17993,6 +18229,70 @@ paths:
             summary: Get system resources information
             tags:
                 - server
+    /1.0/storage-materialization-attempts/{token}:
+        delete:
+            description: Retire a terminal rootfs materialization attempt
+            operationId: storage_materialization_attempt_delete
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  type: string
+            responses:
+                "200":
+                    description: Empty success response
+            tags:
+                - storage-materialization-attempts
+        get:
+            description: Get a rootfs materialization attempt
+            operationId: storage_materialization_attempt_get
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  type: string
+            produces:
+                - application/json
+            responses:
+                "200":
+                    description: Storage materialization attempt
+                    schema:
+                        properties:
+                            metadata:
+                                $ref: '#/definitions/StorageMaterializationAttempt'
+                        type: object
+            tags:
+                - storage-materialization-attempts
+        put:
+            consumes:
+                - application/json
+            description: Register, abort or reconcile a rootfs materialization attempt
+            operationId: storage_materialization_attempt_put
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  type: string
+                - in: body
+                  name: attempt
+                  schema:
+                    $ref: '#/definitions/StorageMaterializationAttemptPut'
+            produces:
+                - application/json
+            responses:
+                "200":
+                    description: Storage materialization attempt
+            tags:
+                - storage-materialization-attempts
     /1.0/storage-pools:
         get:
             description: Returns a list of storage pools (URLs).
@@ -22145,6 +22445,111 @@ paths:
             summary: Get the storage pools
             tags:
                 - storage
+    /1.0/storage-release-receipts/{token}:
+        delete:
+            description: |-
+                The external allocator must persist an immutable copy of the complete
+                receipt before acknowledging it. Binding and storage identity checks are
+                repeated before retirement. The receipt-digest query parameter must be the
+                canonical digest returned by GET.
+            operationId: storage_release_receipt_delete
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  required: true
+                  type: string
+                - in: query
+                  name: rootfs-idmap-release-owner
+                  required: true
+                  type: string
+                - in: query
+                  name: rootfs-idmap-allocation-id
+                  required: true
+                  type: string
+                - in: query
+                  name: rootfs-idmap-compute-id
+                  required: true
+                  type: string
+                - in: query
+                  name: instance
+                  required: true
+                  type: string
+                - in: query
+                  name: idmap-base
+                  required: true
+                  type: integer
+                - in: query
+                  name: idmap-size
+                  required: true
+                  type: integer
+                - in: query
+                  name: receipt-digest
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: Empty success response
+            summary: Acknowledge and retire completed root storage release proof
+            tags:
+                - storage-release-receipts
+        get:
+            description: |-
+                The receipt remains queryable after the corresponding instance record is
+                deleted. Every mutable name and ID map field supplied by the caller must
+                match the immutable receipt. The daemon returns and revalidates the full
+                storage binding, including the current object's immutable identity when it
+                still exists.
+            operationId: storage_release_receipt_get
+            parameters:
+                - in: path
+                  name: token
+                  required: true
+                  type: string
+                - in: query
+                  name: project
+                  required: true
+                  type: string
+                - in: query
+                  name: rootfs-idmap-release-owner
+                  required: true
+                  type: string
+                - in: query
+                  name: rootfs-idmap-allocation-id
+                  required: true
+                  type: string
+                - in: query
+                  name: rootfs-idmap-compute-id
+                  required: true
+                  type: string
+                - in: query
+                  name: instance
+                  required: true
+                  type: string
+                - in: query
+                  name: idmap-base
+                  required: true
+                  type: integer
+                - in: query
+                  name: idmap-size
+                  required: true
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                "200":
+                    description: Completed storage release receipt
+                    schema:
+                        properties:
+                            metadata:
+                                $ref: '#/definitions/StorageReleaseReceipt'
+                        type: object
+            summary: Get completed root storage release proof
+            tags:
+                - storage-release-receipts
     /1.0/warnings:
         get:
             description: Returns a list of warnings.

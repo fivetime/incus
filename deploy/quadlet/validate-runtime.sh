@@ -9,7 +9,7 @@ fail() {
 
 [ "$(id -u)" -eq 0 ] || fail "Run this validator as root"
 
-for command_name in grep head mountpoint podman systemctl timeout; do
+for command_name in awk grep head mountpoint podman systemctl timeout; do
   command -v "$command_name" >/dev/null 2>&1 \
     || fail "Required command not found: $command_name"
 done
@@ -18,6 +18,9 @@ systemctl is-active --quiet incus-lxcfs.service \
   || fail "incus-lxcfs.service is not active"
 systemctl is-active --quiet incus-podman.service \
   || fail "incus-podman.service is not active"
+if systemctl is-active --quiet lxcfs.service; then
+  fail "The competing host lxcfs.service must be disabled and masked"
+fi
 
 systemctl cat incus-podman.service \
   | grep -q '^RuntimeDirectoryPreserve=restart$' \
@@ -45,6 +48,14 @@ podman exec incus-lxcfs /usr/local/sbin/healthcheck.sh \
 podman exec incus /usr/local/sbin/healthcheck.sh \
   || fail "The Incus control-plane health check failed"
 
+network_inventory=$(podman exec incus /usr/bin/incus network list \
+  --all-projects --format csv -c emn) \
+  || fail "Failed to query the Incus network inventory"
+managed_networks=$(printf '%s\n' "$network_inventory" \
+  | awk -F, '$2 == "YES" {print $1 "/" $3}')
+[ -z "$managed_networks" ] \
+  || fail "Managed Incus networks are unsupported on Nova/Neutron nodes: $(printf '%s' "$managed_networks" | tr '\n' ' ')"
+
 test -d /run/incus-podman \
   || fail "The persistent Incus runtime directory is missing"
 
@@ -55,6 +66,8 @@ podman exec incus /usr/bin/incus list \
   | while IFS=, read -r project_name instance_name instance_pid; do
       [ -n "$instance_pid" ] || continue
 
+      # $line is intentionally expanded by the shell inside the guest.
+      # shellcheck disable=SC2016
       timeout 10 podman exec incus /usr/bin/incus exec \
         --project "$project_name" \
         "$instance_name" \

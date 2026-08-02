@@ -23,6 +23,37 @@ type driver interface {
 	isRemote() bool
 }
 
+// VolumeIdentityProvider returns a storage-system identity that survives renames but changes on object recreation.
+type VolumeIdentityProvider interface {
+	GetVolumeIdentity(vol Volume) (string, error)
+}
+
+// VolumeIdentityPresenceProvider reports whether an exact storage-system object still exists.
+type VolumeIdentityPresenceProvider interface {
+	HasVolumeIdentity(vol Volume, expectedStorageIdentity string) (bool, error)
+}
+
+// VolumeIdentityInitializer creates a fresh storage-system identity for a newly materialized volume.
+type VolumeIdentityInitializer interface {
+	InitializeVolumeIdentity(vol Volume) error
+}
+
+// VolumeLocalStateProvider reports whether an exact storage object still has host-local state.
+type VolumeLocalStateProvider interface {
+	HasVolumeLocalState(vol Volume, expectedStorageIdentity string) (bool, error)
+}
+
+// VolumeLocalStateReleaser safely removes host-local volume state without changing the backing object.
+type VolumeLocalStateReleaser interface {
+	VolumeLocalStateProvider
+	ReleaseVolumeLocalState(vol Volume, expectedStorageIdentity string) error
+}
+
+// VolumeIdentityBoundDeleter deletes or releases a volume while holding its local volume lock after identity verification.
+type VolumeIdentityBoundDeleter interface {
+	DeleteVolumeWithIdentity(vol Volume, expectedStorageIdentity string, op *operations.Operation) error
+}
+
 // Driver represents a low-level storage driver.
 type Driver interface {
 	// Internal.

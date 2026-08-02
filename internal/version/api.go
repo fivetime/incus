@@ -572,6 +572,9 @@ var APIExtensions = []string{
 	"migration_attempt_fencing",
 	"migration_shared_ceph_storage_ready_fence",
 	"instance_storage_handover_proof",
+	"storage_cephext_rootfs_idmap_provenance",
+	"storage_release_receipt_v2",
+	"storage_materialization_attempt_v1",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

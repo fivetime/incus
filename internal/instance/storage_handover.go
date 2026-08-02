@@ -105,10 +105,8 @@ func StorageHandoverAPIConfigChanges(state string, config map[string]string, dri
 		targetComplete := false
 		if marker == "" && role == StorageHandoverRoleTarget && receiveComplete {
 			switch driverName {
-			case "ceph":
+			case "ceph", "cephext":
 				targetComplete = deleteProtected
-			case "cephext":
-				targetComplete = !deleteProtected
 			}
 		}
 
@@ -154,7 +152,7 @@ func StorageDeleteProtected(config map[string]string) bool {
 func StorageHandoverDriverSupported(driverName string, state string) bool {
 	switch state {
 	case StorageHandoverStateProtected:
-		return driverName == "ceph"
+		return driverName == "ceph" || driverName == "cephext"
 	case StorageHandoverStateOwned, StorageHandoverStateSourceOwned:
 		return driverName == "ceph" || driverName == "cephext"
 	default:

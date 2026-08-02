@@ -89,11 +89,8 @@ func withMigrationAttemptGuard(guard func() error, phase string, action func() e
 func withSharedStorageMigrationTargetProtection(sharedStorage bool, driverName string, volatileSet func(map[string]string) error, claim func() error) error {
 	if sharedStorage && isCephSharedStorageDriver(driverName) {
 		changes := map[string]string{
-			internalInstance.ConfigVolatileMigrationStorageHandoverRole: internalInstance.StorageHandoverRoleTarget,
-		}
-
-		if driverName == "ceph" {
-			changes[internalInstance.ConfigVolatileMigrationStorageDeleteProtection] = "true"
+			internalInstance.ConfigVolatileMigrationStorageHandoverRole:     internalInstance.StorageHandoverRoleTarget,
+			internalInstance.ConfigVolatileMigrationStorageDeleteProtection: "true",
 		}
 
 		err := volatileSet(changes)
@@ -140,14 +137,17 @@ func releaseSharedStorageMigrationTargetClaim(driverName string, isRunning func(
 		return cleanupError("Unmount migration target storage", err)
 	}
 
+	changes := map[string]string{
+		internalInstance.ConfigVolatileMigrationStorageHandoverRole:     internalInstance.StorageHandoverRoleTarget,
+		internalInstance.ConfigVolatileMigrationStorageDeleteProtection: "true",
+	}
 	if driverName == "ceph" {
-		err = volatileSet(map[string]string{
-			internalInstance.ConfigVolatileMigrationStorageHandover:     "pending",
-			internalInstance.ConfigVolatileMigrationStorageHandoverRole: internalInstance.StorageHandoverRoleTarget,
-		})
-		if err != nil {
-			return cleanupError("Protect migration target storage", err)
-		}
+		changes[internalInstance.ConfigVolatileMigrationStorageHandover] = "pending"
+	}
+
+	err = volatileSet(changes)
+	if err != nil {
+		return cleanupError("Protect migration target storage", err)
 	}
 
 	err = deleteInstance()

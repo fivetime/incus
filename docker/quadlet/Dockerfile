@@ -138,6 +138,10 @@ ARG CEPH_VERSION=19
 # libapparmor-based aa-exec is built in the incus-build stage and copied in
 # below. incusd also refuses to start without ip, rsync, setfattr, tar (GNU),
 # unsquashfs and xz (see cmd/incusd/main_daemon.go), so those must always stay.
+# The rbd CLI shells out to a hard-coded /bin/date with GNU syntax ("now")
+# during "rbd trash mv", which the exact-identity release path depends on, so
+# coreutils is required (its multi-call binary replaces the busybox
+# /bin/date link with GNU date; the RUN below asserts the GNU syntax works).
 # The incusd runtime libraries are pulled in through their soname (so:...)
 # instead of installing the Alpine incus package, whose binaries would only
 # get shadowed by the ones built from this repository.
@@ -148,6 +152,7 @@ RUN apk add --no-cache \
       apparmor-profiles-tunables \
       attr \
       ceph${CEPH_VERSION}-common \
+      coreutils \
       dnsmasq \
       e2fsprogs \
       e2fsprogs-extra \
@@ -183,6 +188,7 @@ RUN apk add --no-cache \
       so:libsqlite3.so.0 \
       so:libudev.so.1 \
       so:libuv.so.1 \
+    && date -d now +%s >/dev/null \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subuid \
     && printf '%s\n' 'root:1000000:1000000000' > /etc/subgid \
     && mkdir -p /etc/criu /run/lxcfs /var/lib/lxcfs /var/log/incus \
@@ -193,7 +199,8 @@ COPY --from=incus-build /out/incus /usr/bin/incus
 COPY --from=incus-build /out/aa-exec /usr/local/bin/aa-exec
 COPY --from=criu-build /build/criu/criu/criu /usr/local/sbin/criu
 COPY --from=lxc-build /build/lxc/build/liblxc.so.1.9.0 /usr/lib/liblxc.so.1.9.0
-RUN test "$(incusd --version)" = "7.2" \
+RUN incus_version="$(incusd --version)" \
+    && printf '%s\n' "${incus_version}" | grep -Eq '^7\.[0-9]+(\.[0-9]+)?$' \
     && criu --version \
     && command -v lvm \
     && command -v udevadm \

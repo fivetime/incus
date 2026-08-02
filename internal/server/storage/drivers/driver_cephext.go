@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	"github.com/lxc/incus/v7/internal/instancewriter"
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/server/backup"
@@ -107,6 +108,15 @@ func (d *cephext) commonVolumeRules() map[string]func(value string) error {
 		return nil
 	})
 
+	// gendoc:generate(entity=storage_volume_cephext, group=common, key=ceph.rbd.idmap_provenance)
+	//
+	// ---
+	//  type: string
+	//  condition: -
+	//  default: -
+	//  shortdesc: Trusted one-time offline repair assertion that an external root is namespace-owned
+	rules["ceph.rbd.idmap_provenance"] = validate.Optional(validate.IsOneOf("normalized"))
+
 	return rules
 }
 
@@ -164,6 +174,20 @@ func (d *cephext) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 				if err != nil || !rootfsInfo.IsDir() {
 					return fmt.Errorf("RBD image %q does not contain a top-level rootfs directory", vol.config["ceph.rbd.image_name"])
 				}
+
+				// Only an orchestrator that created this root from a normalized image may
+				// assert the initial state. Existing markers always remain authoritative.
+				if vol.config["ceph.rbd.idmap_provenance"] == "normalized" {
+					err = internalInstance.SeedNormalizedRootfsIDMapProvenance(mountPath)
+					if err != nil {
+						return fmt.Errorf("Seed rootfs ID map provenance: %w", err)
+					}
+				}
+
+				err = internalInstance.ValidateRootfsIDMapProvenance(mountPath)
+				if err != nil {
+					return fmt.Errorf("Validate rootfs ID map provenance: %w", err)
+				}
 			}
 
 			return nil
@@ -174,6 +198,52 @@ func (d *cephext) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 	}
 
 	return nil
+}
+
+// cephextExistingMountMatchesTarget verifies that a mount has the same backing
+// RBD device as the exact immutable image identity resolved from the configured
+// Ceph cluster. A mountpoint alone is not sufficient: it could be a stale mount
+// or a different image mounted over the volume's path.
+func cephextExistingMountMatchesTarget(mountInfo []string, mappings []cephRBDMapping) bool {
+	if len(mappings) != 1 {
+		return false
+	}
+
+	separator := -1
+	for i, field := range mountInfo {
+		if field == "-" {
+			separator = i
+			break
+		}
+	}
+
+	// mountinfo fields following "-" are filesystem type, mount source and
+	// super options. Require the source to be the exact RBD device we found.
+	if separator < 0 || len(mountInfo) <= separator+2 {
+		return false
+	}
+
+	return filepath.Clean(mountInfo[separator+2]) == filepath.Clean(mappings[0].DevicePath)
+}
+
+func (d *cephext) existingMountMatchesTarget(vol Volume) (bool, error) {
+	imageName := d.getRBDVolumeName(vol, "", false)
+	expected, err := d.getRBDVolumeIdentity(imageName)
+	if err != nil {
+		return false, fmt.Errorf("Read configured RBD image identity: %w", err)
+	}
+
+	mappings, err := findRBDMappingsByIdentity("/sys/devices/rbd", expected)
+	if err != nil {
+		return false, fmt.Errorf("Inspect configured RBD image mappings: %w", err)
+	}
+
+	mountInfo, err := linux.GetMountinfo(vol.MountPath())
+	if err != nil {
+		return false, fmt.Errorf("Read existing volume mount source: %w", err)
+	}
+
+	return cephextExistingMountMatchesTarget(mountInfo, mappings), nil
 }
 
 // MountVolume refuses to bring an externally managed image into use when it is
@@ -208,11 +278,21 @@ func (d *cephext) MountVolume(vol Volume, op *operations.Operation) error {
 		return fmt.Errorf("Failed parsing RBD image status: %w", err)
 	}
 
-	if len(status.Watchers) > 0 {
-		ownMount := len(status.Watchers) == 1 && vol.contentType == ContentTypeFS && linux.IsMountPoint(vol.MountPath())
-		if !ownMount {
-			return fmt.Errorf("RBD image %q is already in use (%d watcher(s))", vol.config["ceph.rbd.image_name"], len(status.Watchers))
+	mountPointExists := vol.contentType == ContentTypeFS && linux.IsMountPoint(vol.MountPath())
+	if mountPointExists {
+		ownMount, err := d.existingMountMatchesTarget(vol)
+		if err != nil {
+			return err
 		}
+
+		// A single watcher is expected for this local mapping. More watchers
+		// mean that a second client is using the image, even if the local mount
+		// happens to be correct.
+		if !ownMount || len(status.Watchers) != 1 {
+			return fmt.Errorf("Existing mount at %q does not exclusively use RBD image %q", vol.MountPath(), vol.config["ceph.rbd.image_name"])
+		}
+	} else if len(status.Watchers) > 0 {
+		return fmt.Errorf("RBD image %q is already in use (%d watcher(s))", vol.config["ceph.rbd.image_name"], len(status.Watchers))
 	}
 
 	return d.ceph.MountVolume(vol, op)
@@ -220,8 +300,39 @@ func (d *cephext) MountVolume(vol Volume, op *operations.Operation) error {
 
 // DeleteVolume releases the externally managed RBD image, leaving it untouched.
 func (d *cephext) DeleteVolume(vol Volume, op *operations.Operation) error {
+	return d.deleteVolumeRelease(vol, false, op)
+}
+
+// DeleteVolumeWithIdentity releases the externally managed RBD image only if its immutable identity still matches.
+func (d *cephext) DeleteVolumeWithIdentity(vol Volume, expectedStorageIdentity string, op *operations.Operation) error {
+	if expectedStorageIdentity == "" {
+		return errors.New("Cannot release external Ceph volume without an immutable storage identity")
+	}
+
+	return d.deleteVolumeWithIdentity(vol, expectedStorageIdentity, op)
+}
+
+func (d *cephext) deleteVolumeWithIdentity(vol Volume, expectedStorageIdentity string, op *operations.Operation) error {
+	unlock, err := vol.MountLock()
+	if err != nil {
+		return err
+	}
+
+	defer unlock()
+
+	return runVolumeIdentityBoundAction(vol, expectedStorageIdentity, d.GetVolumeIdentity, func() error {
+		return d.deleteVolumeRelease(vol, true, op)
+	})
+}
+
+func (d *cephext) deleteVolumeRelease(vol Volume, volumeLocked bool, op *operations.Operation) error {
 	// Unmount and unmap.
-	_, err := d.UnmountVolume(vol, false, op)
+	unmountVolume := d.UnmountVolume
+	if volumeLocked {
+		unmountVolume = d.ceph.unmountVolume
+	}
+
+	_, err := unmountVolume(vol, false, op)
 	if err != nil {
 		return err
 	}

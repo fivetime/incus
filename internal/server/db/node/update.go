@@ -101,6 +101,8 @@ var updates = map[int]schema.Update{
 	42: updateFromV41,
 	43: updateFromV42,
 	44: updateFromV43,
+	45: updateFromV44,
+	46: updateFromV45,
 }
 
 // UpdateFromPreClustering is the last schema version where clustering support
@@ -108,6 +110,73 @@ var updates = map[int]schema.Update{
 const UpdateFromPreClustering = 36
 
 // Schema updates begin here
+
+// updateFromV45 adds durable rootfs materialization create fences.
+func updateFromV45(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE storage_materialization_attempts (
+    token TEXT PRIMARY KEY NOT NULL,
+    allocation_id TEXT NOT NULL,
+    compute_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    project TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    idmap_base INTEGER NOT NULL,
+    idmap_size INTEGER NOT NULL,
+    storage_driver TEXT NOT NULL,
+    storage_pool TEXT NOT NULL,
+    storage_volume TEXT NOT NULL,
+    rbd_image TEXT NOT NULL DEFAULT '',
+    storage_identity TEXT NOT NULL DEFAULT '',
+    baseline_clean INTEGER NOT NULL,
+    cleanup_disposition TEXT NOT NULL,
+    proof_outcome TEXT NOT NULL DEFAULT '',
+    proof_digest TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    storage_phase TEXT NOT NULL,
+    started INTEGER NOT NULL DEFAULT 0,
+    finished INTEGER NOT NULL DEFAULT 0,
+    operation_uuid TEXT NOT NULL DEFAULT '',
+    daemon_start INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX storage_materialization_attempts_project_instance_unique
+    ON storage_materialization_attempts (project, instance_name)
+    WHERE state != 'retired';
+`
+	_, err := tx.Exec(stmt)
+	return err
+}
+
+// updateFromV44 adds materialization-scoped durable receipts for root storage releases.
+func updateFromV44(ctx context.Context, tx *sql.Tx) error {
+	stmt := `
+CREATE TABLE storage_release_receipts (
+    token TEXT PRIMARY KEY NOT NULL,
+	allocation_id TEXT NOT NULL,
+	compute_id TEXT NOT NULL,
+	materialization_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    project TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    idmap_base INTEGER NOT NULL,
+    idmap_size INTEGER NOT NULL,
+    storage_driver TEXT NOT NULL,
+    storage_pool TEXT NOT NULL,
+    storage_volume TEXT NOT NULL,
+    rbd_image TEXT NOT NULL DEFAULT '',
+    storage_identity TEXT NOT NULL DEFAULT '',
+    baseline_clean INTEGER NOT NULL,
+    cleanup_disposition TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+	completed_at INTEGER NOT NULL DEFAULT 0,
+	CHECK (token = materialization_id)
+);
+`
+	_, err := tx.Exec(stmt)
+	return err
+}
 
 // updateFromV43 adds durable fencing records for inbound migration attempts.
 func updateFromV43(ctx context.Context, tx *sql.Tx) error {

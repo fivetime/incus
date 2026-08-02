@@ -12,6 +12,7 @@
 Description=Incus LXCFS data plane (Podman Quadlet)
 Documentation=https://linuxcontainers.org/lxcfs/
 After=local-fs.target
+Conflicts=lxcfs.service
 
 # The operator must provision this as a shared or recursively shared host
 # mount. The container entrypoint rejects private mount propagation.

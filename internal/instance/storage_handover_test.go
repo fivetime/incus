@@ -207,23 +207,26 @@ func TestStorageHandoverAPIConfigChanges(t *testing.T) {
 			},
 		},
 		{
-			name:       "cephext protected is unsupported",
+			name:       "cephext protected source is supported",
 			state:      StorageHandoverStateProtected,
 			driverName: "cephext",
 			config: map[string]string{
 				ConfigVolatileMigrationStorageHandover:     "committed",
 				ConfigVolatileMigrationStorageHandoverRole: StorageHandoverRoleSource,
 			},
-			expectError: ErrStorageHandoverUnsupported,
+			expectChanges: map[string]string{
+				ConfigVolatileMigrationStorageDeleteProtection: "true",
+			},
 		},
 		{
 			name:       "cephext owned accepts completed target",
 			state:      StorageHandoverStateOwned,
 			driverName: "cephext",
 			config: map[string]string{
-				ConfigVolatileMigrationStorageReceiveComplete: "true",
-				ConfigVolatileMigrationStorageHandoverRole:    StorageHandoverRoleTarget,
-				"ceph.rbd.image_name":                         "volume-test",
+				ConfigVolatileMigrationStorageDeleteProtection: "true",
+				ConfigVolatileMigrationStorageReceiveComplete:  "true",
+				ConfigVolatileMigrationStorageHandoverRole:     StorageHandoverRoleTarget,
+				"ceph.rbd.image_name":                          "volume-test",
 			},
 			expectChanges: map[string]string{
 				ConfigVolatileMigrationStorageDeleteProtection: "",
@@ -500,7 +503,7 @@ func TestStorageHandoverDriverSupported(t *testing.T) {
 		{name: "ceph protected", driverName: "ceph", state: StorageHandoverStateProtected, expected: true},
 		{name: "ceph owned", driverName: "ceph", state: StorageHandoverStateOwned, expected: true},
 		{name: "ceph source owned", driverName: "ceph", state: StorageHandoverStateSourceOwned, expected: true},
-		{name: "cephext protected", driverName: "cephext", state: StorageHandoverStateProtected, expected: false},
+		{name: "cephext protected", driverName: "cephext", state: StorageHandoverStateProtected, expected: true},
 		{name: "cephext owned", driverName: "cephext", state: StorageHandoverStateOwned, expected: true},
 		{name: "cephext source owned", driverName: "cephext", state: StorageHandoverStateSourceOwned, expected: true},
 		{name: "dir owned", driverName: "dir", state: StorageHandoverStateOwned, expected: false},

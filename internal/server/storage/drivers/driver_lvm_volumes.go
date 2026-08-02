@@ -233,6 +233,10 @@ func (d *lvm) RefreshVolume(vol Volume, srcVol Volume, srcSnapshots []Volume, al
 // DeleteVolume deletes a volume of the storage device. If any snapshots of the volume remain then this function
 // will return an error.
 func (d *lvm) DeleteVolume(vol Volume, op *operations.Operation) error {
+	return d.deleteVolume(vol, "", false, op)
+}
+
+func (d *lvm) deleteVolume(vol Volume, expectedStorageIdentity string, volumeLocked bool, op *operations.Operation) error {
 	snapshots, err := d.VolumeSnapshots(vol, op)
 	if err != nil {
 		return err
@@ -249,11 +253,26 @@ func (d *lvm) DeleteVolume(vol Volume, op *operations.Operation) error {
 	}
 
 	if lvExists {
+		err = verifyVolumeIdentity(vol, expectedStorageIdentity, d.GetVolumeIdentity)
+		if err != nil {
+			return err
+		}
+
 		if vol.contentType == ContentTypeFS {
-			_, err = d.UnmountVolume(vol, false, op)
+			unmountVolume := d.UnmountVolume
+			if volumeLocked {
+				unmountVolume = d.unmountVolume
+			}
+
+			_, err = unmountVolume(vol, false, op)
 			if err != nil {
 				return fmt.Errorf("Error unmounting LVM logical volume: %w", err)
 			}
+		}
+
+		err = verifyVolumeIdentity(vol, expectedStorageIdentity, d.GetVolumeIdentity)
+		if err != nil {
+			return err
 		}
 
 		err = d.removeLogicalVolume(d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name))
@@ -262,7 +281,7 @@ func (d *lvm) DeleteVolume(vol Volume, op *operations.Operation) error {
 		}
 	}
 
-	if vol.contentType == ContentTypeFS {
+	if vol.contentType == ContentTypeFS && !(expectedStorageIdentity != "" && !lvExists) {
 		// Remove the volume from the storage device.
 		mountPath := vol.MountPath()
 		err = os.RemoveAll(mountPath)
@@ -1076,6 +1095,11 @@ func (d *lvm) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.Operat
 
 	defer unlock()
 
+	return d.unmountVolume(vol, keepBlockDev, op)
+}
+
+func (d *lvm) unmountVolume(vol Volume, keepBlockDev bool, op *operations.Operation) (bool, error) {
+	var err error
 	ourUnmount := false
 	mountPath := vol.MountPath()
 

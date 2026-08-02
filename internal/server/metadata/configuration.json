@@ -7547,6 +7547,15 @@
 			"common": {
 				"keys": [
 					{
+						"ceph.rbd.idmap_provenance": {
+							"condition": "-",
+							"default": "-",
+							"longdesc": "",
+							"shortdesc": "Trusted one-time offline repair assertion that an external root is namespace-owned",
+							"type": "string"
+						}
+					},
+					{
 						"ceph.rbd.image_name": {
 							"condition": "-",
 							"default": "-",

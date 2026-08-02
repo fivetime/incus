@@ -6696,6 +6696,14 @@ Note that the claim must be contained in the access token.
 
 <!-- config group storage_volume_ceph-common end -->
 <!-- config group storage_volume_cephext-common start -->
+```{config:option} ceph.rbd.idmap_provenance storage_volume_cephext-common
+:condition: "-"
+:default: "-"
+:shortdesc: "Trusted one-time offline repair assertion that an external root is namespace-owned"
+:type: "string"
+
+```
+
 ```{config:option} ceph.rbd.image_name storage_volume_cephext-common
 :condition: "-"
 :default: "-"

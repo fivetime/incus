@@ -2006,6 +2006,36 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 		return idmap.StorageTypeNone, nil, fmt.Errorf("Set last ID map: %w", err)
 	}
 
+	storageType, err := d.getStorageType()
+	if err != nil {
+		return idmap.StorageTypeNone, nil, fmt.Errorf("Storage type: %w", err)
+	}
+
+	setDiskIdmap := func(idmapJSON string) error {
+		if d.localConfig["volatile.last_state.idmap"] == idmapJSON {
+			return nil
+		}
+
+		return d.VolatileSet(map[string]string{"volatile.last_state.idmap": idmapJSON})
+	}
+
+	// Externally owned block volumes carry their physical ownership map so a
+	// snapshot or clone can be safely claimed by a different instance.
+	if storageType == "cephext" {
+		diskIdmap, err = internalInstance.RecoverRootfsIDMapProvenance(
+			d.Path(),
+			diskIdmap,
+			func(from *idmap.Set, to *idmap.Set) error {
+				return storageDrivers.RemapRootfsIDMap(d.RootfsPath(), storageType, from, to)
+			},
+			func() error { return linux.SyncFS(d.Path()) },
+			setDiskIdmap,
+		)
+		if err != nil {
+			return idmap.StorageTypeNone, nil, fmt.Errorf("Recover rootfs ID map provenance: %w", err)
+		}
+	}
+
 	nextIdmap, err := d.NextIdmap()
 	if err != nil {
 		return idmap.StorageTypeNone, nil, fmt.Errorf("Set ID map: %w", err)
@@ -2039,57 +2069,43 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 	d.logger.Debug("Container idmap changed, remapping")
 	d.updateProgress("Remapping container filesystem")
 
-	storageType, err := d.getStorageType()
-	if err != nil {
-		return idmap.StorageTypeNone, nil, fmt.Errorf("Storage type: %w", err)
-	}
-
-	// Revert the currently applied on-disk idmap.
-	if diskIdmap != nil {
-		switch storageType {
-		case "zfs":
-			err = diskIdmap.UnshiftPath(d.RootfsPath(), storageDrivers.ShiftZFSSkipper)
-		case "btrfs":
-			err = storageDrivers.UnshiftBtrfsRootfs(d.RootfsPath(), diskIdmap)
-		default:
-			err = diskIdmap.UnshiftPath(d.RootfsPath(), nil)
-		}
-
-		if err != nil {
-			return idmap.StorageTypeNone, nil, err
-		}
-	}
-
-	jsonDiskIdmap := "[]"
-
 	// If the container can't use idmapped storage apply the new on-disk
 	// idmap of the container now. Otherwise we will later instruct LXC to
 	// make use of idmapped storage.
+	var targetDiskIdmap *idmap.Set
 	if nextIdmap != nil && idmapType == idmap.StorageTypeNone {
-		switch storageType {
-		case "zfs":
-			err = nextIdmap.ShiftPath(d.RootfsPath(), storageDrivers.ShiftZFSSkipper)
-		case "btrfs":
-			err = storageDrivers.ShiftBtrfsRootfs(d.RootfsPath(), nextIdmap)
-		default:
-			err = nextIdmap.ShiftPath(d.RootfsPath(), nil)
-		}
-
-		if err != nil {
-			return idmap.StorageTypeNone, nil, err
-		}
-
-		idmapJSON, err := nextIdmap.ToJSON()
-		if err != nil {
-			return idmap.StorageTypeNone, nil, err
-		}
-
-		jsonDiskIdmap = idmapJSON
+		targetDiskIdmap = nextIdmap
 	}
 
-	err = d.VolatileSet(map[string]string{"volatile.last_state.idmap": jsonDiskIdmap})
-	if err != nil {
-		return idmap.StorageTypeNone, nextIdmap, fmt.Errorf("Set volatile.last_state.idmap config key on container %q (id %d): %w", d.name, d.id, err)
+	if storageType == "cephext" {
+		err = internalInstance.TransitionRootfsIDMapProvenance(
+			d.Path(),
+			diskIdmap,
+			targetDiskIdmap,
+			func(from *idmap.Set, to *idmap.Set) error {
+				return storageDrivers.RemapRootfsIDMap(d.RootfsPath(), storageType, from, to)
+			},
+			func() error { return linux.SyncFS(d.Path()) },
+			setDiskIdmap,
+		)
+		if err != nil {
+			return idmap.StorageTypeNone, nextIdmap, err
+		}
+	} else {
+		err = storageDrivers.RemapRootfsIDMap(d.RootfsPath(), storageType, diskIdmap, targetDiskIdmap)
+		if err != nil {
+			return idmap.StorageTypeNone, nil, err
+		}
+
+		jsonDiskIdmap, err := targetDiskIdmap.ToJSON()
+		if err != nil {
+			return idmap.StorageTypeNone, nil, err
+		}
+
+		err = setDiskIdmap(jsonDiskIdmap)
+		if err != nil {
+			return idmap.StorageTypeNone, nextIdmap, fmt.Errorf("Set volatile.last_state.idmap config key on container %q (id %d): %w", d.name, d.id, err)
+		}
 	}
 
 	d.updateProgress("")

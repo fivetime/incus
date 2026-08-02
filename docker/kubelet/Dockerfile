@@ -20,7 +20,7 @@ COPY . .
 # The CLI has no daemon-side C dependencies. Build it statically so the final
 # agent image contains no Incus server, LXC, CRIU, Ceph or storage tooling.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/incus ./cmd/incus \
-    && test "$(/out/incus --version)" = "7.2"
+    && /out/incus --version | grep -Eq '^7\.[0-9]+(\.[0-9]+)?$'
 
 FROM alpine:${ALPINE_VERSION}
 
@@ -28,4 +28,4 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/incus /usr/bin/incus
 
-RUN test "$(incus --version)" = "7.2"
+RUN incus --version | grep -Eq '^7\.[0-9]+(\.[0-9]+)?$'

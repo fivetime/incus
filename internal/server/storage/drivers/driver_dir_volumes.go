@@ -167,6 +167,10 @@ func (d *dir) RefreshVolume(vol Volume, srcVol Volume, srcSnapshots []Volume, al
 // DeleteVolume deletes a volume of the storage device. If any snapshots of the volume remain then
 // this function will return an error.
 func (d *dir) DeleteVolume(vol Volume, op *operations.Operation) error {
+	return d.deleteVolume(vol, "", op)
+}
+
+func (d *dir) deleteVolume(vol Volume, expectedStorageIdentity string, op *operations.Operation) error {
 	snapshots, err := d.VolumeSnapshots(vol, op)
 	if err != nil {
 		return err
@@ -190,8 +194,21 @@ func (d *dir) DeleteVolume(vol Volume, op *operations.Operation) error {
 			return err
 		}
 
+		err = verifyVolumeIdentity(vol, expectedStorageIdentity, d.GetVolumeIdentity)
+		if err != nil {
+			return err
+		}
+
 		// Remove the project quota.
 		err = d.deleteQuota(volPath, volID)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Recheck immediately before removing volumes that do not use project quotas.
+	if vol.Type() == VolumeTypeBucket {
+		err = verifyVolumeIdentity(vol, expectedStorageIdentity, d.GetVolumeIdentity)
 		if err != nil {
 			return err
 		}

@@ -36,6 +36,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/scriptlet"
 	"github.com/lxc/incus/v7/internal/server/state"
 	storagePools "github.com/lxc/incus/v7/internal/server/storage"
+	"github.com/lxc/incus/v7/internal/server/storagematerializationattempt"
 	internalUtil "github.com/lxc/incus/v7/internal/util"
 	"github.com/lxc/incus/v7/internal/version"
 	"github.com/lxc/incus/v7/shared/api"
@@ -107,7 +108,18 @@ func createFromImage(s *state.State, r *http.Request, p api.Project, profiles []
 		return response.BadRequest(err)
 	}
 
-	run := func(op *operations.Operation) error {
+	run := func(op *operations.Operation) (runErr error) {
+		materializationAttempt, runErr := beginStorageMaterializationAttempt(context.Background(), s, p.Name, req, op)
+		if runErr != nil {
+			return runErr
+		}
+
+		defer func() {
+			if runErr != nil {
+				runErr = failStorageMaterializationAttempt(s, materializationAttempt, runErr)
+			}
+		}()
+
 		devices := deviceConfig.NewDevices(req.Devices)
 
 		args := db.InstanceArgs{
@@ -141,12 +153,17 @@ func createFromImage(s *state.State, r *http.Request, p api.Project, profiles []
 		}
 
 		// Actually create the instance.
-		err = instanceCreateFromImage(context.TODO(), s, img, args, op)
-		if err != nil {
-			return err
+		runErr = instanceCreateFromImage(context.TODO(), s, img, args, op)
+		if runErr != nil {
+			return runErr
 		}
 
-		return instanceCreateFinish(s, req, args, op)
+		runErr = instanceCreateFinish(s, req, args, op)
+		if runErr != nil {
+			return runErr
+		}
+
+		return commitStorageMaterializationAttempt(context.Background(), s, materializationAttempt)
 	}
 
 	resources := map[string][]api.URL{}
@@ -192,14 +209,30 @@ func createFromNone(s *state.State, r *http.Request, projectName string, profile
 		args.Architecture = architecture
 	}
 
-	run := func(op *operations.Operation) error {
-		// Actually create the instance.
-		_, err := instanceCreateAsEmpty(s, args, op)
-		if err != nil {
-			return err
+	run := func(op *operations.Operation) (runErr error) {
+		materializationAttempt, runErr := beginStorageMaterializationAttempt(context.Background(), s, projectName, req, op)
+		if runErr != nil {
+			return runErr
 		}
 
-		return instanceCreateFinish(s, req, args, op)
+		defer func() {
+			if runErr != nil {
+				runErr = failStorageMaterializationAttempt(s, materializationAttempt, runErr)
+			}
+		}()
+
+		// Actually create the instance.
+		_, runErr = instanceCreateAsEmpty(s, args, op)
+		if runErr != nil {
+			return runErr
+		}
+
+		runErr = instanceCreateFinish(s, req, args, op)
+		if runErr != nil {
+			return runErr
+		}
+
+		return commitStorageMaterializationAttempt(context.Background(), s, materializationAttempt)
 	}
 
 	resources := map[string][]api.URL{}
@@ -323,6 +356,41 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		args.Devices[rootDevName] = rootDev
 	} else if localRootDiskDeviceKey != "" && localRootDiskDevice["pool"] == "" {
 		args.Devices[localRootDiskDeviceKey]["pool"] = storagePool
+	}
+
+	materializationAttempt, err := storageMaterializationAttemptForRequest(s, projectName, req)
+	if err != nil {
+		return storageMaterializationAttemptError(err)
+	}
+	materializationStarted := false
+	materializationRunOwnsCleanup := false
+	if materializationAttempt != nil {
+		materializationAttempt, err = storagematerializationattempt.New(s.DB.Node).Start(context.Background(), materializationAttempt.Token, *materializationAttempt, s.StartTime.UnixNano(), "")
+		if err != nil {
+			return storageMaterializationAttemptError(err)
+		}
+		materializationStarted = true
+
+		// This defer owns synchronous failures before the target operation can be bound.
+		defer func() {
+			if materializationRunOwnsCleanup {
+				return
+			}
+
+			manager := storagematerializationattempt.New(s.DB.Node)
+			latest, cleanupErr := manager.Abort(context.Background(), materializationAttempt.Token)
+			if cleanupErr == nil {
+				cleanupErr = reconcileStorageMaterializationAttempt(context.Background(), s, latest, true)
+			}
+			if cleanupErr != nil {
+				logger.Error("Failed settling storage materialization after synchronous migration setup failure", logger.Ctx{
+					"attempt":  materializationAttempt.Token,
+					"project":  projectName,
+					"instance": req.Name,
+					"err":      cleanupErr,
+				})
+			}
+		}()
 	}
 
 	var inst instance.Instance
@@ -460,7 +528,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 	// Copy reverter so far so we can use it inside run after this function has finished.
 	runReverter := reverter.Clone()
 
-	run := func(op *operations.Operation) error {
+	run := func(op *operations.Operation) (runErr error) {
 		attemptCommitted := false
 		attemptCleanupIncomplete := false
 		if attemptManager != nil {
@@ -477,6 +545,15 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 						"instance": req.Name,
 						"err":      err,
 					})
+				}
+			}()
+		}
+
+		materializationCommitted := false
+		if materializationAttempt != nil {
+			defer func() {
+				if runErr != nil && materializationStarted && !materializationCommitted {
+					runErr = failStorageMaterializationAttempt(s, materializationAttempt, runErr)
 				}
 			}()
 		}
@@ -601,18 +678,39 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 				return err
 			}
 
-			err = attemptManager.Commit(context.Background(), req.Source.MigrationAttempt)
-			if err != nil {
-				return err
-			}
+			if materializationAttempt == nil {
+				err = attemptManager.Commit(context.Background(), req.Source.MigrationAttempt)
+				if err != nil {
+					return err
+				}
 
-			attemptCommitted = true
+				attemptCommitted = true
+			} else {
+				err = commitMigrationAndStorageMaterializationAttempts(context.Background(), s, req.Source.MigrationAttempt, materializationAttempt)
+				if err != nil {
+					return err
+				}
+
+				attemptCommitted = true
+				materializationCommitted = true
+			}
 			runReverter.Success()
 			return nil
 		}
 
+		err = instanceCreateFinish(s, req, args, op)
+		if err != nil {
+			return err
+		}
+
+		err = commitStorageMaterializationAttempt(context.Background(), s, materializationAttempt)
+		if err != nil {
+			return err
+		}
+
+		materializationCommitted = true
 		runReverter.Success()
-		return instanceCreateFinish(s, req, args, op)
+		return nil
 	}
 
 	resources := map[string][]api.URL{}
@@ -636,8 +734,16 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		}
 	}
 
+	if materializationAttempt != nil {
+		err = storagematerializationattempt.New(s.DB.Node).BindOperation(context.Background(), materializationAttempt.Token, s.StartTime.UnixNano(), op.ID())
+		if err != nil {
+			return storageMaterializationAttemptError(err)
+		}
+	}
+
 	reverter.Success()
 	attemptRunOwnsCleanup = attemptManager != nil
+	materializationRunOwnsCleanup = materializationAttempt != nil
 	return operations.OperationResponse(op)
 }
 
@@ -976,6 +1082,12 @@ func createFromBackup(s *state.State, r *http.Request, projectName string, data 
 	// Detect broken legacy backups.
 	if bInfo.Config == nil || bInfo.Config.Container == nil {
 		return response.BadRequest(errors.New("Backup file is missing required information"))
+	}
+
+	for _, key := range []string{internalInstance.ConfigOpenStackIDMapAllocationID, internalInstance.ConfigOpenStackComputeID, internalInstance.ConfigOpenStackRootfsMaterializationID, "user.openstack.uuid"} {
+		if bInfo.Config.Container.Config[key] != "" {
+			return response.BadRequest(errors.New("Backups carrying OpenStack rootfs materialization provenance cannot be restored"))
+		}
 	}
 
 	// Early project permissions check (pre-override and pre-backup.yaml).
@@ -1318,6 +1430,15 @@ func instancesPost(d *Daemon, r *http.Request) response.Response {
 
 	if req.Config == nil {
 		req.Config = map[string]string{}
+	}
+
+	err = validateStorageMaterializationRequest(&req)
+	if err != nil {
+		if errors.Is(err, storagematerializationattempt.ErrNotFound) || errors.Is(err, storagematerializationattempt.ErrBindingMismatch) {
+			return storageMaterializationAttemptError(err)
+		}
+
+		return response.BadRequest(err)
 	}
 
 	var instanceTypeDisk int64

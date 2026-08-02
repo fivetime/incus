@@ -39,7 +39,65 @@ exclusion is expected from the external owner's attachment tracking.
 
 Shared storage migration handover is supported: when two standalone servers
 see the same Ceph cluster and OSD pool, instances backed by claimed volumes
-migrate between them without any data transfer.
+migrate between them without any data transfer. The target record is protected
+from storage deletion before it claims the shared image. Failed or losing
+target records retain that protection, so deleting them cannot normalize or
+release storage that may already belong to the winning side.
+
+Container root volumes carry a durable ID map transition journal beside their
+top-level `rootfs` directory. The journal follows external RBD snapshots and
+clones, allowing a later `cephext` claim to remap physical ownership before the
+new container starts. Final authoritative deletion normalizes a retained root
+to namespace ID 0 before releasing it; migration records protected from storage
+deletion leave both the root and journal untouched.
+
+An external isolated-idmap allocator can request durable release proof on the
+final instance deletion by supplying the materialization UUID together with
+the allocation UUID, persistent compute UUID, and the instance's local
+OpenStack owner UUID. All four values must match the authoritative local
+instance configuration. Incus persists a pending receipt before touching storage
+and completes it only after the retained root has a stable normalized journal,
+the filesystem has been synced, and the RBD has been unmapped locally. The
+receipt records both the RBD image name and its immutable Ceph image identity,
+as well as the proven-clean materialization baseline and cleanup disposition.
+Those fields are matched against the committed materialization attempt before
+any unmap, volume database deletion, or receipt completion. The identity check
+and local release run under the volume lock, so a same-name replacement cannot
+be mistaken for the released generation. Before legacy ID-map normalization,
+the identity is checked again after mounting; the resulting RBD watcher pins
+that exact image throughout the filesystem transition. Deletion then performs
+another identity check while holding the volume lock.
+Storage-handover protected record deletion produces a `detached` receipt after
+the local claim is removed without changing or deleting the shared RBD object.
+Completed receipts remain queryable after the instance record is gone. They
+must be copied to durable allocator storage before being acknowledged. An
+acknowledged receipt becomes a permanent token tombstone in the Incus node
+database; it is not physically deleted or eligible for automatic garbage
+collection.
+
+Historical snapshots and backups can retain physically shifted IDs. They are
+inert while unmounted or attached only as raw tenant data, but restoring or
+cloning one as a container root must go through `cephext`; host-side mount
+bypasses cannot safely infer the required ID map. A legacy shifted root without
+a journal is seeded from its non-empty Incus `volatile.last_state.idmap`.
+
+New root images must be published with a stable normalized marker at the raw
+filesystem top level, beside `rootfs/`, rather than inside the guest rootfs:
+
+    {"version":1,"state":"stable","idmap":[]}
+
+The marker path is `/.incus-idmap` and its mode must be `0600`. Image publishing
+must write and sync this marker before making the image available for Cinder
+clone or snapshot workflows. The marker then follows every RBD copy-on-write
+descendant and is validated during every `cephext` claim, including claims that
+remain powered off.
+
+`initial.ceph.rbd.idmap_provenance=normalized` is reserved for trusted offline
+operator repair of a newly created, provably namespace-owned root. Normal
+orchestrators must not send it during instance creation. It must never be used
+for a retained volume or snapshot, whose provenance must come from its on-disk
+journal. A markerless root with no non-empty legacy map or explicit repair
+assertion is rejected.
 
 `cephext` pools support `container` and `custom` volumes. Images, VMs and
 buckets are not supported.
@@ -65,3 +123,4 @@ configuration key is available:
 Key                   | Type   | Default | Description
 :--                   | :---   | :------ | :----------
 `ceph.rbd.image_name` | string | -       | Name of the externally managed RBD image backing the volume
+`ceph.rbd.idmap_provenance` | string | - | One-time trusted offline repair assertion (`normalized`) for a provably namespace-owned container root

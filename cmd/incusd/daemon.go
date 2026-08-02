@@ -1584,6 +1584,10 @@ func (d *Daemon) init() error {
 			return err
 		}
 
+		// A previous daemon process cannot continue a rootfs materialization operation.
+		// Reconcile its unfinished attempts before loading the instance startup set.
+		reconcileStorageMaterializationAttemptsAfterRestart(d.shutdownCtx, d.State())
+
 		// Must occur after d.devmonitor has been initialized.
 		instances, err = instance.LoadNodeAll(d.State(), instancetype.Any)
 		if err != nil {

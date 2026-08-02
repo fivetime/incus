@@ -176,7 +176,7 @@ func TestWithSharedStorageMigrationTargetProtection(t *testing.T) {
 		expectProtection bool
 	}{
 		{name: "shared ceph", sharedStorage: true, driverName: "ceph", expectRole: true, expectProtection: true},
-		{name: "shared cephext", sharedStorage: true, driverName: "cephext", expectRole: true},
+		{name: "shared cephext", sharedStorage: true, driverName: "cephext", expectRole: true, expectProtection: true},
 		{name: "copied ceph", sharedStorage: false, driverName: "ceph"},
 		{name: "shared dir", sharedStorage: true, driverName: "dir"},
 	}
@@ -414,6 +414,10 @@ func TestFailedSharedCephextMigrationTargetHasNoCompletionProof(t *testing.T) {
 		t.Fatal("Failed cephext target did not retain its target role")
 	}
 
+	if !internalInstance.StorageDeleteProtected(config) {
+		t.Fatal("Failed cephext target did not retain delete protection")
+	}
+
 	_, err = internalInstance.StorageHandoverAPIConfigChanges(internalInstance.StorageHandoverStateOwned, config, "cephext")
 	if !errors.Is(err, internalInstance.ErrStorageHandoverIncomplete) {
 		t.Fatalf("Failed cephext target owned transition returned %v, want %v", err, internalInstance.ErrStorageHandoverIncomplete)
@@ -462,6 +466,10 @@ func TestFailedSharedCephextReceiveHasNoCompletionProof(t *testing.T) {
 		t.Fatal("Failed cephext receive acquired completion proof")
 	}
 
+	if !internalInstance.StorageDeleteProtected(config) {
+		t.Fatal("Failed cephext receive did not retain delete protection")
+	}
+
 	_, err = internalInstance.StorageHandoverAPIConfigChanges(internalInstance.StorageHandoverStateOwned, config, "cephext")
 	if !errors.Is(err, internalInstance.ErrStorageHandoverIncomplete) {
 		t.Fatalf("Failed cephext receive owned transition returned %v, want %v", err, internalInstance.ErrStorageHandoverIncomplete)
@@ -495,8 +503,8 @@ func TestCompletedSharedCephextMigrationTargetCanClearHandover(t *testing.T) {
 		t.Fatalf("Target claim failed: %v", err)
 	}
 
-	if internalInstance.StorageDeleteProtected(config) {
-		t.Fatal("cephext target unexpectedly acquired Incus-owned deletion protection")
+	if !internalInstance.StorageDeleteProtected(config) {
+		t.Fatal("cephext target did not acquire deletion protection before claim")
 	}
 
 	err = markSharedStorageMigrationTargetReceiveComplete(true, "cephext", volatileSet)
@@ -576,9 +584,8 @@ func TestReleaseSharedStorageMigrationTargetClaim(t *testing.T) {
 }
 
 func TestReleaseSharedStorageMigrationTargetClaimCephext(t *testing.T) {
-	volatileCalled := false
-	unmountCalled := false
-	deleteCalled := false
+	order := []string{}
+	config := map[string]string{}
 
 	err := releaseSharedStorageMigrationTargetClaim(
 		"cephext",
@@ -588,15 +595,19 @@ func TestReleaseSharedStorageMigrationTargetClaimCephext(t *testing.T) {
 			return nil
 		},
 		func() error {
-			unmountCalled = true
+			order = append(order, "unmount")
 			return nil
 		},
 		func(changes map[string]string) error {
-			volatileCalled = true
+			order = append(order, "protect")
+			for key, value := range changes {
+				config[key] = value
+			}
+
 			return nil
 		},
 		func() error {
-			deleteCalled = true
+			order = append(order, "delete")
 			return nil
 		},
 	)
@@ -604,12 +615,17 @@ func TestReleaseSharedStorageMigrationTargetClaimCephext(t *testing.T) {
 		t.Fatalf("releaseSharedStorageMigrationTargetClaim returned error: %v", err)
 	}
 
-	if !unmountCalled || !deleteCalled {
-		t.Fatalf("External claim cleanup incomplete: unmount=%t delete=%t", unmountCalled, deleteCalled)
+	expectedOrder := []string{"unmount", "protect", "delete"}
+	if !slices.Equal(order, expectedOrder) {
+		t.Fatalf("Cleanup order = %v, want %v", order, expectedOrder)
 	}
 
-	if volatileCalled {
-		t.Fatal("External RBD claim unexpectedly acquired Incus-owned deletion protection")
+	if !internalInstance.StorageDeleteProtected(config) {
+		t.Fatal("External RBD claim was not protected before deleting its local record")
+	}
+
+	if config[internalInstance.ConfigVolatileMigrationStorageHandoverRole] != internalInstance.StorageHandoverRoleTarget {
+		t.Fatal("External RBD claim did not retain its target role")
 	}
 }
 
@@ -624,6 +640,7 @@ func TestReleaseSharedStorageMigrationTargetClaimFailureIsDurable(t *testing.T) 
 		{name: "unmount", driverName: "ceph", failAt: "unmount"},
 		{name: "protection", driverName: "ceph", failAt: "protect"},
 		{name: "delete", driverName: "ceph", failAt: "delete"},
+		{name: "external protection", driverName: "cephext", failAt: "protect"},
 		{name: "external delete", driverName: "cephext", failAt: "delete"},
 	}
 

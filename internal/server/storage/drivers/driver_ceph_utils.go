@@ -38,6 +38,8 @@ const cephVolumeTypeZombieImage = VolumeType("zombie_image")
 
 const cephRBDUnmapTimeout = 30 * time.Second
 
+var errCephVolumeNotMapped = errors.New("Ceph volume is not mapped")
+
 // CephDefaultCluster represents the default ceph cluster name.
 const CephDefaultCluster = "ceph"
 
@@ -120,6 +122,16 @@ func (d *ceph) rbdListPoolVolumes() ([]string, error) {
 	}
 
 	return images, nil
+}
+
+// GetVolumeIdentity returns the immutable Ceph RBD object identity.
+func (d *ceph) GetVolumeIdentity(vol Volume) (string, error) {
+	identity, err := d.getRBDVolumeIdentity(d.getRBDVolumeName(vol, "", false))
+	if err != nil {
+		return "", err
+	}
+
+	return identity.canonical()
 }
 
 // osdDeletePool destroys an OSD pool.
@@ -1288,7 +1300,53 @@ func (d *ceph) getRBDMappedDevPath(vol Volume, mapIfMissing bool) (bool, string,
 		return true, devPath, nil
 	}
 
-	return false, "", fmt.Errorf("Volume %q not mapped to an RBD device", vol.Name())
+	return false, "", fmt.Errorf("%w: %q", errCephVolumeNotMapped, vol.Name())
+}
+
+// HasVolumeLocalState reports whether the exact RBD image is still mapped on this host.
+func (d *ceph) HasVolumeLocalState(_ Volume, expectedStorageIdentity string) (bool, error) {
+	identity, err := parseCanonicalRBDVolumeIdentity(expectedStorageIdentity)
+	if err != nil {
+		return false, err
+	}
+
+	mappings, err := findRBDMappingsByIdentity("/sys/devices/rbd", identity)
+	if err != nil {
+		return false, err
+	}
+
+	return len(mappings) > 0, nil
+}
+
+// ReleaseVolumeLocalState safely releases any residual RBD mapping on this host.
+func (d *ceph) ReleaseVolumeLocalState(vol Volume, expectedStorageIdentity string) error {
+	return d.releaseCephVolumeLocalState(vol, expectedStorageIdentity)
+}
+
+func runVolumeIdentityBoundAction(vol Volume, expectedStorageIdentity string, getIdentity func(Volume) (string, error), action func() error) error {
+	err := verifyVolumeIdentity(vol, expectedStorageIdentity, getIdentity)
+	if err != nil {
+		return err
+	}
+
+	return action()
+}
+
+func verifyVolumeIdentity(vol Volume, expectedStorageIdentity string, getIdentity func(Volume) (string, error)) error {
+	if expectedStorageIdentity == "" {
+		return nil
+	}
+
+	identity, err := getIdentity(vol)
+	if err != nil {
+		return fmt.Errorf("Read storage volume identity: %w", err)
+	}
+
+	if identity == "" || identity != expectedStorageIdentity {
+		return errors.New("Storage volume identity changed before destructive release")
+	}
+
+	return nil
 }
 
 // generateUUID regenerates the XFS/btrfs UUID as needed.

@@ -5,6 +5,81 @@ import (
 	"testing"
 )
 
+func TestParseRBDVolumeIdentity(t *testing.T) {
+	identity, err := parseRBDVolumeIdentity(`{"block_name_prefix":"rbd_data.abcd","id":"abcd","ignored":true}`, 29)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if identity != `{"pool_id":29,"id":"abcd","block_name_prefix":"rbd_data.abcd"}` {
+		t.Fatalf("Unexpected canonical RBD identity %q", identity)
+	}
+
+	for _, input := range []string{
+		`{"id":"abcd"}`,
+		`{"block_name_prefix":"rbd_data.abcd"}`,
+		`{"id":"abcd","block_name_prefix":"rbd_data.1234"}`,
+		`{}`,
+		`not-json`,
+	} {
+		_, err = parseRBDVolumeIdentity(input, 29)
+		if err == nil {
+			t.Fatalf("Incomplete RBD identity %q was accepted", input)
+		}
+	}
+
+	parsed, err := parseCanonicalRBDVolumeIdentity(identity)
+	if err != nil || parsed.PoolID != 29 || parsed.ID != "abcd" {
+		t.Fatalf("Canonical identity did not round-trip: identity=%+v err=%v", parsed, err)
+	}
+
+	for _, nonCanonical := range []string{
+		`{"id":"abcd","pool_id":29,"block_name_prefix":"rbd_data.abcd"}`,
+		`{ "pool_id":29,"id":"abcd","block_name_prefix":"rbd_data.abcd"}`,
+		`{"pool_id":29,"id":"abcd","block_name_prefix":"rbd_data.abcd","extra":true}`,
+	} {
+		if _, err := parseCanonicalRBDVolumeIdentity(nonCanonical); err == nil {
+			t.Fatalf("Non-canonical identity %q was accepted", nonCanonical)
+		}
+	}
+}
+
+func TestRunVolumeIdentityBoundAction(t *testing.T) {
+	vol := NewVolume(nil, "testpool", VolumeTypeContainer, ContentTypeFS, "instance", nil, nil)
+
+	t.Run("matching identity", func(t *testing.T) {
+		actions := 0
+		err := runVolumeIdentityBoundAction(vol, "immutable", func(Volume) (string, error) {
+			return "immutable", nil
+		}, func() error {
+			actions++
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if actions != 1 {
+			t.Fatalf("Identity-bound action ran %d times", actions)
+		}
+	})
+
+	t.Run("recreated identity", func(t *testing.T) {
+		actions := 0
+		err := runVolumeIdentityBoundAction(vol, "immutable", func(Volume) (string, error) {
+			return "recreated", nil
+		}, func() error {
+			actions++
+			return nil
+		})
+		if err == nil {
+			t.Fatal("Recreated storage object was accepted")
+		}
+		if actions != 0 {
+			t.Fatal("Identity mismatch reached unmap or delete action")
+		}
+	})
+}
+
 func Test_ceph_getRBDVolumeName(t *testing.T) {
 	type args struct {
 		vol          Volume

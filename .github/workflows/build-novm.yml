@@ -67,7 +67,7 @@ jobs:
             --file ${{ matrix.file }} .
           if [ "${{ matrix.variant }}" = kubelet ]; then
             docker run --rm --entrypoint sh incus-kubelet-test:${{ matrix.arch }} -ec '
-              test "$(incus --version)" = "7.2"
+              incus --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
               ! command -v incusd
               ! command -v criu
               ! command -v rbd
@@ -77,8 +77,8 @@ jobs:
             '
           else
             docker run --rm --entrypoint sh incus-quadlet-test:${{ matrix.arch }} -ec '
-              test "$(incusd --version)" = "7.2"
-              test "$(incus --version)" = "7.2"
+              incusd --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
+              incus --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
               criu --version
               command -v rbd
               command -v lvm

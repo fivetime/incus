@@ -1865,6 +1865,10 @@ func ConfigKeyChecker(key string, instanceType api.InstanceType) (func(value str
 // InstanceIncludeWhenCopying is used to decide whether to include a config item or not when copying an instance.
 // The remoteCopy argument indicates if the copy is remote (i.e between servers) as this affects the keys kept.
 func InstanceIncludeWhenCopying(configKey string, remoteCopy bool) bool {
+	if configKey == ConfigOpenStackIDMapAllocationID || configKey == ConfigOpenStackComputeID || configKey == ConfigOpenStackRootfsMaterializationID || configKey == "user.openstack.uuid" {
+		return false // Allocation and materialization provenance belongs to exactly one target instance.
+	}
+
 	if configKey == "volatile.apply_nvram" {
 		return true // Include volatile.apply_nvram to also reset the NVRAM in copied instances.
 	}

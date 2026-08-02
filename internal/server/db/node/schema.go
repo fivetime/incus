@@ -49,6 +49,58 @@ CREATE TABLE raft_nodes (
     name TEXT NOT NULL default "",
     UNIQUE (address)
 );
+CREATE TABLE storage_materialization_attempts (
+    token TEXT PRIMARY KEY NOT NULL,
+    allocation_id TEXT NOT NULL,
+    compute_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    project TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    idmap_base INTEGER NOT NULL,
+    idmap_size INTEGER NOT NULL,
+    storage_driver TEXT NOT NULL,
+    storage_pool TEXT NOT NULL,
+    storage_volume TEXT NOT NULL,
+    rbd_image TEXT NOT NULL DEFAULT '',
+    storage_identity TEXT NOT NULL DEFAULT '',
+    baseline_clean INTEGER NOT NULL,
+    cleanup_disposition TEXT NOT NULL,
+    proof_outcome TEXT NOT NULL DEFAULT '',
+    proof_digest TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    storage_phase TEXT NOT NULL,
+    started INTEGER NOT NULL DEFAULT 0,
+    finished INTEGER NOT NULL DEFAULT 0,
+    operation_uuid TEXT NOT NULL DEFAULT '',
+    daemon_start INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX storage_materialization_attempts_project_instance_unique
+    ON storage_materialization_attempts (project,
+    instance_name)
+    WHERE state != 'retired';
+CREATE TABLE storage_release_receipts (
+    token TEXT PRIMARY KEY NOT NULL,
+	allocation_id TEXT NOT NULL,
+	compute_id TEXT NOT NULL,
+	materialization_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    project TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    idmap_base INTEGER NOT NULL,
+    idmap_size INTEGER NOT NULL,
+    storage_driver TEXT NOT NULL,
+    storage_pool TEXT NOT NULL,
+    storage_volume TEXT NOT NULL,
+    rbd_image TEXT NOT NULL DEFAULT '',
+    storage_identity TEXT NOT NULL DEFAULT '',
+    baseline_clean INTEGER NOT NULL,
+    cleanup_disposition TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+	completed_at INTEGER NOT NULL DEFAULT 0,
+	CHECK (token = materialization_id)
+);
 
-INSERT INTO schema (version, updated_at) VALUES (44, strftime("%s"))
+INSERT INTO schema (version, updated_at) VALUES (46, strftime("%s"))
 `

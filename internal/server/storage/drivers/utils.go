@@ -682,6 +682,43 @@ func UnshiftBtrfsRootfs(path string, diskIdmap *idmap.Set) error {
 	return shiftBtrfsRootfs(path, diskIdmap, false)
 }
 
+// RemapRootfsIDMap changes the physical ownership of a rootfs between two ID maps.
+func RemapRootfsIDMap(path string, storageType string, from *idmap.Set, to *idmap.Set) error {
+	if from != nil {
+		var err error
+		switch storageType {
+		case "zfs":
+			err = from.UnshiftPath(path, ShiftZFSSkipper)
+		case "btrfs":
+			err = UnshiftBtrfsRootfs(path, from)
+		default:
+			err = from.UnshiftPath(path, nil)
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	if to != nil {
+		var err error
+		switch storageType {
+		case "zfs":
+			err = to.ShiftPath(path, ShiftZFSSkipper)
+		case "btrfs":
+			err = ShiftBtrfsRootfs(path, to)
+		default:
+			err = to.ShiftPath(path, nil)
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // shiftBtrfsRootfs shifts a filesystem that main include read-only subvolumes.
 func shiftBtrfsRootfs(path string, diskIdmap *idmap.Set, shift bool) error {
 	var err error

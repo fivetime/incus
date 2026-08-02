@@ -19,6 +19,32 @@ install -d -m 0711 /var/lib/lxcfs
 install -d -m 0700 /var/lib/incus /var/log/incus
 ```
 
+The Podman data-plane service must be the only LXCFS owner. Disable and mask a
+distribution-provided host service before the first split-runtime start:
+
+```sh
+systemctl disable --now lxcfs.service
+systemctl mask lxcfs.service
+```
+
+`incus-lxcfs.container` also declares `Conflicts=lxcfs.service`, but the mask is
+required to prevent both enabled units from competing during a later boot.
+
+Nova/Neutron compute nodes must not contain Incus-managed networks. A managed
+bridge keeps its `dnsmasq` child alive when `incusd` receives `SIGTERM`, which
+prevents the outer Podman container from stopping cleanly and eventually turns
+a control-plane rollout into `SIGKILL`. Neutron/OVN/OVS owns tenant networking
+for this deployment, so only unmanaged host interfaces are valid. Audit before
+enabling the units:
+
+```sh
+incus network list --all-projects --columns emn --format csv
+```
+
+Every row must report `NO` in the managed column. Before removing a legacy
+managed network, detach every profile or non-Nova test instance that references
+it; the validator intentionally fails rather than deleting anything.
+
 `/var/lib/lxcfs` must be on a shared or recursively shared mount. Verify it
 with:
 
@@ -58,11 +84,15 @@ new service. Schedule one maintenance window:
 1. Disable scheduling and drain or cleanly stop every Nova instance on the
    node. Record the instances that must be restarted.
 2. Stop the old `incus-podman.service` and verify that no LXC monitor remains.
-3. Provision the shared `/var/lib/lxcfs` host mount.
-4. Install both new Quadlets while the old service is stopped.
-5. Start `incus-lxcfs.service`, then `incus-podman.service`.
-6. Run `incus-quadlet-validate`.
-7. Restart the recorded instances and re-enable scheduling.
+3. Remove all Incus-managed networks after detaching their profile and test
+   instance references; tenant VIFs remain owned by Neutron/OVN/OVS.
+4. Disable and mask a host `lxcfs.service`, then provision the shared
+   `/var/lib/lxcfs` host mount.
+5. Install both new Quadlets while the old service is stopped.
+6. Start `incus-lxcfs.service`, then `incus-podman.service`.
+7. Run `incus-quadlet-validate`.
+8. Restart the recorded instances through Nova so their Neutron VIFs are
+   replumbed, then re-enable scheduling.
 
 Do not try to make this first transition by sending SIGTERM to the combined
 container. That preserves LXC monitors but kills their only LXCFS process,

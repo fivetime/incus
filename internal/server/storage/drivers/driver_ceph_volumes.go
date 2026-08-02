@@ -681,6 +681,28 @@ func (d *ceph) RefreshVolume(vol Volume, srcVol Volume, srcSnapshots []Volume, a
 // DeleteVolume deletes a volume of the storage device. If any snapshots of the volume remain then
 // this function will return an error.
 func (d *ceph) DeleteVolume(vol Volume, op *operations.Operation) error {
+	return d.deleteVolumeRelease(vol, false, op)
+}
+
+// DeleteVolumeWithIdentity deletes a volume only if its immutable identity still matches.
+func (d *ceph) DeleteVolumeWithIdentity(vol Volume, expectedStorageIdentity string, op *operations.Operation) error {
+	if expectedStorageIdentity == "" {
+		return errors.New("Cannot delete Ceph volume without an immutable storage identity")
+	}
+
+	return d.deleteVolumeWithIdentity(vol, expectedStorageIdentity, op)
+}
+
+func (d *ceph) deleteVolumeWithIdentity(vol Volume, expectedStorageIdentity string, op *operations.Operation) error {
+	return d.deleteVolumeWithExactIdentity(vol, expectedStorageIdentity)
+}
+
+func (d *ceph) deleteVolumeRelease(vol Volume, volumeLocked bool, op *operations.Operation) error {
+	unmountVolume := d.UnmountVolume
+	if volumeLocked {
+		unmountVolume = d.unmountVolume
+	}
+
 	volExists, err := d.HasVolume(vol)
 	if err != nil {
 		return err
@@ -700,7 +722,7 @@ func (d *ceph) DeleteVolume(vol Volume, op *operations.Operation) error {
 		defer unlock()
 
 		// Unmount and unmap.
-		_, err = d.UnmountVolume(vol, false, op)
+		_, err = unmountVolume(vol, false, op)
 		if err != nil {
 			return err
 		}
@@ -759,7 +781,7 @@ func (d *ceph) DeleteVolume(vol Volume, op *operations.Operation) error {
 		}
 	} else {
 		// Unmount and unmap.
-		_, err := d.UnmountVolume(vol, false, op)
+		_, err := unmountVolume(vol, false, op)
 		if err != nil {
 			return err
 		}
@@ -1465,6 +1487,11 @@ func (d *ceph) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.Opera
 
 	defer unlock()
 
+	return d.unmountVolume(vol, keepBlockDev, op)
+}
+
+func (d *ceph) unmountVolume(vol Volume, keepBlockDev bool, op *operations.Operation) (bool, error) {
+	var err error
 	ourUnmount := false
 	mountPath := vol.MountPath()
 
