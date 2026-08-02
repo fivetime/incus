@@ -3666,6 +3666,34 @@
 						}
 					},
 					{
+						"volatile.rootfs_idmap.allocation_id": {
+							"longdesc": "The fleet-wide ID map allocation generation bound to the release receipt.",
+							"shortdesc": "Fleet-wide ID map allocation bound to the release receipt",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.rootfs_idmap.compute_id": {
+							"longdesc": "The persistent compute identity bound to the release receipt.",
+							"shortdesc": "Persistent compute identity bound to the release receipt",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.rootfs_idmap.release_owner": {
+							"longdesc": "The external owner identity bound to the final storage release.",
+							"shortdesc": "External owner bound to the final storage release",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.rootfs_idmap.release_token": {
+							"longdesc": "Binds the final release of the instance's root storage to one\nmaterialization attempt. Written by the storage release receipt\nprotocol; a record carrying it can only be deleted with a complete\nreceipt binding.",
+							"shortdesc": "Materialization attempt bound to the final storage release",
+							"type": "string"
+						}
+					},
+					{
 						"volatile.uuid": {
 							"longdesc": "The instance UUID is globally unique across all servers and projects.",
 							"shortdesc": "Instance UUID",

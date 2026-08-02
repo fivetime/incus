@@ -3322,6 +3322,33 @@ Whether this migration target completed receiving its shared storage.
 
 ```
 
+```{config:option} volatile.rootfs_idmap.allocation_id instance-volatile
+:shortdesc: "Fleet-wide ID map allocation bound to the release receipt"
+:type: "string"
+The fleet-wide ID map allocation generation bound to the release receipt.
+```
+
+```{config:option} volatile.rootfs_idmap.compute_id instance-volatile
+:shortdesc: "Persistent compute identity bound to the release receipt"
+:type: "string"
+The persistent compute identity bound to the release receipt.
+```
+
+```{config:option} volatile.rootfs_idmap.release_owner instance-volatile
+:shortdesc: "External owner bound to the final storage release"
+:type: "string"
+The external owner identity bound to the final storage release.
+```
+
+```{config:option} volatile.rootfs_idmap.release_token instance-volatile
+:shortdesc: "Materialization attempt bound to the final storage release"
+:type: "string"
+Binds the final release of the instance's root storage to one
+materialization attempt. Written by the storage release receipt
+protocol; a record carrying it can only be deleted with a complete
+receipt binding.
+```
+
 ```{config:option} volatile.uuid instance-volatile
 :shortdesc: "Instance UUID"
 :type: "string"
