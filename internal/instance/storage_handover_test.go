@@ -520,3 +520,28 @@ func TestStorageHandoverDriverSupported(t *testing.T) {
 		})
 	}
 }
+
+func TestStorageHandoverInProgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   map[string]string
+		expected bool
+	}{
+		{name: "empty config", config: map[string]string{}, expected: false},
+		{name: "unrelated volatile keys", config: map[string]string{"volatile.last_state.power": "RUNNING"}, expected: false},
+		{name: "source handover pending", config: map[string]string{ConfigVolatileMigrationStorageHandover: "pending"}, expected: true},
+		{name: "source handover committed", config: map[string]string{ConfigVolatileMigrationStorageHandover: "committed"}, expected: true},
+		{name: "target receive complete", config: map[string]string{ConfigVolatileMigrationStorageReceiveComplete: "true"}, expected: true},
+		{name: "target delete protection", config: map[string]string{ConfigVolatileMigrationStorageDeleteProtection: "true"}, expected: true},
+		{name: "delete protection false", config: map[string]string{ConfigVolatileMigrationStorageDeleteProtection: "false"}, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := StorageHandoverInProgress(tt.config)
+			if actual != tt.expected {
+				t.Fatalf("StorageHandoverInProgress(%v) = %t, want %t", tt.config, actual, tt.expected)
+			}
+		})
+	}
+}

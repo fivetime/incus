@@ -148,6 +148,15 @@ func StorageDeleteProtected(config map[string]string) bool {
 	return config[ConfigVolatileMigrationStorageHandover] != "" || util.IsTrue(config[ConfigVolatileMigrationStorageDeleteProtection])
 }
 
+// StorageHandoverInProgress returns whether the instance record is part of an unresolved shared-storage
+// handover, meaning the volume's authoritative owner may be the remote side of a migration and the local
+// record must not mount the volume for convenience writes such as backup.yaml refreshes.
+func StorageHandoverInProgress(config map[string]string) bool {
+	return config[ConfigVolatileMigrationStorageHandover] != "" ||
+		config[ConfigVolatileMigrationStorageReceiveComplete] != "" ||
+		StorageDeleteProtected(config)
+}
+
 // StorageHandoverDriverSupported returns whether the storage driver supports a handover state transition.
 func StorageHandoverDriverSupported(driverName string, state string) bool {
 	switch state {

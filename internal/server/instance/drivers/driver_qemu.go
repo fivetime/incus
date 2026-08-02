@@ -10645,6 +10645,16 @@ func (d *qemu) FillNetworkDevice(name string, m deviceConfig.Device) (deviceConf
 
 // UpdateBackupFile writes the instance's backup.yaml file to storage.
 func (d *qemu) UpdateBackupFile() error {
+	// A negotiated shared-storage handover means the volume's authoritative
+	// owner may be the remote side of a migration, so this record must not
+	// mount it to refresh backup.yaml. The refresh is a convenience copy of
+	// state that lives in the database; preferring a recoverably stale file
+	// over touching storage owned elsewhere matches the handover contract.
+	if internalInstance.StorageHandoverInProgress(d.LocalConfig()) {
+		d.logger.Debug("Skipping backup.yaml refresh during shared-storage handover")
+		return nil
+	}
+
 	// Prevent concurrent updates to the backup file.
 	unlock, err := d.updateBackupFileLock(context.Background())
 	if err != nil {
