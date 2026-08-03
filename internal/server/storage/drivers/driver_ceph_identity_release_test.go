@@ -245,7 +245,6 @@ func TestParseRBDTrashEntriesRejectsNonCanonicalIDs(t *testing.T) {
 		`[{"id":"","name":"image"}]`,
 		`[{"id":"ABCDEF","name":"image"}]`,
 		`[{"id":"abcdeg","name":"image"}]`,
-		`[{"id":"abc","name":"image"}]`,
 		`[{"id":"abcdef","name":""}]`,
 		`[{"id":"abcdef","name":"one"},{"id":"abcdef","name":"two"}]`,
 	} {
@@ -261,6 +260,40 @@ func TestParseRBDTrashEntriesRejectsNonCanonicalIDs(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0] != (cephRBDTrashEntry{ID: "abcdef", Name: "image"}) {
 		t.Fatalf("Unexpected trash entries: %#v", entries)
+	}
+}
+
+// Ceph builds image IDs by concatenating an instance ID and a random value
+// formatted with std::hex, which does not zero-pad, so odd-length IDs are
+// both legal and common. Rejecting them fails roughly half of all builds.
+func TestRBDImageIDsMayBeOddLength(t *testing.T) {
+	for _, id := range []string{"a", "abc", "e016c6f832e4b5f", "1234567"} {
+		identity := cephRBDVolumeIdentity{
+			PoolID:          29,
+			ID:              id,
+			BlockNamePrefix: "rbd_data." + id,
+		}
+
+		if err := identity.validate(); err != nil {
+			t.Fatalf("Odd-length RBD image ID %q was rejected: %v", id, err)
+		}
+
+		entries, err := parseRBDTrashEntries(`[{"id":"` + id + `","name":"image"}]`)
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("Odd-length trash ID %q was rejected: %v", id, err)
+		}
+	}
+
+	for _, id := range []string{"", "ABC", "xyz", "abc-def", "12 34"} {
+		identity := cephRBDVolumeIdentity{
+			PoolID:          29,
+			ID:              id,
+			BlockNamePrefix: "rbd_data." + id,
+		}
+
+		if err := identity.validate(); err == nil {
+			t.Fatalf("Non-canonical RBD image ID %q was accepted", id)
+		}
 	}
 }
 

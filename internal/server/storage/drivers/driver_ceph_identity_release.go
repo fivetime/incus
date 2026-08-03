@@ -40,16 +40,28 @@ type cephRBDVolumeIdentity struct {
 	BlockNamePrefix string `json:"block_name_prefix"`
 }
 
+// isLowercaseHexString reports whether every character is a lowercase hex digit.
+// RBD image IDs are hex *strings*, not hex-encoded bytes: Ceph builds them by
+// concatenating an instance ID and a random value formatted with std::hex,
+// which does not zero-pad, so a legitimate ID is frequently odd in length.
+// Decoding one as bytes rejects roughly half of all real images.
+func isLowercaseHexString(value string) bool {
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+
+	return value != ""
+}
+
 func (i cephRBDVolumeIdentity) validate() error {
 	if i.ID == "" || i.BlockNamePrefix == "" {
 		return errors.New("RBD image information has an incomplete immutable identity")
 	}
 
-	if _, err := hex.DecodeString(i.ID); err != nil {
-		return fmt.Errorf("Invalid RBD image ID: %w", err)
-	}
-	if strings.ToLower(i.ID) != i.ID {
-		return errors.New("RBD image ID must use canonical lowercase hexadecimal")
+	if !isLowercaseHexString(i.ID) {
+		return fmt.Errorf("Invalid RBD image ID %q: expected canonical lowercase hexadecimal", i.ID)
 	}
 
 	if i.BlockNamePrefix != "rbd_data."+i.ID {
@@ -429,8 +441,7 @@ func parseRBDTrashEntries(data string) ([]cephRBDTrashEntry, error) {
 			return nil, errors.New("RBD trash listing contains an incomplete entry")
 		}
 
-		_, err := hex.DecodeString(entry.ID)
-		if err != nil || strings.ToLower(entry.ID) != entry.ID {
+		if !isLowercaseHexString(entry.ID) {
 			return nil, errors.New("RBD trash listing contains a non-canonical image ID")
 		}
 
