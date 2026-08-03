@@ -37,6 +37,20 @@ func Increment(refCounter string, value uint) uint {
 	return v
 }
 
+// Reset removes a refCounter entirely, returning the value it previously held.
+// Use only while holding the lock that serializes access to the guarded
+// resource, and only when that resource has been forcibly torn down so any
+// remaining references are known to be stale.
+func Reset(refCounter string) uint {
+	refCounterMutex.Lock()
+	defer refCounterMutex.Unlock()
+
+	v := refCounters[refCounter]
+	delete(refCounters, refCounter)
+
+	return v
+}
+
 // Decrement decreases a refCounter by the value. If the ref counter doesn't exist, a new one is created.
 // The counter's new value is returned. A counter cannot be decreased below zero.
 func Decrement(refCounter string, value uint) uint {

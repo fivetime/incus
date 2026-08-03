@@ -225,6 +225,13 @@ func (v Volume) MountInUse() bool {
 	return refcount.Get(v.mountLockName()) > 0
 }
 
+// MountRefCountReset clears the volume's mount ref counter and returns the stale value it held.
+// Callers must hold the volume's mount lock and must have forcibly torn down the mount, so that
+// any remaining references are known to be stale.
+func (v Volume) MountRefCountReset() uint {
+	return refcount.Reset(v.mountLockName())
+}
+
 // EnsureMountPath creates the volume's mount path if missing, then sets the correct permission for the type.
 // If permission setting fails and the volume is a snapshot then the error is ignored as snapshots are read only.
 // The boolean flag indicates whether this is being called during volume creation.

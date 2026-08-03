@@ -315,8 +315,18 @@ func (d *ceph) releaseCephVolumeLocalState(vol Volume, expectedStorageIdentity s
 // user always holds the volume's database record, and a failed migration receive can leak both the
 // mountpoint and its reference count, which would otherwise deadlock fencing forever.
 func (d *ceph) releaseCephVolumeLocalStateLocked(vol Volume, identity cephRBDVolumeIdentity, unmount bool) error {
-	if !unmount && vol.MountInUse() {
-		return fmt.Errorf("Cannot release Ceph volume local state while references remain: %w", ErrInUse)
+	if vol.MountInUse() {
+		if !unmount {
+			return fmt.Errorf("Cannot release Ceph volume local state while references remain: %w", ErrInUse)
+		}
+
+		// The caller holds the mount lock and has proven the claim failed or
+		// abandoned, so remaining references were leaked (e.g. by a failed
+		// migration receive). Leaving them would poison the next claim of the
+		// same volume name: its own release would see phantom references and
+		// refuse, failing that later migration on the source side.
+		stale := vol.MountRefCountReset()
+		d.logger.Warn("Cleared stale mount references during forced volume local state release", logger.Ctx{"volume": vol.Name(), "references": stale})
 	}
 
 	if vol.contentType == ContentTypeFS && linux.IsMountPoint(vol.MountPath()) {
