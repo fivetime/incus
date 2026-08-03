@@ -388,3 +388,41 @@ func TestCleanupBindsIdentityOnlyForCleanDeleteBaseline(t *testing.T) {
 	_, err = bindMaterializationCleanupIdentity(ctx, manager, secondPtr, driver, drivers.Volume{}, true)
 	require.ErrorContains(t, err, "exact durable ownership evidence")
 }
+
+// A create can die between making the image and stamping it. The attempt
+// registered with a clean baseline, so nothing else could have made the
+// volume now sitting under its name, and refusing to adopt it strands both
+// the volume and its ID map claim with no way to ever release them.
+func TestCleanupAdoptsAnUnstampedVolumeFromItsOwnAttempt(t *testing.T) {
+	node, cleanup := db.NewTestNode(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	manager := storagematerializationattempt.New(node)
+	attempt := db.StorageMaterializationAttempt{
+		Token: "99999999-9999-4999-8999-999999999999", AllocationID: "11111111-1111-4111-8111-111111111111",
+		ComputeID: "22222222-2222-4222-8222-222222222222", Owner: "44444444-4444-4444-8444-444444444444",
+		Project: "nova", InstanceName: "instance-00000003", IDMapBase: 1000000, IDMapSize: 65536,
+		StorageDriver: "ceph", StoragePool: "rootfs", StorageVolume: "nova_instance-00000003",
+		BaselineClean: true, CleanupDisposition: storagematerializationattempt.CleanupDelete,
+	}
+	_, err := manager.Register(ctx, attempt)
+	require.NoError(t, err)
+	_, err = manager.Start(ctx, attempt.Token, attempt, 44, "")
+	require.NoError(t, err)
+	attemptPtr, err := manager.Abort(ctx, attempt.Token)
+	require.NoError(t, err)
+
+	// The volume exists but carries no ownership marker at all.
+	driver := &materializationIdentityTestDriver{identity: "rbd_data.unstamped", ownership: ""}
+
+	attemptPtr, err = bindMaterializationCleanupIdentity(ctx, manager, attemptPtr, driver, drivers.Volume{}, true)
+	require.NoError(t, err)
+	require.Equal(t, "rbd_data.unstamped", attemptPtr.StorageIdentity)
+	require.Equal(t, storagematerializationattempt.PhaseMaterialized, attemptPtr.StoragePhase)
+
+	// Adoption stamps the volume so a later pass sees exact ownership.
+	expected, err := storagematerializationattempt.OwnershipMarker(attemptPtr, driver.identity)
+	require.NoError(t, err)
+	require.Equal(t, expected, driver.ownership)
+}

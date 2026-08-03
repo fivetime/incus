@@ -428,8 +428,25 @@ func bindMaterializationCleanupIdentity(ctx context.Context, manager *storagemat
 	if err != nil {
 		return nil, fmt.Errorf("Read materialized volume ownership marker: %w", err)
 	}
-	if marker != expectedMarker {
+
+	// A marker naming another attempt means this volume is not ours to
+	// adopt, and refusing is the only safe answer. An absent marker is a
+	// different fact: this attempt registered with a clean baseline, so no
+	// volume existed under this name when it started, and only this attempt
+	// could have created the one now present. It crashed between creating
+	// the image and stamping it. Treating that as foreign ownership left the
+	// volume and its ID map claim stranded with no way to ever release them.
+	if marker != "" && marker != expectedMarker {
 		return nil, errors.New("Materialized volume lacks exact durable ownership evidence for this attempt")
+	}
+
+	if marker == "" {
+		logger.Warn("Adopting an unstamped volume created by this materialization attempt", logger.Ctx{"token": attempt.Token, "volume": attempt.StorageVolume, "identity": identity})
+
+		err = markerProvider.SetVolumeMaterializationOwnership(vol, expectedMarker)
+		if err != nil {
+			return nil, fmt.Errorf("Stamp ownership on the adopted materialized volume: %w", err)
+		}
 	}
 
 	err = manager.SetStoragePhase(ctx, attempt.Token, storagematerializationattempt.PhaseMaterialized, identity)
