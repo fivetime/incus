@@ -22,7 +22,13 @@ type fakeCephTrashImage struct {
 }
 
 type fakeCephIdentityReleaseStore struct {
-	poolID             uint64
+	poolID uint64
+	// poolIdentityHook runs on every pool read, so a test can move the pool
+	// under the code being exercised. Without it the pool never changes and
+	// every pool fence in this file is vacuously satisfied; see
+	// TestFakeStoreCanMovePoolUnderTheCaller.
+	poolIdentityHook   func(reads int) (uint64, error)
+	poolIdentityReads  int
 	active             map[string]cephRBDVolumeIdentity
 	trash              map[string]fakeCephTrashImage
 	snapshots          map[string]map[string][]string
@@ -43,7 +49,25 @@ func newFakeCephIdentityReleaseStore() *fakeCephIdentityReleaseStore {
 }
 
 func (s *fakeCephIdentityReleaseStore) PoolIdentity() (uint64, error) {
+	s.poolIdentityReads++
+	if s.poolIdentityHook != nil {
+		return s.poolIdentityHook(s.poolIdentityReads)
+	}
+
 	return s.poolID, nil
+}
+
+// movePoolOnRead makes the pool report a different id from the nth read
+// onwards, which is what a delete-and-recreate of the pool looks like to
+// this code.
+func (s *fakeCephIdentityReleaseStore) movePoolOnRead(n int, newPoolID uint64) {
+	s.poolIdentityHook = func(reads int) (uint64, error) {
+		if reads >= n {
+			return newPoolID, nil
+		}
+
+		return s.poolID, nil
+	}
 }
 
 func (s *fakeCephIdentityReleaseStore) ImageIdentity(name string) (cephRBDVolumeIdentity, error) {
@@ -240,6 +264,29 @@ func TestParseRBDPoolIdentity(t *testing.T) {
 	}
 }
 
+func TestParseRadosDFPoolIdentity(t *testing.T) {
+	usage := `{"pools":[{"name":"other","id":7},{"name":"incus-rootfs","id":29}]}`
+	identity, err := parseRadosDFPoolIdentity(usage, "incus-rootfs")
+	if err != nil || identity.PoolID != 29 {
+		t.Fatalf("Pool identity was not parsed: identity=%+v err=%v", identity, err)
+	}
+
+	// Anything ambiguous or incomplete must be reported unusable so the
+	// caller falls back to "ceph osd map" instead of guessing an identity.
+	for _, input := range []string{
+		`{"pools":[{"name":"other","id":7}]}`,
+		`{"pools":[{"name":"incus-rootfs"}]}`,
+		`{"pools":[{"name":"incus-rootfs","id":29},{"name":"incus-rootfs","id":30}]}`,
+		`{"pools":[]}`,
+		`{}`,
+		`not-json`,
+	} {
+		if _, err := parseRadosDFPoolIdentity(input, "incus-rootfs"); err == nil {
+			t.Fatalf("Invalid pool usage report %q was accepted", input)
+		}
+	}
+}
+
 func TestParseRBDTrashEntriesRejectsNonCanonicalIDs(t *testing.T) {
 	for _, input := range []string{
 		`[{"id":"","name":"image"}]`,
@@ -295,6 +342,63 @@ func TestRBDImageIDsMayBeOddLength(t *testing.T) {
 			t.Fatalf("Non-canonical RBD image ID %q was accepted", id)
 		}
 	}
+}
+
+// TestFakeStoreCanMovePoolUnderTheCaller proves the fake can express the one
+// thing every pool fence in this file exists to catch. Until this test
+// existed, fakeCephIdentityReleaseStore reported a constant pool id that no
+// test ever changed, so gutting verifyRBDIdentityReleasePool to "return nil"
+// passed the whole suite and none of the fences below asserted anything.
+func TestFakeStoreCanMovePoolUnderTheCaller(t *testing.T) {
+	expected := testRBDIdentity(29, "aaaaaaaaaaaaaa")
+	originalName := "container_nova_instance-00000001"
+
+	t.Run("a moved pool is refused", func(t *testing.T) {
+		store := newFakeCephIdentityReleaseStore()
+		store.active[originalName] = expected
+		// The pool is recreated the moment the caller looks at it.
+		store.movePoolOnRead(1, 30)
+
+		_, err := deleteRBDVolumeWithIdentity(store, originalName, expected)
+		if err == nil {
+			t.Fatal("Deletion accepted a pool that changed under it")
+		}
+		if store.active[originalName] != expected {
+			t.Fatalf("Refused deletion still mutated the image: %v", store.active)
+		}
+		if len(store.trash) != 0 {
+			t.Fatalf("Refused deletion trashed an image: %v", store.trash)
+		}
+	})
+
+	t.Run("the fence is what refuses it", func(t *testing.T) {
+		// Guards the guard: if verifyRBDIdentityReleasePool ever stops
+		// comparing, the subtest above must start failing rather than
+		// passing vacuously.
+		store := newFakeCephIdentityReleaseStore()
+		store.movePoolOnRead(1, 30)
+
+		err := verifyRBDIdentityReleasePool(store, 29)
+		if err == nil {
+			t.Fatal("verifyRBDIdentityReleasePool accepted a different pool id")
+		}
+		if store.poolIdentityReads != 1 {
+			t.Fatalf("Expected exactly one pool read, got %d", store.poolIdentityReads)
+		}
+	})
+
+	t.Run("an unmoved pool is still accepted", func(t *testing.T) {
+		store := newFakeCephIdentityReleaseStore()
+		store.active[originalName] = expected
+
+		replacementExists, err := deleteRBDVolumeWithIdentity(store, originalName, expected)
+		if err != nil || replacementExists {
+			t.Fatalf("Unmoved pool was refused: replacement=%t err=%v", replacementExists, err)
+		}
+		if store.poolIdentityReads == 0 {
+			t.Fatal("Deletion never read the pool identity at all")
+		}
+	})
 }
 
 func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
