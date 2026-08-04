@@ -3731,6 +3731,11 @@ daemon generation no longer fences new attempts and reports
 `idmap_active: false`. A registration whose create request has not arrived yet
 keeps its reservation across restarts, because that request can still arrive.
 
+Use `idmap_active` rather than comparing `daemon_start` yourself.
+`daemon_start` is a nanosecond timestamp reported as a JSON number, so a
+client that decodes it through a double loses its low digits and cannot
+compare it exactly. It is diagnostic output; the server does the comparison.
+
 On startup Incus now also settles the started attempts left unfinished by the
 previous daemon process, after reconciling rootfs materialization. Settlement
 runs the same checks as `state=settled` and fails closed: an attempt whose
