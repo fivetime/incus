@@ -3445,6 +3445,15 @@ server configuration keys:
 * `acme.eab.kid`
 * `acme.eab.hmac`
 
+## `instance_protection_start`
+
+Adds a new `security.protection.start` instance configuration key which
+when set to `true` prevents the instance from being started.
+
+## `instance_nvram_bulk_update`
+
+This adds a new `PATCH /1.0/instances/{name}/nvram` endpoint to update NVRAM in bulk.
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external

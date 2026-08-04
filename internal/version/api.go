@@ -568,6 +568,8 @@ var APIExtensions = []string{
 	"disk_io_limits_combined",
 	"resources_cpu_cluster",
 	"acme_eab",
+	"instance_protection_start",
+	"instance_nvram_bulk_update",
 	"instance_storage_handover",
 	"migration_attempt_fencing",
 	"migration_shared_ceph_storage_ready_fence",

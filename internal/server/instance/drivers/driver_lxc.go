@@ -2063,7 +2063,7 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 	// We need to change the on-disk idmap but the container is protected
 	// against idmap changes.
 	if util.IsTrue(d.expandedConfig["security.protection.shift"]) {
-		return idmap.StorageTypeNone, nil, errors.New("Container is protected against filesystem shifting")
+		return idmap.StorageTypeNone, nil, errors.New("Instance has filesystem shifting protection enabled")
 	}
 
 	d.logger.Debug("Container idmap changed, remapping")
@@ -2749,11 +2749,30 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 			lxcMounts = append(lxcMounts, mount.Destination)
 		}
 
-		// Mount /run as a tmpfs if it exists and isn't already mounted.
+		// Mount /run as a tmpfs if it isn't already mounted and the image's /run is empty.
 		if !slices.Contains(lxcMounts, "/run") {
-			err := lxcSetConfigItem(cc, "lxc.mount.entry", "none run tmpfs none,mode=755,optional")
+			// Confine the check to the rootfs to avoid following image-planted symlinks.
+			rootfsRoot, err := os.OpenRoot(d.RootfsPath())
 			if err != nil {
 				return "", nil, err
+			}
+
+			runEmpty := true
+			runDir, err := rootfsRoot.Open("run")
+			if err == nil {
+				names, _ := runDir.Readdirnames(1)
+				runEmpty = len(names) == 0
+
+				_ = runDir.Close()
+			}
+
+			_ = rootfsRoot.Close()
+
+			if runEmpty {
+				err = lxcSetConfigItem(cc, "lxc.mount.entry", "none run tmpfs mode=755,optional")
+				if err != nil {
+					return "", nil, err
+				}
 			}
 		}
 
@@ -2817,6 +2836,8 @@ ff02::2 ip6-allrouters
 		if d.expandedConfig["oci.dns.domain"] != "" {
 			fmt.Fprintf(&resolvConf, "domain %s\n", d.expandedConfig["oci.dns.domain"])
 		}
+
+		resolvConf.WriteString("options edns0\n")
 
 		err = instRoot.WriteFile("network/resolv.conf", []byte(resolvConf.String()), 0o644)
 		if err != nil {
@@ -4677,9 +4698,7 @@ func (d *lxc) delete(force bool, cleanupDependencies bool) error {
 	}
 
 	if !force && util.IsTrue(d.expandedConfig["security.protection.delete"]) && !d.IsSnapshot() {
-		err := errors.New("Instance is protected")
-		d.logger.Warn("Failed to delete instance", logger.Ctx{"err": err})
-		return err
+		return errors.New("Instance has delete protection enabled")
 	}
 
 	// Wait for any file operations to complete.
@@ -6850,6 +6869,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 			volSourceArgs.FinalSync = true
 			volSourceArgs.Snapshots = nil
 			volSourceArgs.Info.Config.VolumeSnapshots = nil
+			volSourceArgs.DependentVolumes = nil
 
 			err = pool.MigrateInstance(d, filesystemConn, volSourceArgs, d.op)
 			if err != nil {

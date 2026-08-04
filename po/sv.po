@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: incus\n"
 "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
-"POT-Creation-Date: 2026-07-30 19:13-0400\n"
+"POT-Creation-Date: 2026-08-04 10:10+0000\n"
 "PO-Revision-Date: 2026-07-30 20:53+0000\n"
 "Last-Translator: Anonymous <noreply@weblate.org>\n"
 "Language-Team: Swedish <https://hosted.weblate.org/projects/incus/cli/sv/>\n"
@@ -728,7 +728,7 @@ msgstr "- Port %d (%s)"
 msgid "--all cannot be used together with other arguments"
 msgstr "--all kan inte användas tillsammans med andra argument"
 
-#: cmd/incus/low_level.go:917 cmd/incus/low_level.go:937
+#: cmd/incus/low_level.go:924 cmd/incus/low_level.go:948
 #, fuzzy, c-format
 msgid "--attributes cannot be used with --format=%s"
 msgstr "--no-profiles kan inte användas tillsammans med --refresh"
@@ -787,6 +787,11 @@ msgstr "--recursive/-r krävs vid hämtning av kataloger"
 msgid "--recursive/-r is required when pushing directories"
 msgstr "--rekursiv/-r krävs vid överföring av kataloger"
 
+#: cmd/incus/move.go:103
+#, fuzzy
+msgid "--refresh can only be used with --stateless"
+msgstr "--refresh kan endast användas med instanser"
+
 #: cmd/incus/copy.go:204
 msgid "--refresh can only be used with instances"
 msgstr "--refresh kan endast användas med instanser"
@@ -795,7 +800,7 @@ msgstr "--refresh kan endast användas med instanser"
 msgid "--reuse requires --copy-aliases"
 msgstr "--reuse kräver --reuse"
 
-#: cmd/incus/move.go:215
+#: cmd/incus/move.go:222
 msgid "--target can only be used with clusters"
 msgstr "--target kan endast användas med kluster"
 
@@ -804,7 +809,7 @@ msgstr "--target kan endast användas med kluster"
 msgid "--target cannot be used with instances"
 msgstr "--target kan inte användas med instanser"
 
-#: cmd/incus/low_level.go:941
+#: cmd/incus/low_level.go:952
 #, fuzzy, c-format
 msgid "--timestamp cannot be used with --format=%s"
 msgstr "--no-profiles kan inte användas tillsammans med --refresh"
@@ -1279,7 +1284,7 @@ msgstr ""
 "Felaktig syntax för enhetsöverskrivning, förväntar sig <enhet>,"
 "<nyckel>=<värde>: %s"
 
-#: cmd/incus/copy.go:176 cmd/incus/create.go:205 cmd/incus/move.go:252
+#: cmd/incus/copy.go:176 cmd/incus/create.go:205 cmd/incus/move.go:259
 #: cmd/incus/network_integration.go:139 cmd/incus/project.go:168
 #, c-format
 msgid "Bad key=value pair: %q"
@@ -1314,6 +1319,10 @@ msgstr "Brygga:"
 #: cmd/incus/storage_bucket.go:116
 msgid "Bucket description"
 msgstr "Beskrivning av bucket"
+
+#: cmd/incus/low_level.go:893
+msgid "Bulk NVRAM variable update is only supported for non-binary formats"
+msgstr ""
 
 #: cmd/incus/info.go:371
 #, c-format
@@ -1395,11 +1404,11 @@ msgstr "Cacher:"
 msgid "Can't bind address %q: %w"
 msgstr "Kan inte binda adress %q: %w"
 
-#: cmd/incus/move.go:117
+#: cmd/incus/move.go:123
 msgid "Can't override configuration or profiles in local rename"
 msgstr "Kan inte åsidosätta konfiguration eller profiler vid lokal namnändring"
 
-#: cmd/incus/move.go:113
+#: cmd/incus/move.go:119
 msgid "Can't perform local rename without a new instance name"
 msgstr "Kan inte utföra lokal namnändring utan nytt instansnamn"
 
@@ -1620,7 +1629,7 @@ msgstr "Klustermedlem %s borttagen från grupp %s"
 
 #: cmd/incus/config.go:105 cmd/incus/config.go:387 cmd/incus/config.go:529
 #: cmd/incus/config.go:697 cmd/incus/config.go:821 cmd/incus/copy.go:68
-#: cmd/incus/create.go:70 cmd/incus/info.go:57 cmd/incus/move.go:69
+#: cmd/incus/create.go:70 cmd/incus/info.go:57 cmd/incus/move.go:71
 #: cmd/incus/network.go:351 cmd/incus/network.go:806 cmd/incus/network.go:880
 #: cmd/incus/network.go:1057 cmd/incus/network.go:1440
 #: cmd/incus/network.go:1524 cmd/incus/network.go:1586
@@ -1736,7 +1745,7 @@ msgstr ""
 msgid "Config key/value to apply to the new project"
 msgstr "Konfigurationsnyckel/värde som ska tillämpas på det nya projektet"
 
-#: cmd/incus/move.go:61
+#: cmd/incus/move.go:62
 msgid "Config key/value to apply to the target instance"
 msgstr "Konfigurationsnyckel/värde som ska tillämpas på målinstansen"
 
@@ -1795,7 +1804,7 @@ msgstr "Innehållstyp: %s"
 msgid "Control: %s (%s)"
 msgstr "Kontroll: %s (%s)"
 
-#: cmd/incus/copy.go:66 cmd/incus/move.go:67
+#: cmd/incus/copy.go:66 cmd/incus/move.go:69
 msgid "Copy a stateful instance stateless"
 msgstr "Kopiera en tillståndsberoende instans tillståndsfri"
 
@@ -1872,7 +1881,7 @@ msgstr "Kopiera instansen utan dess ögonblicksbilder"
 msgid "Copy the volume without its snapshots"
 msgstr "Kopiera volymen utan dess ögonblicksbilder"
 
-#: cmd/incus/copy.go:69 cmd/incus/image.go:183 cmd/incus/move.go:70
+#: cmd/incus/copy.go:69 cmd/incus/image.go:183 cmd/incus/move.go:72
 #: cmd/incus/profile.go:275 cmd/incus/storage_volume.go:399
 msgid "Copy to a project different from the source"
 msgstr "Kopiera till ett annat projekt än källan"
@@ -3328,6 +3337,11 @@ msgstr "Det gick inte att skapa säkerhetskopia: %v"
 msgid "Failed to create certificate: %w"
 msgstr "Det gick inte att skapa certifikatet: %w"
 
+#: cmd/incus/move_nearlive.go:86
+#, fuzzy, c-format
+msgid "Failed to create pre-copy snapshot %q: %w"
+msgstr "Det gick inte att skapa %q: %w"
+
 #: cmd/incus/storage_volume.go:2338
 #, c-format
 msgid "Failed to create storage volume backup: %w"
@@ -3338,11 +3352,27 @@ msgstr "Det gick inte att skapa säkerhetskopia av lagringsvolym: %w"
 msgid "Failed to delete bitmap: %w"
 msgstr "Misslyckades med att begära dump: %w"
 
-#: cmd/incus/move.go:199
+#: cmd/incus/move.go:206
 #, c-format
 msgid "Failed to delete original instance after copying it: %w"
 msgstr ""
 "Det gick inte att ta bort den ursprungliga instansen efter kopieringen: %w"
+
+#: cmd/incus/move_nearlive.go:110
+#, fuzzy, c-format
+msgid "Failed to delete partial copy of instance %q on the target server: %s"
+msgstr ""
+"Det gick inte att ta bort den ursprungliga instansen efter kopieringen: %w"
+
+#: cmd/incus/move_nearlive.go:24
+#, fuzzy, c-format
+msgid "Failed to delete pre-copy snapshot %q of instance %q: %s"
+msgstr "Det gick inte att uppdatera målinstansen '%s': %v"
+
+#: cmd/incus/low_level.go:962 cmd/incus/low_level.go:1044
+#, fuzzy, c-format
+msgid "Failed to delete variable %s:%s: %w"
+msgstr "Det gick inte att analysera servrarna: %w"
 
 #: cmd/incus/low_level.go:239
 #, c-format
@@ -3421,7 +3451,7 @@ msgstr "Det gick inte att analysera dumpningssvaret: %w"
 msgid "Failed to parse the preseed: %w"
 msgstr "Det gick inte att analysera förinställningen: %w"
 
-#: cmd/incus/low_level.go:955
+#: cmd/incus/low_level.go:974
 #, fuzzy, c-format
 msgid "Failed to parse variable %s:%s: %w"
 msgstr "Det gick inte att analysera servrarna: %w"
@@ -3436,7 +3466,7 @@ msgstr "Det gick inte att läsa från filen: %w"
 msgid "Failed to read from stdin: %w"
 msgstr "Läsning från stdin misslyckades: %w"
 
-#: cmd/incus/copy.go:382
+#: cmd/incus/copy.go:387
 #, c-format
 msgid "Failed to refresh target instance '%s': %v"
 msgstr "Det gick inte att uppdatera målinstansen '%s': %v"
@@ -3466,6 +3496,11 @@ msgstr "Misslyckades med att dumpa instansminnet: %w"
 #, c-format
 msgid "Failed to request dump: %w"
 msgstr "Misslyckades med att begära dump: %w"
+
+#: cmd/incus/move_nearlive.go:140
+#, fuzzy, c-format
+msgid "Failed to restart instance %q after a failed move: %s"
+msgstr "Det gick inte att hämta instansens UEFI-variabel: %w"
 
 #: cmd/incus/cluster.go:1841
 #, c-format
@@ -3507,7 +3542,7 @@ msgstr "Det gick inte att hämta listan över lagringspooler: %w"
 msgid "Failed to set UEFI variable %s:%s: %s"
 msgstr "Det gick inte att hämta instansens UEFI-variabler: %w"
 
-#: cmd/incus/low_level.go:963
+#: cmd/incus/low_level.go:943
 #, fuzzy, c-format
 msgid "Failed to set UEFI variable %s:%s: %w"
 msgstr "Det gick inte att hämta instansens UEFI-variabler: %w"
@@ -3516,6 +3551,16 @@ msgstr "Det gick inte att hämta instansens UEFI-variabler: %w"
 #, c-format
 msgid "Failed to setup trust relationship with cluster: %w"
 msgstr "Det gick inte att upprätta ett förtroendeförhållande med klustret: %w"
+
+#: cmd/incus/move_nearlive.go:168
+#, fuzzy, c-format
+msgid "Failed to start instance %q on the target server: %w"
+msgstr "Det gick inte att analysera förinställningen: %w"
+
+#: cmd/incus/move_nearlive.go:129
+#, fuzzy, c-format
+msgid "Failed to stop instance %q: %w"
+msgstr "Misslyckades med att dumpa instansminnet: %w"
 
 #: cmd/incus/cluster.go:1547
 #, c-format
@@ -4223,7 +4268,7 @@ msgstr ""
 "Ignorera eventuella konfigurerade automatiska utgångsdatum för "
 "lagringsvolymen"
 
-#: cmd/incus/copy.go:73 cmd/incus/move.go:71
+#: cmd/incus/copy.go:73 cmd/incus/move.go:73
 msgid "Ignore copy errors for volatile files"
 msgstr "Ignorera kopieringsfel för flyktiga filer"
 
@@ -4475,7 +4520,7 @@ msgstr "Ogiltigt utgångsdatum: %w"
 msgid "Invalid format %q"
 msgstr "Ogiltigt format %q"
 
-#: cmd/incus/low_level.go:653 cmd/incus/low_level.go:951
+#: cmd/incus/low_level.go:653 cmd/incus/low_level.go:989
 #: cmd/incus/monitor.go:74
 #, c-format
 msgid "Invalid format: %s"
@@ -6568,12 +6613,12 @@ msgstr "Minnesanvändning:"
 msgid "Memory:"
 msgstr "Minne:"
 
-#: cmd/incus/move.go:286
+#: cmd/incus/move.go:293
 #, c-format
 msgid "Migration API failure: %w"
 msgstr "Fel i migrerings-API: %w"
 
-#: cmd/incus/move.go:305
+#: cmd/incus/move.go:312
 #, c-format
 msgid "Migration operation failure: %w"
 msgstr "Migreringsfel: %w"
@@ -6633,6 +6678,12 @@ msgstr "Fler än en enhet matchar, ange enhetens namn"
 msgid "More than one file to download, but target is not a directory"
 msgstr "Fler än en fil att hämta ner, men målet är inte en katalog"
 
+#: cmd/incus/low_level.go:889 cmd/incus/low_level.go:1031
+msgid ""
+"More than one variable was passed but the server is missing the required "
+"\"instance_nvram_bulk_update\" API extension"
+msgstr ""
+
 #: cmd/incus/storage_volume_file.go:338
 msgid "Mount files from custom storage volumes"
 msgstr "Montera filer från anpassade lagringsvolymer"
@@ -6661,11 +6712,11 @@ msgstr ""
 msgid "Move custom storage volumes between pools"
 msgstr "Flytta anpassade lagringsvolymer mellan pooler"
 
-#: cmd/incus/move.go:40
+#: cmd/incus/move.go:41
 msgid "Move instances within or in between servers"
 msgstr "Flytta instanser inom eller mellan servrar"
 
-#: cmd/incus/move.go:41
+#: cmd/incus/move.go:42
 msgid ""
 "Move instances within or in between servers\n"
 "\n"
@@ -6693,7 +6744,7 @@ msgstr ""
 "Överföringsläget pull är standard eftersom det är kompatibelt med alla "
 "serverversioner.\n"
 
-#: cmd/incus/move.go:65
+#: cmd/incus/move.go:66
 msgid "Move the instance without its snapshots"
 msgstr "Flytta instansen utan dess ögonblicksbilder"
 
@@ -7071,7 +7122,7 @@ msgid "New aliases to add to the image"
 msgstr "Nya alias att lägga till i avbildningen"
 
 #: cmd/incus/copy.go:61 cmd/incus/create.go:64 cmd/incus/import.go:44
-#: cmd/incus/move.go:62
+#: cmd/incus/move.go:63
 msgid "New key/value to apply to a specific device"
 msgstr "Ny nyckel/värde som ska tillämpas på en specifik enhet"
 
@@ -7359,6 +7410,11 @@ msgstr "Porttyp: %s"
 msgid "Ports:"
 msgstr "Portar:"
 
+#: cmd/incus/move_nearlive.go:96
+#, fuzzy, c-format
+msgid "Pre-copying instance: %s"
+msgstr "Uppdateringsinstans: %s"
+
 #: cmd/incus/admin_init.go:53
 msgid "Pre-seed mode, expects YAML config from stdin"
 msgstr "Pre-seed-läge, förväntar sig YAML-konfiguration från stdin"
@@ -7490,7 +7546,7 @@ msgstr "Profil som ska tillämpas på den nya avbildningen"
 msgid "Profile to apply to the new instance"
 msgstr "Profil som ska tillämpas på den nya instansen"
 
-#: cmd/incus/move.go:63
+#: cmd/incus/move.go:64
 msgid "Profile to apply to the target instance"
 msgstr "Profil som ska tillämpas på målinstansen"
 
@@ -7697,7 +7753,7 @@ msgstr "Uppdatera och uppdatera befintliga kopior av lagringsvolymer"
 msgid "Refresh images"
 msgstr "Uppdatera avbildningar"
 
-#: cmd/incus/copy.go:404
+#: cmd/incus/copy.go:409
 #, c-format
 msgid "Refreshing instance: %s"
 msgstr "Uppdateringsinstans: %s"
@@ -9085,7 +9141,7 @@ msgid "Storage pool description"
 msgstr "Beskrivning av lagringspool"
 
 #: cmd/incus/copy.go:67 cmd/incus/create.go:68 cmd/incus/import.go:42
-#: cmd/incus/move.go:68
+#: cmd/incus/move.go:70
 msgid "Storage pool name"
 msgstr "Lagringspoolens namn"
 
@@ -9642,17 +9698,23 @@ msgstr "Transceivertyp: %s"
 msgid "Transfer mode, one of pull (default), push or relay"
 msgstr "Överföringsläge, ett av pull (standard), push eller relay"
 
-#: cmd/incus/copy.go:64 cmd/incus/image.go:182 cmd/incus/move.go:66
+#: cmd/incus/copy.go:64 cmd/incus/image.go:182 cmd/incus/move.go:67
 #: cmd/incus/storage_volume.go:395
 msgid "Transfer mode. One of pull, push or relay"
 msgstr "Överföringsläge. Drag, tryck eller relä"
+
+#: cmd/incus/move.go:68
+msgid ""
+"Transfer the instance incrementally, reducing the downtime of a running "
+"instance"
+msgstr ""
 
 #: cmd/incus/image.go:775
 #, c-format
 msgid "Transferring image: %s"
 msgstr "Överför avbildning: %s"
 
-#: cmd/incus/copy.go:360 cmd/incus/move.go:291
+#: cmd/incus/copy.go:365 cmd/incus/move.go:298 cmd/incus/move_nearlive.go:147
 #, c-format
 msgid "Transferring instance: %s"
 msgstr "Överföring av instans: %s"
@@ -9698,9 +9760,14 @@ msgstr "Typ av nätverkspeern (lokal eller fjärrstyrd)"
 msgid "Type: %s"
 msgstr "Typ: %s"
 
-#: cmd/incus/low_level.go:1018
+#: cmd/incus/low_level.go:1048
 #, c-format
 msgid "UEFI variable %s:%s deleted on %s"
+msgstr "UEFI-variabel %s:%s borttagen den %s"
+
+#: cmd/incus/low_level.go:1068
+#, fuzzy, c-format
+msgid "UEFI variables %s deleted on %s\n"
 msgstr "UEFI-variabel %s:%s borttagen den %s"
 
 #: cmd/incus/project.go:1055
@@ -9764,7 +9831,7 @@ msgstr "Det går inte att skapa en tillfällig fil: %v"
 msgid "Unavailable remote server"
 msgstr "Fjärrserver otillgänglig"
 
-#: cmd/incus/low_level.go:921
+#: cmd/incus/low_level.go:928
 #, fuzzy
 msgid "Unexpected input size"
 msgstr "oväntat %s"
@@ -9823,7 +9890,7 @@ msgstr "Okänd nyckel: %s"
 msgid "Unknown output type %q"
 msgstr "Okänd utdatatyp %q"
 
-#: cmd/incus/low_level.go:980 cmd/incus/low_level.go:981
+#: cmd/incus/low_level.go:1006 cmd/incus/low_level.go:1007
 msgid "Unset UEFI variables"
 msgstr "Ta bort UEFI-variabler"
 
@@ -9835,7 +9902,7 @@ msgstr "Inaktivera konfigurationsnycklarna för en klustergrupp"
 msgid "Unset a cluster member's configuration keys"
 msgstr "Inaktivera konfigurationsnycklar för en klustermedlem"
 
-#: cmd/incus/move.go:64
+#: cmd/incus/move.go:65
 msgid "Unset all profiles on the target instance"
 msgstr "Inaktivera alla profiler på målinstansen"
 
@@ -10995,7 +11062,7 @@ msgstr ""
 "incus monitor --type=lifecycle\n"
 "Visa endast livscykelhändelser."
 
-#: cmd/incus/move.go:52
+#: cmd/incus/move.go:53
 msgid ""
 "incus move [<remote>:]<source instance> [<remote>:][<destination instance>] "
 "[--instance-only]\n"
