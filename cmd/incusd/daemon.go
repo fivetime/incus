@@ -1588,9 +1588,17 @@ func (d *Daemon) init() error {
 		// Reconcile its unfinished attempts before loading the instance startup set.
 		reconcileStorageMaterializationAttemptsAfterRestart(d.shutdownCtx, d.State())
 
-		// Materialization rollback can remove a half-received migration target,
-		// so settle the migration attempts stranded by that process afterwards.
-		reconcileMigrationAttemptsAfterRestart(d.shutdownCtx, d.State())
+		// Settle the migration attempts stranded by the previous process.
+		//
+		// This starts after materialization reconciliation, whose rollback can
+		// remove a half-received target that would otherwise refuse to settle,
+		// but it does not hold up startup. It only releases idmap reservations
+		// and finishes durable records; nothing it does gates loading or
+		// starting an instance, and an instance that is already allocated
+		// starts from its own stored idmap rather than the reservation index.
+		// Inline, it made startup wait on one node-database write and one
+		// instance lookup per stranded attempt.
+		go reconcileMigrationAttemptsAfterRestart(d.shutdownCtx, d.State())
 
 		// Must occur after d.devmonitor has been initialized.
 		instances, err = instance.LoadNodeAll(d.State(), instancetype.Any)
