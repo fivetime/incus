@@ -467,7 +467,7 @@ func (s *containerTestSuite) TestContainer_findIdmap_migrationReservation() {
 	token := "905fdf8d-4215-40ad-a133-76db764cc073"
 	base := s.d.os.IdmapSet.Entries[0].HostID + 3*65536
 
-	_, err := manager.Register(context.Background(), token, api.ProjectDefaultName, migrationattempt.ResourceTypeInstance, "migration-idmap", base, 65536)
+	_, err := manager.Register(context.Background(), token, api.ProjectDefaultName, migrationattempt.ResourceTypeInstance, "migration-idmap", base, 65536, s.d.State().StartTime.UnixNano())
 	s.Req.NoError(err)
 
 	// A normal create must see the durable migration reservation.

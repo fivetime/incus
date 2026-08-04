@@ -2990,11 +2990,28 @@ definitions:
         x-go-package: github.com/lxc/incus/v7/shared/api
     MigrationAttempt:
         properties:
+            daemon_start:
+                description: |-
+                    Daemon generation that accepted the target create request, when started
+
+                    API extension: migration_attempt_reservation_generation
+                example: 1754280000000000000
+                format: int64
+                type: integer
+                x-go-name: DaemonStart
             finished:
                 description: Whether target work and rollback have settled
                 example: false
                 type: boolean
                 x-go-name: Finished
+            idmap_active:
+                description: |-
+                    Whether the idmap reservation still fences new attempts on this member
+
+                    API extension: migration_attempt_reservation_generation
+                example: true
+                type: boolean
+                x-go-name: IDMapActive
             idmap_base:
                 description: Host ID base reserved for a fixed isolated idmap
                 example: 1000000
@@ -13555,6 +13572,38 @@ paths:
             summary: Get metrics
             tags:
                 - metrics
+    /1.0/migration-attempts:
+        get:
+            description: |-
+                Returns every node-local migration attempt that has not been retired,
+                including terminal ones whose orchestrator still owes a delete. Retired
+                token tombstones are never listed.
+            operationId: migration_attempts_get
+            parameters:
+                - in: query
+                  name: project
+                  type: string
+                - in: query
+                  name: all-projects
+                  type: boolean
+                - in: query
+                  name: recursion
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                "200":
+                    description: API endpoints
+                    schema:
+                        properties:
+                            metadata:
+                                items:
+                                    type: string
+                                type: array
+                        type: object
+            summary: Get the inbound migration attempts awaiting garbage collection
+            tags:
+                - migration-attempts
     /1.0/migration-attempts/{token}:
         delete:
             description: |-

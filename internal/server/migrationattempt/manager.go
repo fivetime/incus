@@ -74,8 +74,10 @@ func New(node *db.Node) *Manager {
 	return &Manager{node: node}
 }
 
-// Register creates an active token or returns the existing matching registration.
-func (m *Manager) Register(ctx context.Context, token string, projectName string, resourceType string, resourceName string, idmapBase int64, idmapSize int64) (*db.MigrationAttempt, error) {
+// Register creates an active token or returns the existing matching
+// registration. daemonStart identifies the current daemon generation so that
+// reservations stranded by an earlier one do not fence a new attempt.
+func (m *Manager) Register(ctx context.Context, token string, projectName string, resourceType string, resourceName string, idmapBase int64, idmapSize int64, daemonStart int64) (*db.MigrationAttempt, error) {
 	if !validIDMapReservation(idmapBase, idmapSize) {
 		return nil, ErrInvalidIDMap
 	}
@@ -105,7 +107,7 @@ func (m *Manager) Register(ctx context.Context, token string, projectName string
 		}
 
 		if idmapBase >= 0 {
-			reservations, err := tx.GetMigrationAttemptIDMapReservations(ctx)
+			reservations, err := tx.GetMigrationAttemptIDMapReservations(ctx, daemonStart)
 			if err != nil {
 				return err
 			}
@@ -217,12 +219,25 @@ func (m *Manager) Begin(ctx context.Context, token string, projectName string, r
 	return attempt, nil
 }
 
-// IDMapReservations returns all unfinished isolated idmap reservations.
-func (m *Manager) IDMapReservations(ctx context.Context) ([]db.MigrationAttempt, error) {
+// IDMapReservations returns the isolated idmap reservations that are still
+// live in the daemon generation identified by daemonStart.
+func (m *Manager) IDMapReservations(ctx context.Context, daemonStart int64) ([]db.MigrationAttempt, error) {
 	var attempts []db.MigrationAttempt
 	err := m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
 		var err error
-		attempts, err = tx.GetMigrationAttemptIDMapReservations(ctx)
+		attempts, err = tx.GetMigrationAttemptIDMapReservations(ctx, daemonStart)
+		return err
+	})
+
+	return attempts, err
+}
+
+// ListPending returns every attempt that has not been retired.
+func (m *Manager) ListPending(ctx context.Context) ([]db.MigrationAttempt, error) {
+	var attempts []db.MigrationAttempt
+	err := m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
+		var err error
+		attempts, err = tx.GetPendingMigrationAttempts(ctx)
 		return err
 	})
 

@@ -3711,3 +3711,29 @@ materialization records are committed in one local database transaction after
 verifying that both records refer to the same project, instance, and operation
 generation. They therefore cannot expose a committed handover whose target is
 subsequently removed by materialization rollback.
+
+## `migration_attempt_reservation_generation`
+
+This adds `GET /1.0/migration-attempts`, which lists every node-local
+migration attempt that has not been retired, including terminal ones whose
+orchestrator still owes a `DELETE`. It supports `recursion` and
+`all-projects`, and filters entries down to those the caller has `can_edit`
+on. Retired token tombstones are never listed. Attempt records now also report
+`daemon_start` and `idmap_active`.
+
+It also bounds the lifetime of an ID map reservation to the daemon generation
+that can still consume it. A reservation only has to fence its range between
+the moment a target create request is accepted and the moment the instance
+record exists; outside that window the range is fenced by the instance itself,
+which normal ID map allocation and attempt registration both check. That window
+cannot span a restart, so a reservation whose attempt started under an earlier
+daemon generation no longer fences new attempts and reports
+`idmap_active: false`. A registration whose create request has not arrived yet
+keeps its reservation across restarts, because that request can still arrive.
+
+On startup Incus now also settles the started attempts left unfinished by the
+previous daemon process, after reconciling rootfs materialization. Settlement
+runs the same checks as `state=settled` and fails closed: an attempt whose
+target instance survived keeps its record for reconciliation. Settling does not
+retire the token, so an orchestrator's later abort, settle and delete requests
+remain valid and idempotent.

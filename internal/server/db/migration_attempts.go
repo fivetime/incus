@@ -74,15 +74,42 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return err
 }
 
-// GetMigrationAttemptIDMapReservations returns unfinished isolated idmap reservations.
-func (n *NodeTx) GetMigrationAttemptIDMapReservations(ctx context.Context) ([]MigrationAttempt, error) {
-	rows, err := n.tx.QueryContext(ctx, `
+// GetMigrationAttemptIDMapReservations returns the unfinished isolated idmap
+// reservations that a target creation can still consume in the daemon
+// generation identified by daemonStart.
+//
+// A reservation only has to protect the window between accepting a target
+// create request and the instance record existing. An attempt that started
+// under an earlier generation has no such window left: its operation died with
+// that process and its token can never be begun again. Whatever it may have
+// left behind is an instance, which every caller of this function checks
+// separately, so keeping the reservation would only wedge the range forever.
+// Attempts that never started keep their reservation across generations
+// because their create request may still arrive.
+func (n *NodeTx) GetMigrationAttemptIDMapReservations(ctx context.Context, daemonStart int64) ([]MigrationAttempt, error) {
+	return migrationAttemptsQuery(ctx, n.tx, `
+WHERE finished = 0 AND idmap_base >= 0 AND idmap_size > 0
+  AND (started = 0 OR daemon_start = ?)
+ORDER BY idmap_base
+`, daemonStart)
+}
+
+// GetPendingMigrationAttempts returns every attempt that has not been retired,
+// including terminal ones still awaiting garbage collection by their
+// orchestrator.
+func (n *NodeTx) GetPendingMigrationAttempts(ctx context.Context) ([]MigrationAttempt, error) {
+	return migrationAttemptsQuery(ctx, n.tx, `
+WHERE state != 'retired'
+ORDER BY token
+`)
+}
+
+func migrationAttemptsQuery(ctx context.Context, tx *sql.Tx, filter string, args ...any) ([]MigrationAttempt, error) {
+	rows, err := tx.QueryContext(ctx, `
 SELECT token, project, resource_type, resource_name, state, started, finished, operation_uuid,
        idmap_base, idmap_size, daemon_start
 FROM migration_attempts
-WHERE finished = 0 AND idmap_base >= 0 AND idmap_size > 0
-ORDER BY idmap_base
-`)
+`+filter, args...)
 	if err != nil {
 		return nil, err
 	}

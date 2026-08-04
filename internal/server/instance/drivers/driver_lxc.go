@@ -646,7 +646,7 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, func(), error) {
 		mapentries.Entries = append(mapentries.Entries, idmap.Entry{HostID: reservation.Base, MapRange: reservation.Size})
 	}
 
-	attemptReservations, err := migrationattempt.New(d.state.DB.Node).IDMapReservations(context.TODO())
+	attemptReservations, err := migrationattempt.New(d.state.DB.Node).IDMapReservations(context.TODO(), d.state.StartTime.UnixNano())
 	if err != nil {
 		return nil, 0, noRelease, fmt.Errorf("Failed loading migration idmap reservations: %w", err)
 	}

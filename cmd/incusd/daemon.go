@@ -1588,6 +1588,10 @@ func (d *Daemon) init() error {
 		// Reconcile its unfinished attempts before loading the instance startup set.
 		reconcileStorageMaterializationAttemptsAfterRestart(d.shutdownCtx, d.State())
 
+		// Materialization rollback can remove a half-received migration target,
+		// so settle the migration attempts stranded by that process afterwards.
+		reconcileMigrationAttemptsAfterRestart(d.shutdownCtx, d.State())
+
 		// Must occur after d.devmonitor has been initialized.
 		instances, err = instance.LoadNodeAll(d.State(), instancetype.Any)
 		if err != nil {

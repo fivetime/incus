@@ -72,4 +72,16 @@ type MigrationAttempt struct {
 	// Size reserved for a fixed isolated idmap
 	// Example: 65536
 	IDMapSize *int64 `json:"idmap_size,omitempty" yaml:"idmap_size,omitempty"`
+
+	// Daemon generation that accepted the target create request, when started
+	// Example: 1754280000000000000
+	//
+	// API extension: migration_attempt_reservation_generation
+	DaemonStart int64 `json:"daemon_start,omitempty" yaml:"daemon_start,omitempty"`
+
+	// Whether the idmap reservation still fences new attempts on this member
+	// Example: true
+	//
+	// API extension: migration_attempt_reservation_generation
+	IDMapActive bool `json:"idmap_active" yaml:"idmap_active"`
 }

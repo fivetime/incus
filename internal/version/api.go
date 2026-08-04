@@ -575,6 +575,7 @@ var APIExtensions = []string{
 	"storage_cephext_rootfs_idmap_provenance",
 	"storage_release_receipt_v2",
 	"storage_materialization_attempt_v1",
+	"migration_attempt_reservation_generation",
 }
 
 // APIExtensionsCount returns the number of available API extensions.
