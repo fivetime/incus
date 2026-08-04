@@ -2086,56 +2086,73 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 			return err
 		}
 	} else {
-		// If the driver supports optimized images then ensure the optimized image volume has been created
-		// for the images's fingerprint and that it matches the pool's current volume settings, and if not
-		// recreating using the pool's current volume settings.
-		err = b.EnsureImage(fingerprint, op)
-		if err != nil {
-			return err
-		}
-
-		// Try and load existing volume config on this storage pool so we can compare filesystems if needed.
-		imgDBVol, err := VolumeDBGet(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage)
-		if err != nil {
-			return err
-		}
-
-		imgVol := b.GetVolume(drivers.VolumeTypeImage, contentType, fingerprint, imgDBVol.Config)
-
-		// Derive the volume size to use for a new volume when copying from a source volume.
-		// Where possible (if the source volume has a volatile.rootfs.size property), it checks that the
-		// source volume isn't larger than the volume's "size" and the pool's "volume.size" setting.
-		l.Debug("Checking volume size")
-		newVolSize, err := vol.ConfigSizeFromSource(imgVol)
-		if err != nil {
-			return err
-		}
-
-		// Set the derived size directly as the "size" property on the new volume so that it is applied.
-		vol.SetConfigSize(newVolSize)
-		l.Debug("Set new volume size", logger.Ctx{"size": newVolSize})
-
-		// Proceed to create a new volume by copying the optimized image volume.
-		err = b.driver.CreateVolumeFromCopy(vol, imgVol, false, false, op)
-
-		// If the driver returns ErrCannotBeShrunk, this means that the cached volume that the new volume
-		// is to be created from is larger than the requested new volume size, and cannot be shrunk.
-		// So we unpack the image directly into a new volume rather than use the optimized snapsot.
-		// This is slower but allows for individual volumes to be created from an image that are smaller
-		// than the pool's volume settings.
-		if errors.Is(err, drivers.ErrCannotBeShrunk) {
-			l.Debug("Cached image volume is larger than new volume and cannot be shrunk, creating non-optimized volume")
-
-			volFiller := drivers.VolumeFiller{
-				Fingerprint: fingerprint,
-				Fill:        b.imageFiller(fingerprint, op),
-			}
-
-			err = b.driver.CreateVolume(vol, &volFiller, op)
+		err = func() error {
+			// If the driver supports optimized images then ensure the optimized image volume has been created
+			// for the images's fingerprint and that it matches the pool's current volume settings, and if not
+			// recreating using the pool's current volume settings.
+			err := b.EnsureImage(fingerprint, op)
 			if err != nil {
 				return err
 			}
-		} else if err != nil {
+
+			// Take a shared image volume lock so that a concurrent DeleteImage (whether from image
+			// deletion, expiry or an EnsureImage regeneration) cannot remove the cached image volume
+			// while we are copying from it. Multiple copies from the same image can run concurrently.
+			unlockUse, err := locking.RLock(context.TODO(), drivers.OperationLockName("UseImage", b.name, drivers.VolumeTypeImage, "", fingerprint))
+			if err != nil {
+				return err
+			}
+
+			defer unlockUse()
+
+			// Try and load existing volume config on this storage pool so we can compare filesystems if needed.
+			imgDBVol, err := VolumeDBGet(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage)
+			if err != nil {
+				return err
+			}
+
+			imgVol := b.GetVolume(drivers.VolumeTypeImage, contentType, fingerprint, imgDBVol.Config)
+
+			// Derive the volume size to use for a new volume when copying from a source volume.
+			// Where possible (if the source volume has a volatile.rootfs.size property), it checks that the
+			// source volume isn't larger than the volume's "size" and the pool's "volume.size" setting.
+			l.Debug("Checking volume size")
+			newVolSize, err := vol.ConfigSizeFromSource(imgVol)
+			if err != nil {
+				return err
+			}
+
+			// Set the derived size directly as the "size" property on the new volume so that it is applied.
+			vol.SetConfigSize(newVolSize)
+			l.Debug("Set new volume size", logger.Ctx{"size": newVolSize})
+
+			// Proceed to create a new volume by copying the optimized image volume.
+			err = b.driver.CreateVolumeFromCopy(vol, imgVol, false, false, op)
+
+			// If the driver returns ErrCannotBeShrunk, this means that the cached volume that the new volume
+			// is to be created from is larger than the requested new volume size, and cannot be shrunk.
+			// So we unpack the image directly into a new volume rather than use the optimized snapsot.
+			// This is slower but allows for individual volumes to be created from an image that are smaller
+			// than the pool's volume settings.
+			if errors.Is(err, drivers.ErrCannotBeShrunk) {
+				l.Debug("Cached image volume is larger than new volume and cannot be shrunk, creating non-optimized volume")
+
+				volFiller := drivers.VolumeFiller{
+					Fingerprint: fingerprint,
+					Fill:        b.imageFiller(fingerprint, op),
+				}
+
+				err = b.driver.CreateVolume(vol, &volFiller, op)
+				if err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			}
+
+			return nil
+		}()
+		if err != nil {
 			return err
 		}
 	}
@@ -5301,6 +5318,15 @@ func (b *backend) DeleteImage(fingerprint string, op *operations.Operation) erro
 	}
 
 	defer unlock()
+
+	// Wait for any operation copying from the cached image volume to finish before deleting it,
+	// and hold off new ones until the deletion is done.
+	unlockUse, err := locking.RWLock(context.TODO(), drivers.OperationLockName("UseImage", b.name, drivers.VolumeTypeImage, "", fingerprint))
+	if err != nil {
+		return err
+	}
+
+	defer unlockUse()
 
 	// Load the storage volume in order to get the volume config which is needed for some drivers.
 	imgDBVol, err := VolumeDBGet(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage)

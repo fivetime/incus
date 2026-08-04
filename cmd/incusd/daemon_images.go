@@ -52,13 +52,25 @@ type imageDownloadArgs struct {
 	SourceProjectName string
 }
 
-// imageOperationLock acquires a lock for operating on an image and returns the unlock function.
+// imageOperationLock acquires an exclusive lock for operating on an image and returns the unlock function.
+// It is held by operations that create, replace or delete the image (download, transfer, delete).
 func imageOperationLock(ctx context.Context, fingerprint string) (locking.UnlockFunc, error) {
 	l := logger.AddContext(logger.Ctx{"fingerprint": fingerprint})
 	l.Debug("Acquiring lock for image")
 	defer l.Debug("Lock acquired for image")
 
-	return locking.Lock(ctx, fmt.Sprintf("ImageOperation_%s", fingerprint))
+	return locking.RWLock(ctx, fmt.Sprintf("ImageOperation_%s", fingerprint))
+}
+
+// imageOperationLockShared acquires a shared lock for using an image and returns the unlock function.
+// It is held by operations that only consume the image (such as creating an instance from it), allowing
+// them to run concurrently with each other while still excluding the operations that take the exclusive lock.
+func imageOperationLockShared(ctx context.Context, fingerprint string) (locking.UnlockFunc, error) {
+	l := logger.AddContext(logger.Ctx{"fingerprint": fingerprint})
+	l.Debug("Acquiring shared lock for image")
+	defer l.Debug("Shared lock acquired for image")
+
+	return locking.RLock(ctx, fmt.Sprintf("ImageOperation_%s", fingerprint))
 }
 
 // imageDownload resolves the image fingerprint and if not in the database, downloads it.
