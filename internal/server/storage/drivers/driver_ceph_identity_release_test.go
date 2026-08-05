@@ -3,11 +3,14 @@ package drivers
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/lxc/incus/v7/shared/subprocess"
 )
@@ -244,6 +247,28 @@ func TestFindRBDMappingsByIdentity(t *testing.T) {
 	}
 	if len(mappings) != 2 || mappings[0].DevicePath != "/dev/rbd1" || mappings[1].DevicePath != "/dev/rbd4" {
 		t.Fatalf("Unexpected exact mappings: %+v", mappings)
+	}
+}
+
+func TestDetachedRBDSysfsReadErrorIsTransient(t *testing.T) {
+	// A concurrent unmap removes a device between listing /sys/devices/rbd
+	// and reading its attributes: the read fails with ENODEV (half-torn-down
+	// device) or ENOENT (already gone). Both must be treated as "skip this
+	// device", not as scan failures.
+	enodev := &fs.PathError{Op: "read", Path: "/sys/devices/rbd/42/pool", Err: unix.ENODEV}
+	if !isDetachedRBDSysfsReadError(enodev) {
+		t.Fatal("ENODEV from a vanishing RBD device must be transient")
+	}
+	enoent := &fs.PathError{Op: "open", Path: "/sys/devices/rbd/42/pool", Err: unix.ENOENT}
+	if !isDetachedRBDSysfsReadError(enoent) {
+		t.Fatal("ENOENT from a vanished RBD device must be transient")
+	}
+	eacces := &fs.PathError{Op: "open", Path: "/sys/devices/rbd/42/pool", Err: unix.EACCES}
+	if isDetachedRBDSysfsReadError(eacces) {
+		t.Fatal("a real read failure must still abort the scan")
+	}
+	if isDetachedRBDSysfsReadError(nil) {
+		t.Fatal("nil error is not a detached-device error")
 	}
 }
 

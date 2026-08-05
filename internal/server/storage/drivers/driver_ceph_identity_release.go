@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/shared/logger"
 	"github.com/lxc/incus/v7/shared/subprocess"
@@ -314,6 +316,16 @@ type cephRBDMapping struct {
 	ImageID    string
 }
 
+// isDetachedRBDSysfsReadError reports whether reading an RBD device attribute
+// failed because the device disappeared. A concurrent unmap can remove a
+// device between listing /sys/devices/rbd and reading its attributes: the
+// directory read then fails with ENOENT, while an attribute read on a
+// half-torn-down device fails with ENODEV. Either way the device is not the
+// one being looked for and the scan must skip it, not abort.
+func isDetachedRBDSysfsReadError(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ENODEV)
+}
+
 func findRBDMappingsByIdentity(sysfsRoot string, expected cephRBDVolumeIdentity) ([]cephRBDMapping, error) {
 	entries, err := os.ReadDir(sysfsRoot)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -332,7 +344,7 @@ func findRBDMappingsByIdentity(sysfsRoot string, expected cephRBDVolumeIdentity)
 
 		deviceDir := filepath.Join(sysfsRoot, entry.Name())
 		poolIDValue, err := os.ReadFile(filepath.Join(deviceDir, "pool_id"))
-		if errors.Is(err, fs.ErrNotExist) {
+		if isDetachedRBDSysfsReadError(err) {
 			continue
 		}
 		if err != nil {
@@ -345,7 +357,7 @@ func findRBDMappingsByIdentity(sysfsRoot string, expected cephRBDVolumeIdentity)
 		}
 
 		imageIDValue, err := os.ReadFile(filepath.Join(deviceDir, "image_id"))
-		if errors.Is(err, fs.ErrNotExist) {
+		if isDetachedRBDSysfsReadError(err) {
 			continue
 		}
 		if err != nil {
