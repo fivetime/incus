@@ -3014,7 +3014,12 @@ func (b *backend) instanceStorageReleaseReceipt(inst instance.Instance, vol driv
 		return nil, fmt.Errorf("Load current rootfs ID map: %w", err)
 	}
 
-	if !rootfsIDMapMatchesReleaseGeneration(currentIDMap, base, size) {
+	// A container that never applied any ID map (it never started, so
+	// volatile.last_state.idmap is empty) holds no shifted state at any
+	// generation: there is nothing at the release generation to protect and
+	// the release may proceed. Only a rootfs carrying a different map is
+	// evidence of another generation and stays refused.
+	if !rootfsIDMapEmpty(currentIDMap) && !rootfsIDMapMatchesReleaseGeneration(currentIDMap, base, size) {
 		return nil, errors.New("Current rootfs ID map does not match the fixed release generation")
 	}
 
@@ -3071,6 +3076,11 @@ func instanceStorageReleaseOutcome(driverName string, deleteProtected bool) stri
 	}
 
 	return storagereleasereceipt.OutcomeDeleted
+}
+
+// rootfsIDMapEmpty reports whether the container has never applied any ID map.
+func rootfsIDMapEmpty(currentIDMap *idmap.Set) bool {
+	return currentIDMap == nil || len(currentIDMap.Entries) == 0
 }
 
 func rootfsIDMapMatchesReleaseGeneration(currentIDMap *idmap.Set, base int64, size int64) bool {

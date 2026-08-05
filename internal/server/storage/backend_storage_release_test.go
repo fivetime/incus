@@ -47,6 +47,28 @@ func TestRootfsIDMapMatchesReleaseGeneration(t *testing.T) {
 	}
 }
 
+func TestRootfsIDMapEmptyMeansNeverApplied(t *testing.T) {
+	// A container that never started has an empty volatile.last_state.idmap:
+	// no shifted state exists at any generation, which the release path
+	// accepts, while any actually-applied different map stays refused.
+	if !rootfsIDMapEmpty(nil) {
+		t.Fatal("nil current map must count as never applied")
+	}
+	if !rootfsIDMapEmpty(&idmap.Set{}) {
+		t.Fatal("empty current map must count as never applied")
+	}
+	applied := &idmap.Set{Entries: []idmap.Entry{{
+		IsUID: true, IsGID: true, HostID: 1000000, NSID: 0, MapRange: 65536,
+	}}}
+	if rootfsIDMapEmpty(applied) {
+		t.Fatal("an applied map is not empty")
+	}
+	// The empty case must not be reachable through the match helper alone.
+	if rootfsIDMapMatchesReleaseGeneration(&idmap.Set{}, 1000000, 65536) {
+		t.Fatal("empty map must not match a generation outright")
+	}
+}
+
 func TestCompletedStorageReleaseReceiptMatchesInstance(t *testing.T) {
 	const (
 		token      = "06ada2e7-67f9-4c4e-b071-da45f25cfc67"
