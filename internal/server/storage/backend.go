@@ -2905,6 +2905,16 @@ func (b *backend) beginDetachedInstanceStorageRelease(vol drivers.Volume, volExi
 	}
 
 	if current != nil {
+		if current.State == storagereleasereceipt.StatePending && current.Outcome == storagereleasereceipt.OutcomeNormalized {
+			// The normalized intent was persisted before this record
+			// became delete-protected and its release never ran; the
+			// detached release supersedes it.
+			current, err = manager.SupersedePendingNormalizedOutcome(context.Background(), expected)
+			if err != nil {
+				return nil, fmt.Errorf("Supersede pending normalized root storage release receipt: %w", err)
+			}
+		}
+
 		current, err = manager.Begin(context.Background(), expected)
 		if err != nil {
 			return nil, fmt.Errorf("Validate detached root storage release receipt: %w", err)

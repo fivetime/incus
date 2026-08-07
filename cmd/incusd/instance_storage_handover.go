@@ -117,6 +117,24 @@ func instanceStorageHandoverPut(d *Daemon, r *http.Request) response.Response {
 			return response.BadRequest(fmt.Errorf("Invalid operation_uuid: %w", err))
 		}
 
+	case internalInstance.StorageHandoverStateDetached:
+		if req.MigrationAttempt != "" || req.OperationUUID != "" {
+			return response.BadRequest(errors.New("Migration attempt proof is only valid for the owned state"))
+		}
+
+		// Detachment asserts that shared storage ownership was disposed of
+		// externally (e.g. a fence-retired claim). Like restoring source
+		// ownership, only a server administrator can make that assertion.
+		err = s.Authorizer.CheckPermission(
+			r.Context(),
+			r,
+			instanceStorageHandoverSourceOwnedAuthObject(),
+			instanceStorageHandoverSourceOwnedAuthEntitlement,
+		)
+		if err != nil {
+			return response.SmartError(err)
+		}
+
 	case internalInstance.StorageHandoverStateSourceOwned:
 		if req.MigrationAttempt != "" || req.OperationUUID != "" {
 			return response.BadRequest(errors.New("Migration attempt proof is only valid for the owned state"))

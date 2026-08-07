@@ -3751,3 +3751,14 @@ runs the same checks as `state=settled` and fails closed: an attempt whose
 target instance survived keeps its record for reconciliation. Settling does not
 retire the token, so an orchestrator's later abort, settle and delete requests
 remain valid and idempotent.
+
+## `instance_storage_handover_detached`
+
+This adds the `detached` state to `PUT /1.0/instances/{name}/storage-handover`.
+It marks a local instance record whose shared-storage ownership was disposed of
+entirely outside the handover protocol - the normal case is a fence-retired
+claim on a returning evacuation source. The transition is refused for any
+record carrying negotiated handover state, requires server-administrator
+authorization like `source-owned`, and makes the subsequent local delete
+release only local state: no rootfs ID map normalization and no shared volume
+deletion, with the release receipt recording the `detached` outcome.

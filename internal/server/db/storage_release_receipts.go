@@ -125,6 +125,27 @@ WHERE token = ? AND state = 'pending'
 	return count > 0, nil
 }
 
+// SupersedeStorageReleaseReceiptOutcome rewrites the outcome of one pending
+// receipt whose release work never ran. It matches the current outcome
+// explicitly so a concurrent transition cannot be overwritten blindly.
+func (n *NodeTx) SupersedeStorageReleaseReceiptOutcome(ctx context.Context, token string, fromOutcome string, toOutcome string) (bool, error) {
+	result, err := n.tx.ExecContext(ctx, `
+UPDATE storage_release_receipts
+SET outcome = ?
+WHERE token = ? AND state = 'pending' AND outcome = ?
+`, toOutcome, token, fromOutcome)
+	if err != nil {
+		return false, err
+	}
+
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
 // RetireStorageReleaseReceipt retains an acknowledged token tombstone.
 func (n *NodeTx) RetireStorageReleaseReceipt(ctx context.Context, token string) (bool, error) {
 	result, err := n.tx.ExecContext(ctx, `

@@ -32,6 +32,11 @@ const (
 	// StorageHandoverStateProtected keeps shared storage when the local instance record is deleted.
 	StorageHandoverStateProtected = "protected"
 
+	// StorageHandoverStateDetached protects shared storage for a record whose volume ownership was
+	// disposed of outside any negotiated handover (e.g. a fence-retired claim on a returning
+	// evacuation source). Its local deletion then releases only local state.
+	StorageHandoverStateDetached = "detached"
+
 	// StorageHandoverStateOwned makes the local instance record authoritative for shared storage deletion.
 	StorageHandoverStateOwned = "owned"
 
@@ -48,7 +53,7 @@ const (
 // StorageHandoverConfigChanges returns the volatile changes for a storage handover state transition.
 func StorageHandoverConfigChanges(state string) (map[string]string, error) {
 	switch state {
-	case StorageHandoverStateProtected:
+	case StorageHandoverStateProtected, StorageHandoverStateDetached:
 		return map[string]string{
 			ConfigVolatileMigrationStorageDeleteProtection: "true",
 		}, nil
@@ -97,6 +102,18 @@ func StorageHandoverAPIConfigChanges(state string, config map[string]string, dri
 		}
 
 		return nil, ErrStorageHandoverIncomplete
+	case StorageHandoverStateDetached:
+		// Detachment asserts that shared storage ownership was disposed of
+		// entirely outside the handover protocol. A record carrying any
+		// negotiated handover state must resolve through that protocol
+		// instead of being detached out from under it.
+		marker := config[ConfigVolatileMigrationStorageHandover]
+		role := config[ConfigVolatileMigrationStorageHandoverRole]
+		receiveComplete := util.IsTrue(config[ConfigVolatileMigrationStorageReceiveComplete])
+		if marker != "" || role != "" || receiveComplete {
+			return nil, ErrStorageHandoverIncomplete
+		}
+
 	case StorageHandoverStateOwned:
 		marker := config[ConfigVolatileMigrationStorageHandover]
 		role := config[ConfigVolatileMigrationStorageHandoverRole]
@@ -160,7 +177,7 @@ func StorageHandoverInProgress(config map[string]string) bool {
 // StorageHandoverDriverSupported returns whether the storage driver supports a handover state transition.
 func StorageHandoverDriverSupported(driverName string, state string) bool {
 	switch state {
-	case StorageHandoverStateProtected:
+	case StorageHandoverStateProtected, StorageHandoverStateDetached:
 		return driverName == "ceph" || driverName == "cephext"
 	case StorageHandoverStateOwned, StorageHandoverStateSourceOwned:
 		return driverName == "ceph" || driverName == "cephext"

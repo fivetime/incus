@@ -120,6 +120,63 @@ func (m *Manager) Begin(ctx context.Context, expected db.StorageReleaseReceipt) 
 }
 
 // Complete commits a matching receipt after its storage outcome has completed.
+// SupersedePendingNormalizedOutcome upgrades one pending receipt whose
+// normalized release never completed to the detached outcome. This is the
+// one legitimate outcome rewrite: the record became delete-protected after
+// the normalized intent was persisted, so the release that will actually
+// run may only detach local state. Every other binding field must still
+// match exactly, and the reverse direction is never allowed - dropping
+// protection under a pending detached intent has no honest story.
+func (m *Manager) SupersedePendingNormalizedOutcome(ctx context.Context, expected db.StorageReleaseReceipt) (*db.StorageReleaseReceipt, error) {
+	err := validateExpected(expected)
+	if err != nil {
+		return nil, err
+	}
+
+	if expected.Outcome != OutcomeDetached {
+		return nil, ErrBindingMismatch
+	}
+
+	var receipt *db.StorageReleaseReceipt
+	err = m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
+		current, err := tx.GetStorageReleaseReceipt(ctx, expected.Token)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if current.State != StatePending || current.Outcome != OutcomeNormalized {
+			return ErrBindingMismatch
+		}
+
+		proposed := *current
+		proposed.Outcome = OutcomeDetached
+		if !sameBinding(&proposed, &expected) {
+			return ErrBindingMismatch
+		}
+
+		changed, err := tx.SupersedeStorageReleaseReceiptOutcome(ctx, expected.Token, OutcomeNormalized, OutcomeDetached)
+		if err != nil {
+			return err
+		}
+
+		if !changed {
+			return ErrBindingMismatch
+		}
+
+		receipt, err = tx.GetStorageReleaseReceipt(ctx, expected.Token)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return receipt, nil
+}
+
 func (m *Manager) Complete(ctx context.Context, expected db.StorageReleaseReceipt) (*db.StorageReleaseReceipt, error) {
 	err := validateExpected(expected)
 	if err != nil {
