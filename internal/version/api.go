@@ -570,6 +570,13 @@ var APIExtensions = []string{
 	"acme_eab",
 	"instance_protection_start",
 	"instance_nvram_bulk_update",
+	"instance_refresh_migration",
+	"image_locations",
+	"network_ovn_multicast",
+
+	// Fork-only extensions. Keep these after every upstream entry so that
+	// merging upstream only ever conflicts at this boundary, and so an
+	// upstream extension never silently changes position.
 	"instance_storage_handover",
 	"migration_attempt_fencing",
 	"migration_shared_ceph_storage_ready_fence",

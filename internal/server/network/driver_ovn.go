@@ -498,6 +498,22 @@ func (n *ovn) Validate(config map[string]string, clientType request.ClientType) 
 		//  shortdesc: Comma-separated list of unconfigured network interfaces to include in the bridge
 		"bridge.external_interfaces": validate.Optional(validateExternalInterfaces),
 
+		// gendoc:generate(entity=network_ovn, group=common, key=bridge.multicast_snooping)
+		//
+		// ---
+		//  type: bool
+		//  default: `true`
+		//  shortdesc: Whether to enable multicast snooping on the virtual network
+		"bridge.multicast_snooping": validate.Optional(validate.IsBool),
+
+		// gendoc:generate(entity=network_ovn, group=common, key=bridge.multicast_relay)
+		//
+		// ---
+		//  type: bool
+		//  default: `false`
+		//  shortdesc: Whether to relay multicast traffic through the network's logical router
+		"bridge.multicast_relay": validate.Optional(validate.IsBool),
+
 		// gendoc:generate(entity=network_ovn, group=common, key=ipv4.address)
 		//
 		// ---
@@ -2737,6 +2753,12 @@ func (n *ovn) setup(update bool) error {
 		if !update {
 			reverter.Add(func() { _ = n.ovnnb.DeleteLogicalRouter(context.TODO(), n.getRouterName()) })
 		}
+
+		// Apply multicast relay setting.
+		err = n.ovnnb.UpdateLogicalRouterMulticastRelay(context.TODO(), n.getRouterName(), util.IsTrue(n.config["bridge.multicast_relay"]))
+		if err != nil {
+			return fmt.Errorf("Failed setting multicast relay on router: %w", err)
+		}
 	} else {
 		err := n.ovnnb.DeleteLogicalRouter(context.TODO(), n.getRouterName())
 		if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
@@ -3037,6 +3059,12 @@ func (n *ovn) setup(update bool) error {
 
 	if !update {
 		reverter.Add(func() { _ = n.ovnnb.DeleteLogicalSwitch(context.TODO(), n.getIntSwitchName()) })
+	}
+
+	// Apply multicast snooping setting.
+	err = n.ovnnb.UpdateLogicalSwitchMulticastSnooping(context.TODO(), n.getIntSwitchName(), util.IsTrueOrEmpty(n.config["bridge.multicast_snooping"]))
+	if err != nil {
+		return fmt.Errorf("Failed setting multicast snooping on internal switch: %w", err)
 	}
 
 	// Add any listed existing external interface.
@@ -3585,7 +3613,7 @@ func (n *ovn) ensureNetworkPortGroup(projectID int64) error {
 // addChassisGroupEntry adds an entry for the local OVS chassis to the OVN logical network's chassis group.
 // The chassis priority value is a stable-random value derived from chassis group name and node ID. This is so we
 // don't end up using the same chassis for the primary uplink chassis for all OVN networks in a cluster.
-func (n *ovn) addChassisGroupEntry() error {
+func (n *ovn) addChassisGroupEntry(memberIDs []int) error {
 	// Get local chassis ID for chassis group.
 	vswitch, err := n.state.OVS()
 	if err != nil {
@@ -3606,24 +3634,7 @@ func (n *ovn) addChassisGroupEntry() error {
 		return fmt.Errorf("Failed generating stable random chassis group priority: %w", err)
 	}
 
-	// Get all members in cluster.
 	ourMemberID := int(n.state.DB.Cluster.GetNodeID())
-	var memberIDs []int
-	err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-		members, err := tx.GetNodes(ctx)
-		if err != nil {
-			return fmt.Errorf("Failed getting cluster members for adding chassis group entry: %w", err)
-		}
-
-		for _, member := range members {
-			memberIDs = append(memberIDs, int(member.ID))
-		}
-
-		return nil
-	})
-	if err != nil {
-		return err
-	}
 
 	// Sort the nodes based on ID for stable priority generation.
 	sort.Ints(memberIDs)
@@ -3798,7 +3809,7 @@ func (n *ovn) Rename(newName string) error {
 
 // chassisEnabled checks the cluster config to see if this particular
 // member should act as an OVN chassis.
-func (n *ovn) chassisEnabled(ctx context.Context, tx *db.ClusterTx) (bool, error) {
+func (n *ovn) chassisEnabled(ctx context.Context, tx *db.ClusterTx, members []db.NodeInfo) (bool, error) {
 	// Check that we have an uplink network, that it's physical, and that parent is not "none".
 	if n.config["network"] == "none" {
 		return false, nil
@@ -3816,10 +3827,6 @@ func (n *ovn) chassisEnabled(ctx context.Context, tx *db.ClusterTx) (bool, error
 
 	// Get the member info.
 	memberID := tx.GetNodeID()
-	members, err := tx.GetNodes(ctx)
-	if err != nil {
-		return false, fmt.Errorf("Failed getting cluster members: %w", err)
-	}
 
 	// Determine whether to add ourselves as a chassis.
 	// If no server has the role, enable the chassis, otherwise only
@@ -3862,6 +3869,7 @@ func (n *ovn) Start() error {
 
 	var projectID int64
 	var chassisEnabled bool
+	var memberIDs []int
 	err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		// Get the project ID.
 		projectID, err = dbCluster.GetProjectID(context.Background(), tx.Tx(), n.project)
@@ -3869,8 +3877,18 @@ func (n *ovn) Start() error {
 			return err
 		}
 
+		// Get all members in the cluster.
+		members, err := tx.GetNodes(ctx)
+		if err != nil {
+			return fmt.Errorf("Failed getting cluster members: %w", err)
+		}
+
+		for _, member := range members {
+			memberIDs = append(memberIDs, int(member.ID))
+		}
+
 		// Check if we should enable the chassis.
-		chassisEnabled, err = n.chassisEnabled(ctx, tx)
+		chassisEnabled, err = n.chassisEnabled(ctx, tx, members)
 		if err != nil {
 			return err
 		}
@@ -3890,7 +3908,7 @@ func (n *ovn) Start() error {
 	// Handle chassis groups.
 	if chassisEnabled {
 		// Add local member's OVS chassis ID to logical chassis group.
-		err = n.addChassisGroupEntry()
+		err = n.addChassisGroupEntry(memberIDs)
 		if err != nil {
 			return err
 		}
@@ -5025,6 +5043,9 @@ func (n *ovn) InstanceDevicePortStart(opts *OVNInstanceNICSetupOpts, securityACL
 		}
 	}
 
+	// Addresses to advertise on the uplink network using proxy ARP/NDP.
+	var arpProxyIPNets []net.IPNet
+
 	// Publish NIC's IPs on uplink network if NAT is disabled and using l2proxy ingress mode on uplink.
 	if n.config["network"] != "none" && slices.Contains([]string{"l2proxy", ""}, opts.UplinkConfig["ovn.ingress_mode"]) {
 		for _, k := range []string{"ipv4.nat", "ipv6.nat"} {
@@ -5045,14 +5066,7 @@ func (n *ovn) InstanceDevicePortStart(opts *OVNInstanceNICSetupOpts, securityACL
 				continue // No qualifying target IP from DNS records.
 			}
 
-			err = n.ovnnb.CreateLogicalRouterNAT(context.TODO(), n.getRouterName(), "dnat_and_snat", nil, ipAddress, ipAddress, true, true)
-			if err != nil {
-				return "", nil, err
-			}
-
-			reverter.Add(func() {
-				_ = n.ovnnb.DeleteLogicalRouterNAT(context.TODO(), n.getRouterName(), "dnat_and_snat", false, ipAddress)
-			})
+			arpProxyIPNets = append(arpProxyIPNets, IPToNet(ipAddress))
 		}
 	}
 
@@ -5104,28 +5118,23 @@ func (n *ovn) InstanceDevicePortStart(opts *OVNInstanceNICSetupOpts, securityACL
 			Port:    n.getRouterIntPortName(),
 		})
 
-		// When using l2proxy ingress mode on uplink, in order to advertise the external route to the
-		// uplink network using proxy ARP/NDP we need to add a stateless dnat_and_snat rule (as to my
-		// knowledge this is the only way to get the OVN router to respond to ARP/NDP requests for IPs that
-		// it doesn't actually have). However we have to add each IP in the external route individually as
-		// DNAT doesn't support whole subnets.
+		// When using l2proxy ingress mode on uplink, advertise the external route on the uplink
+		// network using proxy ARP/NDP.
 		if n.config["network"] != "none" && slices.Contains([]string{"l2proxy", ""}, opts.UplinkConfig["ovn.ingress_mode"]) {
-			err = SubnetIterate(externalRoute, func(ip net.IP) error {
-				err = n.ovnnb.CreateLogicalRouterNAT(context.TODO(), n.getRouterName(), "dnat_and_snat", nil, ip, ip, true, true)
-				if err != nil {
-					return err
-				}
-
-				reverter.Add(func() {
-					_ = n.ovnnb.DeleteLogicalRouterNAT(context.TODO(), n.getRouterName(), "dnat_and_snat", false, ip)
-				})
-
-				return nil
-			})
-			if err != nil {
-				return "", nil, err
-			}
+			arpProxyIPNets = append(arpProxyIPNets, *externalRoute)
 		}
+	}
+
+	// Advertise the addresses on the uplink network through the external switch's router port.
+	if len(arpProxyIPNets) > 0 {
+		err = n.ovnnb.UpdateLogicalSwitchPortARPProxy(context.TODO(), n.getExtSwitchRouterPortName(), arpProxyIPNets, nil)
+		if err != nil {
+			return "", nil, err
+		}
+
+		reverter.Add(func() {
+			_ = n.ovnnb.UpdateLogicalSwitchPortARPProxy(context.TODO(), n.getExtSwitchRouterPortName(), nil, arpProxyIPNets)
+		})
 	}
 
 	if len(routes) > 0 {
@@ -5532,7 +5541,7 @@ func (n *ovn) InstanceDevicePortStop(ovsExternalOVNPort networkOVN.OVNSwitchPort
 	}
 
 	var removeRoutes []net.IPNet
-	var removeNATIPs []net.IP
+	var removeARPProxyIPNets []net.IPNet
 
 	if len(dnsIPs) > 0 {
 		// When using l3only mode the instance port's IPs are added as static routes to the router.
@@ -5541,8 +5550,10 @@ func (n *ovn) InstanceDevicePortStop(ovsExternalOVNPort networkOVN.OVNSwitchPort
 			removeRoutes = append(removeRoutes, IPToNet(dnsIP))
 		}
 
-		// Delete any associated external IP DNAT rules for the DNS IPs.
-		removeNATIPs = append(removeNATIPs, dnsIPs...)
+		// Delete any associated proxy ARP/NDP entries for the DNS IPs.
+		for _, dnsIP := range dnsIPs {
+			removeARPProxyIPNets = append(removeARPProxyIPNets, IPToNet(dnsIP))
+		}
 	}
 
 	// Delete internal routes.
@@ -5556,16 +5567,9 @@ func (n *ovn) InstanceDevicePortStop(ovsExternalOVNPort networkOVN.OVNSwitchPort
 	for _, externalRoute := range externalRoutes {
 		removeRoutes = append(removeRoutes, *externalRoute)
 
-		// Remove the DNAT rules when using l2proxy ingress mode on uplink.
+		// Remove the proxy ARP/NDP entries when using l2proxy ingress mode on uplink.
 		if uplink != nil && slices.Contains([]string{"l2proxy", ""}, uplink.Config["ovn.ingress_mode"]) {
-			err = SubnetIterate(externalRoute, func(ip net.IP) error {
-				removeNATIPs = append(removeNATIPs, ip)
-
-				return nil
-			})
-			if err != nil {
-				return err
-			}
+			removeARPProxyIPNets = append(removeARPProxyIPNets, *externalRoute)
 		}
 	}
 
@@ -5597,9 +5601,9 @@ func (n *ovn) InstanceDevicePortStop(ovsExternalOVNPort networkOVN.OVNSwitchPort
 		}
 	}
 
-	if len(removeNATIPs) > 0 {
-		err = n.ovnnb.DeleteLogicalRouterNAT(context.TODO(), n.getRouterName(), "dnat_and_snat", false, removeNATIPs...)
-		if err != nil {
+	if uplink != nil && len(removeARPProxyIPNets) > 0 {
+		err = n.ovnnb.UpdateLogicalSwitchPortARPProxy(context.TODO(), n.getExtSwitchRouterPortName(), nil, removeARPProxyIPNets)
+		if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
 			return err
 		}
 	}
@@ -5962,7 +5966,7 @@ func (n *ovn) handleDependencyChange(uplinkName string, uplinkConfig map[string]
 		break // Only run setup once per notification (all changes will be applied).
 	}
 
-	// Add or remove the instance NIC l2proxy DNAT_AND_SNAT rules if uplink's ovn.ingress_mode has changed.
+	// Add or remove the instance NIC l2proxy advertisements if uplink's ovn.ingress_mode has changed.
 	if slices.Contains(changedKeys, "ovn.ingress_mode") {
 		n.logger.Debug("Applying ingress mode changes from uplink network to instance NICs", logger.Ctx{"uplink": uplinkName})
 
@@ -5974,7 +5978,7 @@ func (n *ovn) handleDependencyChange(uplinkName string, uplinkConfig map[string]
 			}
 
 			// Find all instance NICs that use this network, and re-add the logical OVN instance port.
-			// This will restore the l2proxy DNAT_AND_SNAT rules.
+			// This will restore the l2proxy proxy ARP/NDP entries.
 			err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 				return tx.InstanceList(ctx, func(inst db.InstanceArgs, p api.Project) error {
 					// Get the instance's effective network project name.
@@ -6008,7 +6012,7 @@ func (n *ovn) handleDependencyChange(uplinkName string, uplinkConfig map[string]
 							devConfig["hwaddr"] = inst.Config[fmt.Sprintf("volatile.%s.hwaddr", devName)]
 						}
 
-						// Re-add logical switch port to apply the l2proxy DNAT_AND_SNAT rules.
+						// Re-add logical switch port to apply the l2proxy proxy ARP/NDP entries.
 						n.logger.Debug("Re-adding instance OVN NIC port to apply ingress mode changes", logger.Ctx{"project": inst.Project, "instance": inst.Name, "device": devName})
 						_, _, err = n.InstanceDevicePortStart(&OVNInstanceNICSetupOpts{
 							InstanceUUID: instanceUUID,
@@ -6030,11 +6034,11 @@ func (n *ovn) handleDependencyChange(uplinkName string, uplinkConfig map[string]
 				return fmt.Errorf("Failed adding instance NIC ingress mode l2proxy rules: %w", err)
 			}
 		} else {
-			// Remove all DNAT_AND_SNAT rules if not using l2proxy ingress mode, as currently we only
-			// use DNAT_AND_SNAT rules for this feature so it is safe to do.
-			err := n.ovnnb.DeleteLogicalRouterNAT(context.TODO(), n.getRouterName(), "dnat_and_snat", true)
+			// Remove all proxy ARP/NDP entries if not using l2proxy ingress mode, as currently we
+			// only use them for this feature so it is safe to do.
+			err := n.ovnnb.ClearLogicalSwitchPortARPProxy(context.TODO(), n.getExtSwitchRouterPortName())
 			if err != nil {
-				return fmt.Errorf("Failed deleting instance NIC ingress mode l2proxy rules: %w", err)
+				return fmt.Errorf("Failed clearing instance NIC ingress mode l2proxy entries: %w", err)
 			}
 		}
 	}

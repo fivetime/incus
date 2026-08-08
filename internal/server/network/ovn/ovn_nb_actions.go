@@ -321,6 +321,64 @@ func (o *NB) GetLogicalRouter(ctx context.Context, routerName OVNRouter) (*ovnNB
 	return logicalRouter, nil
 }
 
+// UpdateLogicalRouterMulticastRelay sets the multicast relay option on the logical router.
+func (o *NB) UpdateLogicalRouterMulticastRelay(ctx context.Context, routerName OVNRouter, relay bool) error {
+	logicalRouter, err := o.GetLogicalRouter(ctx, routerName)
+	if err != nil {
+		return err
+	}
+
+	if logicalRouter.Options == nil {
+		logicalRouter.Options = map[string]string{}
+	}
+
+	logicalRouter.Options["mcast_relay"] = fmt.Sprintf("%v", relay)
+
+	operations, err := o.client.Where(logicalRouter).Update(logicalRouter)
+	if err != nil {
+		return err
+	}
+
+	// Apply the database changes.
+	resp, err := o.client.Transact(ctx, operations...)
+	if err != nil {
+		return err
+	}
+
+	_, err = ovsdb.CheckOperationResults(resp, operations)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetLogicalRouterNATs returns the NAT rules of a logical router.
+func (o *NB) GetLogicalRouterNATs(ctx context.Context, routerName OVNRouter) ([]ovnNB.NAT, error) {
+	// Get the logical router.
+	logicalRouter, err := o.GetLogicalRouter(ctx, routerName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the NAT rules.
+	natRules := make([]ovnNB.NAT, 0, len(logicalRouter.Nat))
+	for _, natUUID := range logicalRouter.Nat {
+		natRule := ovnNB.NAT{
+			UUID: natUUID,
+		}
+
+		err = o.get(ctx, &natRule)
+		if err != nil {
+			return nil, err
+		}
+
+		natRules = append(natRules, natRule)
+	}
+
+	return natRules, nil
+}
+
 // CreateLogicalRouterNAT adds an SNAT or DNAT rule to a logical router to translate packets from intNet to extIP.
 func (o *NB) CreateLogicalRouterNAT(ctx context.Context, routerName OVNRouter, natType string, intNet *net.IPNet, extIP net.IP, intIP net.IP, stateless bool, mayExist bool) error {
 	// Prepare the addresses.
@@ -1263,6 +1321,40 @@ func (o *NB) UpdateLogicalSwitchIPAllocation(ctx context.Context, switchName OVN
 	} else {
 		delete(logicalSwitch.OtherConfig, "exclude_ips")
 	}
+
+	operations, err := o.client.Where(logicalSwitch).Update(logicalSwitch)
+	if err != nil {
+		return err
+	}
+
+	// Apply the database changes.
+	resp, err := o.client.Transact(ctx, operations...)
+	if err != nil {
+		return err
+	}
+
+	_, err = ovsdb.CheckOperationResults(resp, operations)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// UpdateLogicalSwitchMulticastSnooping sets the multicast snooping config on the logical switch.
+func (o *NB) UpdateLogicalSwitchMulticastSnooping(ctx context.Context, switchName OVNSwitch, snoop bool) error {
+	// Get the logical switch.
+	logicalSwitch, err := o.GetLogicalSwitch(ctx, switchName)
+	if err != nil {
+		return err
+	}
+
+	// Update the configuration.
+	if logicalSwitch.OtherConfig == nil {
+		logicalSwitch.OtherConfig = map[string]string{}
+	}
+
+	logicalSwitch.OtherConfig["mcast_snoop"] = fmt.Sprintf("%v", snoop)
 
 	operations, err := o.client.Where(logicalSwitch).Update(logicalSwitch)
 	if err != nil {
@@ -2561,6 +2653,114 @@ func (o *NB) UpdateLogicalSwitchPortLinkRouter(ctx context.Context, switchPortNa
 
 	lsp.Options["nat-addresses"] = "router"
 	lsp.Options["router-port"] = string(routerPortName)
+
+	// Update the record.
+	operations, err := o.client.Where(&lsp).Update(&lsp)
+	if err != nil {
+		return err
+	}
+
+	// Apply the changes.
+	resp, err := o.client.Transact(ctx, operations...)
+	if err != nil {
+		return err
+	}
+
+	_, err = ovsdb.CheckOperationResults(resp, operations)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// UpdateLogicalSwitchPortARPProxy adds and removes entries from a logical switch port's arp_proxy option.
+func (o *NB) UpdateLogicalSwitchPortARPProxy(ctx context.Context, switchPortName OVNSwitchPort, addIPNets []net.IPNet, removeIPNets []net.IPNet) error {
+	// Get the logical switch port.
+	lsp := ovnNB.LogicalSwitchPort{
+		Name: string(switchPortName),
+	}
+
+	err := o.get(ctx, &lsp)
+	if err != nil {
+		return err
+	}
+
+	// Get the current entries.
+	entries := strings.Fields(lsp.Options["arp_proxy"])
+
+	// Apply the requested changes.
+	for _, ipNet := range removeIPNets {
+		entry := ipNet.String()
+		entries = slices.DeleteFunc(entries, func(e string) bool { return e == entry })
+	}
+
+	for _, ipNet := range addIPNets {
+		entry := ipNet.String()
+		if !slices.Contains(entries, entry) {
+			entries = append(entries, entry)
+		}
+	}
+
+	slices.Sort(entries)
+
+	// Check if anything changed.
+	newValue := strings.Join(entries, " ")
+	if newValue == lsp.Options["arp_proxy"] {
+		return nil
+	}
+
+	// Update the fields.
+	if lsp.Options == nil {
+		lsp.Options = map[string]string{}
+	}
+
+	if newValue != "" {
+		lsp.Options["arp_proxy"] = newValue
+	} else {
+		delete(lsp.Options, "arp_proxy")
+	}
+
+	// Update the record.
+	operations, err := o.client.Where(&lsp).Update(&lsp)
+	if err != nil {
+		return err
+	}
+
+	// Apply the changes.
+	resp, err := o.client.Transact(ctx, operations...)
+	if err != nil {
+		return err
+	}
+
+	_, err = ovsdb.CheckOperationResults(resp, operations)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ClearLogicalSwitchPortARPProxy removes the arp_proxy option from a logical switch port.
+func (o *NB) ClearLogicalSwitchPortARPProxy(ctx context.Context, switchPortName OVNSwitchPort) error {
+	// Get the logical switch port.
+	lsp := ovnNB.LogicalSwitchPort{
+		Name: string(switchPortName),
+	}
+
+	err := o.get(ctx, &lsp)
+	if err != nil {
+		return err
+	}
+
+	// Check if there's anything to clear.
+	_, found := lsp.Options["arp_proxy"]
+	if !found {
+		return nil
+	}
+
+	// Update the fields.
+	delete(lsp.Options, "arp_proxy")
 
 	// Update the record.
 	operations, err := o.client.Where(&lsp).Update(&lsp)

@@ -3454,6 +3454,33 @@ when set to `true` prevents the instance from being started.
 
 This adds a new `PATCH /1.0/instances/{name}/nvram` endpoint to update NVRAM in bulk.
 
+## `instance_refresh_migration`
+
+Adds support for refresh migration, where a running container is moved to another
+cluster member through a series of incremental transfers, only being stopped for
+the last one.
+
+This adds a `refresh` field to `POST /1.0/instances/{name}`. When set to `true` on
+a stateless migration (`migration` set to `true` and `live` set to `false`), a
+running container is migrated this way.
+
+It also adds `refresh-migrate` as a configuration option to `cluster.evacuate`
+and as an evacuation mode, which forces refresh migration of instances during
+cluster evacuation.
+
+## `image_locations`
+
+Adds a new `locations` field to the image API, listing the names of the
+cluster members which have a local copy of the image.
+
+## `network_ovn_multicast`
+
+Adds multicast configuration to OVN networks through two new
+configuration keys:
+
+* `bridge.multicast_snooping`
+* `bridge.multicast_relay`
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external
