@@ -1,4 +1,10 @@
-package instance
+// Package rootfsidmap records which ID map a rootfs was shifted with, so an
+// interrupted shift can be recognised and finished after a restart.
+//
+// It lives outside internal/instance on purpose: that package is imported by
+// the client, and shared/idmap pulls in cgo and libcap, which the client must
+// not need in order to build.
+package rootfsidmap
 
 import (
 	"errors"

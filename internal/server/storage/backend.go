@@ -35,6 +35,7 @@ import (
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/migration"
 	"github.com/lxc/incus/v7/internal/rsync"
+	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
 	"github.com/lxc/incus/v7/internal/server/backup"
 	backupConfig "github.com/lxc/incus/v7/internal/server/backup/config"
 	"github.com/lxc/incus/v7/internal/server/cluster/request"
@@ -3605,7 +3606,7 @@ func (b *backend) normalizeExternalInstanceRootfsIDMap(inst instance.Instance, v
 		}
 
 		syncFS := func() error { return linux.SyncFS(inst.Path()) }
-		diskIDMap, err := internalInstance.RecoverRootfsIDMapProvenance(inst.Path(), legacyIDMap, apply, syncFS, setDiskIDMap)
+		diskIDMap, err := rootfsidmap.RecoverRootfsIDMapProvenance(inst.Path(), legacyIDMap, apply, syncFS, setDiskIDMap)
 		if err != nil {
 			return err
 		}
@@ -3614,12 +3615,12 @@ func (b *backend) normalizeExternalInstanceRootfsIDMap(inst instance.Instance, v
 			return errors.New("Container is protected against filesystem shifting")
 		}
 
-		err = internalInstance.TransitionRootfsIDMapProvenance(inst.Path(), diskIDMap, nil, apply, syncFS, setDiskIDMap)
+		err = rootfsidmap.TransitionRootfsIDMapProvenance(inst.Path(), diskIDMap, nil, apply, syncFS, setDiskIDMap)
 		if err != nil {
 			return err
 		}
 
-		return internalInstance.ValidateNormalizedRootfsIDMapProvenance(inst.Path())
+		return rootfsidmap.ValidateNormalizedRootfsIDMapProvenance(inst.Path())
 	})
 
 	unmountErr := b.UnmountInstance(inst, op)

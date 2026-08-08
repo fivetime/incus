@@ -49,6 +49,7 @@ import (
 	"github.com/lxc/incus/v7/internal/migration"
 	"github.com/lxc/incus/v7/internal/netutils"
 	"github.com/lxc/incus/v7/internal/rsync"
+	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
 	"github.com/lxc/incus/v7/internal/server/apparmor"
 	"github.com/lxc/incus/v7/internal/server/cgroup"
 	"github.com/lxc/incus/v7/internal/server/daemon"
@@ -2022,7 +2023,7 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 	// Externally owned block volumes carry their physical ownership map so a
 	// snapshot or clone can be safely claimed by a different instance.
 	if storageType == "cephext" {
-		diskIdmap, err = internalInstance.RecoverRootfsIDMapProvenance(
+		diskIdmap, err = rootfsidmap.RecoverRootfsIDMapProvenance(
 			d.Path(),
 			diskIdmap,
 			func(from *idmap.Set, to *idmap.Set) error {
@@ -2078,7 +2079,7 @@ func (d *lxc) handleIdmappedStorage() (idmap.StorageType, *idmap.Set, error) {
 	}
 
 	if storageType == "cephext" {
-		err = internalInstance.TransitionRootfsIDMapProvenance(
+		err = rootfsidmap.TransitionRootfsIDMapProvenance(
 			d.Path(),
 			diskIdmap,
 			targetDiskIdmap,

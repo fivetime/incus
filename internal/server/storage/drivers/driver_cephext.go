@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	"github.com/lxc/incus/v7/internal/instancewriter"
 	"github.com/lxc/incus/v7/internal/linux"
+	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
 	"github.com/lxc/incus/v7/internal/server/backup"
 	localMigration "github.com/lxc/incus/v7/internal/server/migration"
 	"github.com/lxc/incus/v7/internal/server/operations"
@@ -178,13 +178,13 @@ func (d *cephext) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 				// Only an orchestrator that created this root from a normalized image may
 				// assert the initial state. Existing markers always remain authoritative.
 				if vol.config["ceph.rbd.idmap_provenance"] == "normalized" {
-					err = internalInstance.SeedNormalizedRootfsIDMapProvenance(mountPath)
+					err = rootfsidmap.SeedNormalizedRootfsIDMapProvenance(mountPath)
 					if err != nil {
 						return fmt.Errorf("Seed rootfs ID map provenance: %w", err)
 					}
 				}
 
-				err = internalInstance.ValidateRootfsIDMapProvenance(mountPath)
+				err = rootfsidmap.ValidateRootfsIDMapProvenance(mountPath)
 				if err != nil {
 					return fmt.Errorf("Validate rootfs ID map provenance: %w", err)
 				}
