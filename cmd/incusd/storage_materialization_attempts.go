@@ -133,11 +133,14 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 		}
 		return response.SyncResponse(true, storageMaterializationAttemptToAPI(attempt))
 	case storagematerializationattempt.StateAborted:
-		attempt, resp := loadStorageMaterializationAttempt(d, r)
+		// Loaded only to reject a request that does not name a live attempt;
+		// the record itself is re-read by Abort under its own transaction.
+		_, resp := loadStorageMaterializationAttempt(d, r)
 		if resp != nil {
 			return resp
 		}
-		attempt, err = manager.Abort(r.Context(), token)
+
+		attempt, err := manager.Abort(r.Context(), token)
 		if err != nil {
 			return storageMaterializationAttemptError(err)
 		}

@@ -552,9 +552,9 @@ func storageReleaseReceiptDigest(receipt *db.StorageReleaseReceipt) (string, err
 }
 
 func storageReleaseReceiptToAPICanonical(receipt *db.StorageReleaseReceipt) api.StorageReleaseReceipt {
-	state := receipt.State
-	if state == storagereleasereceipt.StateRetired {
-		state = storagereleasereceipt.StateComplete
+	canonicalState := receipt.State
+	if canonicalState == storagereleasereceipt.StateRetired {
+		canonicalState = storagereleasereceipt.StateComplete
 	}
 
 	return api.StorageReleaseReceipt{
@@ -575,7 +575,7 @@ func storageReleaseReceiptToAPICanonical(receipt *db.StorageReleaseReceipt) api.
 		BaselineClean:      receipt.BaselineClean,
 		CleanupDisposition: receipt.CleanupDisposition,
 		Outcome:            receipt.Outcome,
-		State:              state,
+		State:              canonicalState,
 		CreatedAt:          receipt.CreatedAt,
 		CompletedAt:        receipt.CompletedAt,
 	}

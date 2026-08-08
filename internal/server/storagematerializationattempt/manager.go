@@ -16,6 +16,9 @@ import (
 	"github.com/lxc/incus/v7/internal/server/db"
 )
 
+// States of a storage materialization attempt. An attempt is active until it either commits
+// or aborts; an aborted attempt becomes clean once its storage side effects are undone, and a
+// finished attempt is retired so a later attempt can bind the same instance.
 const (
 	StateActive    = "active"
 	StateAborted   = "aborted"
@@ -37,6 +40,8 @@ const (
 	CleanupHandover = "handover"
 )
 
+// Errors reported by Manager. Callers distinguish them to decide whether a request is a
+// retry of their own attempt, a collision with somebody else's, or a lost race.
 var (
 	ErrNotFound                        = errors.New("Storage materialization attempt not found")
 	ErrBindingMismatch                 = errors.New("Storage materialization attempt token is bound to another rootfs")
@@ -48,10 +53,14 @@ var (
 	ErrFinished                        = errors.New("Storage materialization attempt is finished")
 )
 
+// Manager owns the node-local record of storage materialization attempts, the marker that
+// lets an interrupted rootfs materialization be recognised and undone after a restart.
 type Manager struct{ node *db.Node }
 
+// New returns a Manager backed by the node database.
 func New(node *db.Node) *Manager { return &Manager{node: node} }
 
+// Get returns the attempt with the given token, or ErrNotFound.
 func (m *Manager) Get(ctx context.Context, token string) (*db.StorageMaterializationAttempt, error) {
 	var attempt *db.StorageMaterializationAttempt
 	err := m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
@@ -93,6 +102,8 @@ func (m *Manager) ListUnfinished(ctx context.Context) ([]db.StorageMaterializati
 	return attempts, err
 }
 
+// Register records a new attempt, or returns the caller's own existing one so a retried request
+// is not treated as a collision. An attempt bound to a different rootfs is refused.
 func (m *Manager) Register(ctx context.Context, expected db.StorageMaterializationAttempt) (*db.StorageMaterializationAttempt, error) {
 	if err := validateBinding(&expected); err != nil {
 		return nil, err
@@ -115,7 +126,7 @@ func (m *Manager) Register(ctx context.Context, expected db.StorageMaterializati
 			return err
 		}
 
-		current, err = tx.GetStorageMaterializationAttemptByInstance(ctx, expected.Project, expected.InstanceName)
+		_, err = tx.GetStorageMaterializationAttemptByInstance(ctx, expected.Project, expected.InstanceName)
 		if err == nil {
 			return ErrBindingMismatch
 		}
@@ -216,6 +227,8 @@ func (m *Manager) BindOperation(ctx context.Context, token string, daemonStart i
 	})
 }
 
+// Abort marks an attempt aborted. One that never started is finished immediately, since it has
+// no storage side effects to undo.
 func (m *Manager) Abort(ctx context.Context, token string) (*db.StorageMaterializationAttempt, error) {
 	var attempt *db.StorageMaterializationAttempt
 	err := m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
@@ -265,6 +278,7 @@ func (m *Manager) Abort(ctx context.Context, token string) (*db.StorageMateriali
 	return attempt, err
 }
 
+// Commit finishes a started attempt whose rootfs is materialized.
 func (m *Manager) Commit(ctx context.Context, token string) error {
 	return m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
 		current, err := tx.GetStorageMaterializationAttempt(ctx, token)
@@ -347,6 +361,8 @@ func (m *Manager) CommitWithMigration(ctx context.Context, migrationToken string
 	})
 }
 
+// SetStoragePhase advances how far the rootfs has been materialized, refusing a move that skips
+// a phase or that would rebind the attempt to a different storage identity.
 func (m *Manager) SetStoragePhase(ctx context.Context, token string, phase string, identity string) error {
 	if phase != PhasePending && phase != PhaseMaterialized {
 		return fmt.Errorf("Invalid storage materialization phase %q", phase)
@@ -389,6 +405,8 @@ func (m *Manager) SetStoragePhase(ctx context.Context, token string, phase strin
 	})
 }
 
+// FinishClean records that an aborted attempt's storage side effects are gone, which is the
+// proof an orchestrator needs before retiring the allocation behind it.
 func (m *Manager) FinishClean(ctx context.Context, token string) error {
 	return m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
 		current, err := tx.GetStorageMaterializationAttempt(ctx, token)
@@ -464,6 +482,7 @@ func ProofDigest(attempt *db.StorageMaterializationAttempt, outcome string) (str
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
+// Delete removes a finished attempt's record.
 func (m *Manager) Delete(ctx context.Context, token string) error {
 	return m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
 		changed, err := tx.RetireStorageMaterializationAttempt(ctx, token)
@@ -477,6 +496,8 @@ func (m *Manager) Delete(ctx context.Context, token string) error {
 	})
 }
 
+// SameBinding reports whether two attempts describe the same rootfs on the same instance, which
+// is what makes a repeated request a retry rather than a conflict.
 func SameBinding(a *db.StorageMaterializationAttempt, b *db.StorageMaterializationAttempt) bool {
 	return a != nil && b != nil && a.Token == b.Token && a.AllocationID == b.AllocationID &&
 		a.ComputeID == b.ComputeID && a.Owner == b.Owner && a.Project == b.Project &&

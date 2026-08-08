@@ -2984,7 +2984,9 @@ func (b *backend) beginDetachedInstanceStorageRelease(vol drivers.Volume, volExi
 			// The normalized intent was persisted before this record
 			// became delete-protected and its release never ran; the
 			// detached release supersedes it.
-			current, err = manager.SupersedePendingNormalizedOutcome(context.Background(), expected)
+			// Called for the state change alone; Begin below re-reads the
+			// record it leaves behind.
+			_, err = manager.SupersedePendingNormalizedOutcome(context.Background(), expected)
 			if err != nil {
 				return nil, fmt.Errorf("Supersede pending normalized root storage release receipt: %w", err)
 			}
@@ -3226,7 +3228,6 @@ func (b *backend) releaseInstanceStorageWithReceipt(inst instance.Instance, vol 
 		if expected.Outcome != storagereleasereceipt.OutcomeDeleted {
 			return nil, errors.New("Externally retained root storage disappeared before normalization could be proven")
 		}
-
 	} else {
 		identity, err := storageVolumeIdentity(b.driver, vol)
 		if err != nil {
@@ -3257,7 +3258,6 @@ func (b *backend) releaseInstanceStorageWithReceipt(inst instance.Instance, vol 
 		if err != nil {
 			return nil, fmt.Errorf("Release retained root storage local state: %w", err)
 		}
-
 	}
 
 	volExists, err = b.driver.HasVolume(vol)

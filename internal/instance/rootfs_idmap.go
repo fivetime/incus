@@ -68,7 +68,8 @@ func validateRootfsIDMap(idmapSet *idmap.Set) error {
 
 		for j := 0; j < i; j++ {
 			other := idmapSet.Entries[j]
-			if !((entry.IsUID && other.IsUID) || (entry.IsGID && other.IsGID)) {
+			sameKind := (entry.IsUID && other.IsUID) || (entry.IsGID && other.IsGID)
+			if !sameKind {
 				continue
 			}
 
@@ -274,7 +275,8 @@ func rootfsIDMapHostRangesOverlap(a *idmap.Set, b *idmap.Set) bool {
 
 	for _, entryA := range a.Entries {
 		for _, entryB := range b.Entries {
-			if !((entryA.IsUID && entryB.IsUID) || (entryA.IsGID && entryB.IsGID)) {
+			sameKind := (entryA.IsUID && entryB.IsUID) || (entryA.IsGID && entryB.IsGID)
+			if !sameKind {
 				continue
 			}
 
@@ -304,7 +306,8 @@ func rootfsIDMapHostNamespaceRangesOverlap(hostMaps []*idmap.Set, namespaceMaps 
 				}
 
 				for _, namespaceEntry := range namespaceMap.Entries {
-					if !((hostEntry.IsUID && namespaceEntry.IsUID) || (hostEntry.IsGID && namespaceEntry.IsGID)) {
+					sameKind := (hostEntry.IsUID && namespaceEntry.IsUID) || (hostEntry.IsGID && namespaceEntry.IsGID)
+					if !sameKind {
 						continue
 					}
 

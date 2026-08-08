@@ -62,7 +62,7 @@ func (n *NodeTx) GetUnfinishedStorageMaterializationAttempts(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	attempts := []StorageMaterializationAttempt{}
 	for rows.Next() {
@@ -107,6 +107,8 @@ func (n *NodeTx) BindStorageMaterializationOperation(ctx context.Context, token 
 	return rowsChanged(result)
 }
 
+// AbortStorageMaterializationAttempt marks an active attempt aborted. An attempt that never
+// started is finished immediately with its proof, because it has no side effects to undo.
 func (n *NodeTx) AbortStorageMaterializationAttempt(ctx context.Context, token string, proofOutcome string, proofDigest string) (bool, error) {
 	result, err := n.tx.ExecContext(ctx, `UPDATE storage_materialization_attempts SET state = 'aborted', finished = CASE WHEN started = 0 THEN 1 ELSE finished END, proof_outcome = CASE WHEN started = 0 THEN ? ELSE proof_outcome END, proof_digest = CASE WHEN started = 0 THEN ? ELSE proof_digest END WHERE token = ? AND state = 'active' AND finished = 0`, proofOutcome, proofDigest, token)
 	if err != nil {
@@ -115,6 +117,7 @@ func (n *NodeTx) AbortStorageMaterializationAttempt(ctx context.Context, token s
 	return rowsChanged(result)
 }
 
+// CommitStorageMaterializationAttempt finishes a started attempt whose storage is materialized.
 func (n *NodeTx) CommitStorageMaterializationAttempt(ctx context.Context, token string) (bool, error) {
 	result, err := n.tx.ExecContext(ctx, `UPDATE storage_materialization_attempts SET state = 'committed', finished = 1 WHERE token = ? AND state = 'active' AND started = 1 AND finished = 0 AND storage_phase = 'materialized'`, token)
 	if err != nil {
@@ -123,6 +126,8 @@ func (n *NodeTx) CommitStorageMaterializationAttempt(ctx context.Context, token 
 	return rowsChanged(result)
 }
 
+// SetStorageMaterializationPhase advances the storage phase of an unfinished attempt, refusing a
+// move that skips a phase or that would rebind the record to a different storage identity.
 func (n *NodeTx) SetStorageMaterializationPhase(ctx context.Context, token string, phase string, identity string) (bool, error) {
 	result, err := n.tx.ExecContext(ctx, `UPDATE storage_materialization_attempts SET storage_phase = ?, storage_identity = CASE WHEN ? = '' THEN storage_identity ELSE ? END WHERE token = ? AND started = 1 AND finished = 0 AND state IN ('active', 'aborted') AND ((? = 'pending' AND storage_phase IN ('none', 'pending')) OR (? = 'materialized' AND storage_phase IN ('pending', 'materialized'))) AND (storage_identity = '' OR ? = '' OR storage_identity = ?)`, phase, identity, identity, token, phase, phase, identity, identity)
 	if err != nil {
@@ -131,6 +136,8 @@ func (n *NodeTx) SetStorageMaterializationPhase(ctx context.Context, token strin
 	return rowsChanged(result)
 }
 
+// FinishStorageMaterializationClean records that an aborted attempt had its storage side effects
+// removed, which is what lets the allocation behind it be retired.
 func (n *NodeTx) FinishStorageMaterializationClean(ctx context.Context, token string, proofOutcome string, proofDigest string) (bool, error) {
 	result, err := n.tx.ExecContext(ctx, `UPDATE storage_materialization_attempts SET state = 'clean', storage_phase = 'clean', finished = 1, operation_uuid = '', proof_outcome = ?, proof_digest = ? WHERE token = ? AND started = 1 AND finished = 0 AND state = 'aborted'`, proofOutcome, proofDigest, token)
 	if err != nil {
@@ -139,6 +146,8 @@ func (n *NodeTx) FinishStorageMaterializationClean(ctx context.Context, token st
 	return rowsChanged(result)
 }
 
+// RetireStorageMaterializationAttempt drops a finished attempt out of the way of later attempts on
+// the same instance without deleting its row.
 func (n *NodeTx) RetireStorageMaterializationAttempt(ctx context.Context, token string) (bool, error) {
 	result, err := n.tx.ExecContext(ctx, `UPDATE storage_materialization_attempts SET state = 'retired', operation_uuid = '' WHERE token = ? AND finished = 1 AND state IN ('aborted', 'committed', 'clean', 'retired')`, token)
 	if err != nil {

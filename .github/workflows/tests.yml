@@ -779,7 +779,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install -y aspell aspell-en ruby
+          # libcap-dev is not documentation tooling: the spell check target
+          # builds the client first to extract its help text, and shared/idmap
+          # includes <sys/capability.h> through cgo. Without it this job fails
+          # on a compile error that reads like a spelling failure.
+          sudo apt-get install -y aspell aspell-en ruby libcap-dev
           sudo gem install --no-document mdl
 
       - name: Run markdown linter

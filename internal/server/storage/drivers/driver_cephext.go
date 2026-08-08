@@ -326,10 +326,12 @@ func (d *cephext) deleteVolumeWithIdentity(vol Volume, expectedStorageIdentity s
 }
 
 func (d *cephext) deleteVolumeRelease(vol Volume, volumeLocked bool, op *operations.Operation) error {
-	// Unmount and unmap.
+	// Unmount and unmap. UnmountVolume takes the volume lock itself, so a
+	// caller that already holds it needs the inner unmountVolume promoted
+	// from the embedded ceph driver instead.
 	unmountVolume := d.UnmountVolume
 	if volumeLocked {
-		unmountVolume = d.ceph.unmountVolume
+		unmountVolume = d.unmountVolume
 	}
 
 	_, err := unmountVolume(vol, false, op)

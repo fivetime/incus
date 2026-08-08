@@ -548,15 +548,20 @@ type cephIdentityReleaseAdapter struct {
 	driver *ceph
 }
 
+// PoolIdentity returns the pool's own id, which scopes every image id the release
+// algorithm compares.
 func (a cephIdentityReleaseAdapter) PoolIdentity() (uint64, error) {
 	identity, err := a.driver.getRBDPoolIdentity()
 	return identity.PoolID, err
 }
 
+// ImageIdentity resolves a name to the identity currently behind it, so the caller can tell
+// its own image from another one that reused the name.
 func (a cephIdentityReleaseAdapter) ImageIdentity(name string) (cephRBDVolumeIdentity, error) {
 	return a.driver.getRBDVolumeIdentity(name)
 }
 
+// RenameImage moves an image between names without touching its data or its id.
 func (a cephIdentityReleaseAdapter) RenameImage(oldName string, newName string) error {
 	_, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "mv", fmt.Sprintf("%s/%s", a.driver.config["ceph.osd.pool_name"], oldName), fmt.Sprintf("%s/%s", a.driver.config["ceph.osd.pool_name"], newName))
 	if isRBDNotFoundExitError(err) {
@@ -566,6 +571,8 @@ func (a cephIdentityReleaseAdapter) RenameImage(oldName string, newName string) 
 	return err
 }
 
+// TrashEntries lists the pool's trash so a caller can recognise an image another daemon
+// already moved out of the way.
 func (a cephIdentityReleaseAdapter) TrashEntries() ([]cephRBDTrashEntry, error) {
 	out, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "trash", "ls", "--format", "json")
 	if err != nil {
@@ -575,6 +582,7 @@ func (a cephIdentityReleaseAdapter) TrashEntries() ([]cephRBDTrashEntry, error) 
 	return parseRBDTrashEntries(out)
 }
 
+// TrashMove sends a named image to the trash, where it keeps its id.
 func (a cephIdentityReleaseAdapter) TrashMove(name string) error {
 	_, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "trash", "mv", name)
 	if isRBDNotFoundExitError(err) {
@@ -584,6 +592,8 @@ func (a cephIdentityReleaseAdapter) TrashMove(name string) error {
 	return err
 }
 
+// TrashRestore brings an image back from the trash under the given name, addressing it by id
+// because its former name may already be taken.
 func (a cephIdentityReleaseAdapter) TrashRestore(imageID string, name string) error {
 	_, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "trash", "restore", imageID, "--image", name)
 	if isRBDNotFoundExitError(err) {
@@ -593,6 +603,7 @@ func (a cephIdentityReleaseAdapter) TrashRestore(imageID string, name string) er
 	return err
 }
 
+// TrashRemove permanently deletes a trashed image by id.
 func (a cephIdentityReleaseAdapter) TrashRemove(imageID string) error {
 	_, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "trash", "rm", imageID)
 	if isRBDNotFoundExitError(err) {
@@ -602,6 +613,7 @@ func (a cephIdentityReleaseAdapter) TrashRemove(imageID string) error {
 	return err
 }
 
+// SnapshotNames lists an image's snapshots, which must all be gone before it can be removed.
 func (a cephIdentityReleaseAdapter) SnapshotNames(name string) ([]string, error) {
 	out, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "snap", "ls", name, "--format", "json")
 	if isRBDNotFoundExitError(err) {
@@ -631,6 +643,7 @@ func (a cephIdentityReleaseAdapter) SnapshotNames(name string) ([]string, error)
 	return names, nil
 }
 
+// SnapshotChildren lists the clones of a snapshot; a snapshot with children cannot be purged.
 func (a cephIdentityReleaseAdapter) SnapshotChildren(name string, snapshotName string) ([]string, error) {
 	out, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "children", "--image", name, "--snap", snapshotName)
 	if isRBDNotFoundExitError(err) {
@@ -643,6 +656,7 @@ func (a cephIdentityReleaseAdapter) SnapshotChildren(name string, snapshotName s
 	return strings.Fields(strings.TrimSpace(out)), nil
 }
 
+// SnapshotUnprotect clears the protection that blocks removing a snapshot.
 func (a cephIdentityReleaseAdapter) SnapshotUnprotect(name string, snapshotName string) error {
 	_, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "snap", "unprotect", fmt.Sprintf("%s@%s", name, snapshotName))
 	if commandExitCodeIs(err, 22) {
@@ -655,6 +669,7 @@ func (a cephIdentityReleaseAdapter) SnapshotUnprotect(name string, snapshotName 
 	return err
 }
 
+// SnapshotPurge removes every snapshot of an image.
 func (a cephIdentityReleaseAdapter) SnapshotPurge(name string) error {
 	_, err := subprocess.RunCommand("rbd", "--id", a.driver.config["ceph.user.name"], "--cluster", a.driver.config["ceph.cluster_name"], "--pool", a.driver.config["ceph.osd.pool_name"], "snap", "purge", name)
 	if isRBDNotFoundExitError(err) {
@@ -820,7 +835,10 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 				continue
 			}
 
-			tombstoneIdentity, tombstoneExists, err = imageIdentityOrMissing(store, tombstoneName)
+			// Only existence matters here: a tombstone that appeared under us
+			// sends the loop around again, and the top of the loop is what
+			// checks whether the identity is actually ours.
+			_, tombstoneExists, err = imageIdentityOrMissing(store, tombstoneName)
 			if err != nil {
 				return "", false, err
 			}

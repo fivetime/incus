@@ -119,7 +119,6 @@ func (m *Manager) Begin(ctx context.Context, expected db.StorageReleaseReceipt) 
 	return receipt, nil
 }
 
-// Complete commits a matching receipt after its storage outcome has completed.
 // SupersedePendingNormalizedOutcome upgrades one pending receipt whose
 // normalized release never completed to the detached outcome. This is the
 // one legitimate outcome rewrite: the record became delete-protected after
@@ -177,6 +176,7 @@ func (m *Manager) SupersedePendingNormalizedOutcome(ctx context.Context, expecte
 	return receipt, nil
 }
 
+// Complete commits a matching receipt after its storage outcome has completed.
 func (m *Manager) Complete(ctx context.Context, expected db.StorageReleaseReceipt) (*db.StorageReleaseReceipt, error) {
 	err := validateExpected(expected)
 	if err != nil {
