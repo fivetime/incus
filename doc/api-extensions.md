@@ -3319,7 +3319,7 @@ protocol version, so mixed daemon versions decline the zero-copy handover
 instead of bypassing its ordering guarantees.
 
 Before claiming storage, the target durably installs its local deletion
-protection and waits on the filesystem migration connection for a readiness
+protection and waits on the file system migration connection for a readiness
 marker. The source sends that marker only after its `pending` protection is
 durable and its root is fully unmounted. The target rechecks any
 migration-attempt fence after receiving the marker and before claiming the
@@ -3596,10 +3596,10 @@ before retiring that attempt.
 This adds durable on-disk ID map provenance for container root volumes on
 `cephext` storage pools. The provenance journal is stored in the volume beside
 the `rootfs/` directory, so it follows external RBD snapshots and clones while
-remaining outside the guest-visible filesystem.
+remaining outside the guest-visible file system.
 
 Before changing physical rootfs ownership, Incus records and syncs a transition
-from the old map to the new map. It then remaps and syncs the filesystem,
+from the old map to the new map. It then remaps and syncs the file system,
 atomically records the stable new map, and finally mirrors that map into
 `volatile.last_state.idmap`. Interrupted transitions are replayed idempotently.
 Non-identical maps with overlapping host ID ranges are rejected.
@@ -3607,7 +3607,7 @@ Non-identical maps with overlapping host ID ranges are rejected.
 Claiming a snapshot or clone as a new `cephext` root reads the durable map and
 remaps it before the container starts. Existing volumes without provenance are
 seeded from a non-empty `volatile.last_state.idmap`. New root images are
-published with `/.incus-idmap` at the raw filesystem top level, beside
+published with `/.incus-idmap` at the raw file system top level, beside
 `rootfs/`, containing the canonical normalized state
 `{"version":1,"state":"stable","idmap":[]}` with mode `0600`. The publisher
 must durably write this marker before exposing the image to snapshot or clone
@@ -3643,7 +3643,7 @@ immutable binding before any storage side effect.
 The receipt is first recorded as `pending`. For an Incus-owned root it becomes
 `complete` only after the root volume is absent. For a retained `cephext` root
 it becomes `complete` only after durable normalization to namespace ID 0,
-filesystem sync, unmount, and local claim release. Deleting a storage-handover
+file system sync, unmount, and local claim release. Deleting a storage-handover
 protected record produces `detached` only after the local volume database claim
 is gone while the shared storage object and its identity remain unchanged.
 
@@ -3662,7 +3662,7 @@ deleted, returns only a completed receipt after the instance is absent,
 requires `A/H/T`, project, owner, instance name and idmap range to match, and
 revalidates a still-existing RBD image identity. Every Ceph outcome, including
 `deleted`, also proves that no local mapping remains before receipt completion,
-volume database deletion, first GET, and acknowledgement. It returns the complete
+volume database deletion, first GET, and acknowledgment. It returns the complete
 storage binding and a canonical SHA-256 receipt digest. If the
 external owner has already deleted the image, absence is accepted because the
 old object cannot be reached through a recreated image name; a recreated image
@@ -3671,7 +3671,7 @@ with a different identity is rejected.
 After persisting an immutable external copy, an allocator acknowledges the
 same complete binding and receipt digest with DELETE. Incus changes the receipt
 to a permanent `retired` tombstone rather than deleting it, so the same `T`
-can never be rebound. A repeated acknowledgement with the original digest is
+can never be rebound. A repeated acknowledgment with the original digest is
 idempotent without revalidating storage that may legitimately have been reused
 after retirement. GET does not expose retired receipts. Missing roots
 without a pre-existing matching pending receipt never create proof. A pending
@@ -3730,7 +3730,7 @@ materialization decision.
 Both proofs contain a canonical SHA-256 digest over `A/H/T/U`, project,
 instance, ID map, storage driver, pool, volume, RBD image, immutable storage
 identity, cleanup disposition, and outcome. `DELETE` is a proof
-acknowledgement and must repeat the proof digest, `A/H/U`, instance name, and ID
+acknowledgment and must repeat the proof digest, `A/H/U`, instance name, and ID
 map in query parameters. A missing or mismatched generation cannot retire the
 record. Retiring an attempt preserves its binding and proof, so a lost DELETE
 response can be retried and audited without making `T` reusable.

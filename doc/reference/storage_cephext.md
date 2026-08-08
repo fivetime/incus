@@ -29,12 +29,12 @@ alter it or its snapshots behind the owner's back are refused: Incus-side
 snapshots, copies, backups, refreshes and renames are not supported and the
 RBD image is never resized. After the external owner has grown the image
 (e.g. a volume extend), setting the volume's `size` to the image's actual
-size grows the contained filesystem to fill the device; any other size is
+size grows the contained file system to fill the device; any other size is
 refused as the externally managed device size is authoritative.
 
 Mounting a volume is refused while its image is in use elsewhere (it has
 active RBD watchers from this or another server), as concurrent use of the
-same filesystem would corrupt it. This check is advisory; authoritative
+same file system would corrupt it. This check is advisory; authoritative
 exclusion is expected from the external owner's attachment tracking.
 
 Shared storage migration handover is supported: when two standalone servers
@@ -57,7 +57,7 @@ the allocation UUID, persistent compute UUID, and the instance's local
 OpenStack owner UUID. All four values must match the authoritative local
 instance configuration. Incus persists a pending receipt before touching storage
 and completes it only after the retained root has a stable normalized journal,
-the filesystem has been synced, and the RBD has been unmapped locally. The
+the file system has been synced, and the RBD has been unmapped locally. The
 receipt records both the RBD image name and its immutable Ceph image identity,
 as well as the proven-clean materialization baseline and cleanup disposition.
 Those fields are matched against the committed materialization attempt before
@@ -65,7 +65,7 @@ any unmap, volume database deletion, or receipt completion. The identity check
 and local release run under the volume lock, so a same-name replacement cannot
 be mistaken for the released generation. Before legacy ID-map normalization,
 the identity is checked again after mounting; the resulting RBD watcher pins
-that exact image throughout the filesystem transition. Deletion then performs
+that exact image throughout the file system transition. Deletion then performs
 another identity check while holding the volume lock.
 Storage-handover protected record deletion produces a `detached` receipt after
 the local claim is removed without changing or deleting the shared RBD object.
@@ -82,7 +82,7 @@ bypasses cannot safely infer the required ID map. A legacy shifted root without
 a journal is seeded from its non-empty Incus `volatile.last_state.idmap`.
 
 New root images must be published with a stable normalized marker at the raw
-filesystem top level, beside `rootfs/`, rather than inside the guest rootfs:
+file system top level, beside `rootfs/`, rather than inside the guest rootfs:
 
     {"version":1,"state":"stable","idmap":[]}
 
