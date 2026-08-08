@@ -11,10 +11,10 @@ import (
 
 	"github.com/lxc/incus/v7/internal/instancewriter"
 	"github.com/lxc/incus/v7/internal/linux"
-	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
 	"github.com/lxc/incus/v7/internal/server/backup"
 	localMigration "github.com/lxc/incus/v7/internal/server/migration"
 	"github.com/lxc/incus/v7/internal/server/operations"
+	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/revert"
 	"github.com/lxc/incus/v7/shared/subprocess"

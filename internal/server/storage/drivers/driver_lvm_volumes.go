@@ -281,7 +281,10 @@ func (d *lvm) deleteVolume(vol Volume, expectedStorageIdentity string, volumeLoc
 		}
 	}
 
-	if vol.contentType == ContentTypeFS && !(expectedStorageIdentity != "" && !lvExists) {
+	// An identity-bound release whose LV is already gone has nothing left to
+	// unmount, so skip the filesystem teardown in that case only.
+	identityBoundAndLVGone := expectedStorageIdentity != "" && !lvExists
+	if vol.contentType == ContentTypeFS && !identityBoundAndLVGone {
 		// Remove the volume from the storage device.
 		mountPath := vol.MountPath()
 		err = os.RemoveAll(mountPath)

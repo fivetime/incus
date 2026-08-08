@@ -35,7 +35,6 @@ import (
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/migration"
 	"github.com/lxc/incus/v7/internal/rsync"
-	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
 	"github.com/lxc/incus/v7/internal/server/backup"
 	backupConfig "github.com/lxc/incus/v7/internal/server/backup/config"
 	"github.com/lxc/incus/v7/internal/server/cluster/request"
@@ -50,6 +49,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/operations"
 	"github.com/lxc/incus/v7/internal/server/project"
 	"github.com/lxc/incus/v7/internal/server/response"
+	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
 	"github.com/lxc/incus/v7/internal/server/state"
 	"github.com/lxc/incus/v7/internal/server/storage/drivers"
 	"github.com/lxc/incus/v7/internal/server/storage/memorypipe"
@@ -2888,7 +2888,10 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 
 	// Remove the volume record from the database.
 	err = VolumeDBDelete(b, inst.Project().Name, inst.Name(), vol.Type())
-	if err != nil && !(response.IsNotFoundError(err) && storageReleaseReceiptAllowsMissingVolumeDB(releaseReceipt)) {
+	// A detached release is allowed to find the record already gone; any other
+	// missing record is still an error.
+	recordAlreadyReleased := response.IsNotFoundError(err) && storageReleaseReceiptAllowsMissingVolumeDB(releaseReceipt)
+	if err != nil && !recordAlreadyReleased {
 		return err
 	}
 
