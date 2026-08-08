@@ -1345,6 +1345,7 @@ func (d *ceph) ReleaseVolumeDetachedLocalState(vol Volume, expectedStorageIdenti
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	return d.releaseCephVolumeLocalStateLocked(vol, identity, true)

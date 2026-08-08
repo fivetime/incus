@@ -12,6 +12,7 @@ func TestValidateMaterializationOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if digest != strings.TrimPrefix(testMaterializationOwnership, "sha256:") {
 		t.Fatalf("Unexpected digest %q", digest)
 	}
@@ -29,6 +30,7 @@ func TestParseLVMVolumeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if identity != "lvm:p3ygAT-VxNd-0z3P-arHa-LYsV-5dDH-1klQ1G" {
 		t.Fatalf("Unexpected LVM identity %q", identity)
 	}
@@ -47,6 +49,7 @@ func TestParseLVMMaterializationTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(tags) != 1 || tags[0] != tag {
 		t.Fatalf("Unexpected LVM ownership tags %#v", tags)
 	}
@@ -62,6 +65,7 @@ func TestParseZFSVolumeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if identity != "zfs:18446744073709551615" {
 		t.Fatalf("Unexpected ZFS identity %q", identity)
 	}
@@ -78,9 +82,11 @@ func TestValidateZFSIdentityBoundDeletion(t *testing.T) {
 	if err := validateZFSIdentityBoundDeletion("", 1); err != nil {
 		t.Fatalf("Ordinary ZFS deletion unexpectedly rejected clones: %v", err)
 	}
+
 	if err := validateZFSIdentityBoundDeletion("immutable", 0); err != nil {
 		t.Fatalf("Clone-free identity deletion was rejected: %v", err)
 	}
+
 	if err := validateZFSIdentityBoundDeletion("immutable", 1); err == nil {
 		t.Fatal("Identity-bound ZFS deletion accepted a dependent clone")
 	}
@@ -91,6 +97,7 @@ func TestParseZFSMaterializationOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if ownership != testMaterializationOwnership {
 		t.Fatalf("Unexpected ZFS ownership %q", ownership)
 	}
@@ -100,6 +107,7 @@ func TestParseZFSMaterializationOwnership(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if ownership != "" {
 			t.Fatalf("Non-local ZFS ownership %q was accepted", ownership)
 		}
@@ -120,6 +128,7 @@ func TestParseBtrfsVolumeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if identity != "btrfs:96af5c57-a83a-4db8-86f9-e22ec1365f28" {
 		t.Fatalf("Unexpected Btrfs identity %q", identity)
 	}
@@ -142,6 +151,7 @@ func TestDeleteMaterializedVolumeWithIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if actions != 1 {
 		t.Fatalf("Identity-bound delete action ran %d times", actions)
 	}
@@ -153,6 +163,7 @@ func TestDeleteMaterializedVolumeWithIdentity(t *testing.T) {
 	if err == nil {
 		t.Fatal("Identity-bound delete accepted an empty identity")
 	}
+
 	if actions != 1 {
 		t.Fatal("Delete action ran without an expected identity")
 	}

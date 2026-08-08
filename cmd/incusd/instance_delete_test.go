@@ -72,6 +72,7 @@ func TestRootfsIDMapReleaseBindingNeedsArm(t *testing.T) {
 	protected := map[string]string{
 		internalInstance.ConfigVolatileMigrationStorageDeleteProtection: "true",
 	}
+
 	arm, err = rootfsIDMapReleaseBindingNeedsArm(protected, token, owner, allocationID, computeID)
 	if err != nil || !arm {
 		t.Fatalf("Protected handover record could not arm detached release: arm=%t err=%v", arm, err)
@@ -83,6 +84,7 @@ func TestRootfsIDMapReleaseBindingNeedsArm(t *testing.T) {
 		internalInstance.ConfigVolatileRootfsIDMapAllocationID: allocationID,
 		internalInstance.ConfigVolatileRootfsIDMapComputeID:    computeID,
 	}
+
 	arm, err = rootfsIDMapReleaseBindingNeedsArm(config, token, owner, allocationID, computeID)
 	if err != nil || arm {
 		t.Fatalf("Matching repeated release binding was not idempotent: arm=%t err=%v", arm, err)

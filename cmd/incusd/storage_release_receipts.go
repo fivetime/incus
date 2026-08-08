@@ -458,6 +458,7 @@ func validateDeletedStorageReleaseReceiptIdentity(driver any, vol drivers.Volume
 		if err != nil {
 			return fmt.Errorf("Inspect exact deleted storage identity: %w", err)
 		}
+
 		if exists {
 			return errors.New("Storage recorded as deleted still has its exact identity")
 		}
@@ -476,6 +477,7 @@ func validateDeletedStorageReleaseReceiptIdentity(driver any, vol drivers.Volume
 	if err != nil {
 		return fmt.Errorf("Read replacement storage identity: %w", err)
 	}
+
 	if identity == receipt.StorageIdentity {
 		return errors.New("Storage recorded as deleted exists again with the same identity")
 	}
@@ -505,6 +507,7 @@ func validateStorageReleaseReceiptLocalState(provider drivers.VolumeLocalStatePr
 	if err != nil {
 		return fmt.Errorf("Inspect receipt volume local state: %w", err)
 	}
+
 	if hasLocalState {
 		return errors.New("Storage release receipt has residual host-local volume state")
 	}

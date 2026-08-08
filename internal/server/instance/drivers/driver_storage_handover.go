@@ -141,6 +141,7 @@ func releaseSharedStorageMigrationTargetClaim(driverName string, isRunning func(
 		internalInstance.ConfigVolatileMigrationStorageHandoverRole:     internalInstance.StorageHandoverRoleTarget,
 		internalInstance.ConfigVolatileMigrationStorageDeleteProtection: "true",
 	}
+
 	if driverName == "ceph" {
 		changes[internalInstance.ConfigVolatileMigrationStorageHandover] = "pending"
 	}

@@ -54,9 +54,11 @@ func TestRootfsIDMapEmptyMeansNeverApplied(t *testing.T) {
 	if !rootfsIDMapEmpty(nil) {
 		t.Fatal("nil current map must count as never applied")
 	}
+
 	if !rootfsIDMapEmpty(&idmap.Set{}) {
 		t.Fatal("empty current map must count as never applied")
 	}
+
 	applied := &idmap.Set{Entries: []idmap.Entry{{
 		IsUID: true, IsGID: true, HostID: 1000000, NSID: 0, MapRange: 65536,
 	}}}
@@ -87,6 +89,7 @@ func TestCompletedStorageReleaseReceiptMatchesInstance(t *testing.T) {
 		internalInstance.ConfigOpenStackRootfsMaterializationID: token,
 		"user.openstack.uuid":                                   owner,
 	}
+
 	receipt := &db.StorageReleaseReceipt{
 		Token: token, Owner: owner, AllocationID: allocation, ComputeID: compute, MaterializationID: token,
 		Project: "nova", InstanceName: "instance-00000001",
@@ -122,6 +125,7 @@ func TestDeletedCephStorageReleaseRequiresLocalStateProof(t *testing.T) {
 		StorageDriver: "ceph",
 		Outcome:       storagereleasereceipt.OutcomeDeleted,
 	}
+
 	if !storageReleaseReceiptRequiresLocalStateProof(receipt) {
 		t.Fatal("Deleted Ceph receipt could reach completion or volume DB deletion without a local mapping proof")
 	}
@@ -168,9 +172,11 @@ func TestPendingStorageReleaseRejectsSameNameRecreation(t *testing.T) {
 	if err := validatePendingStorageReleaseBinding(true, receipt.StorageIdentity, receipt); err == nil {
 		t.Fatal("Deleted identity reached receipt completion after reappearing")
 	}
+
 	if err := validatePendingStorageReleaseBinding(true, "rbd_data.second-generation", receipt); err != nil {
 		t.Fatalf("Same-name replacement blocked exact old-generation completion: %v", err)
 	}
+
 	if err := validatePendingStorageReleaseBinding(false, "", receipt); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +221,7 @@ func TestRootfsNormalizationRejectsSameNameRecreationBeforeRemap(t *testing.T) {
 	if err == nil {
 		t.Fatal("Same-name replacement reached rootfs ID map normalization")
 	}
+
 	if diskIDMapReads != 0 || remaps != 0 || volatileWrites != 0 {
 		t.Fatalf("Identity mismatch reached rootfs normalization: DiskIdmap=%d RemapRootfsIDMap=%d VolatileSet=%d", diskIDMapReads, remaps, volatileWrites)
 	}
@@ -230,6 +237,7 @@ func TestRootfsNormalizationRejectsSameNameRecreationBeforeRemap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if diskIDMapReads != 1 || remaps != 1 || volatileWrites != 1 {
 		t.Fatalf("Matching identity did not run the complete rootfs normalization: DiskIdmap=%d RemapRootfsIDMap=%d VolatileSet=%d", diskIDMapReads, remaps, volatileWrites)
 	}

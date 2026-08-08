@@ -1703,6 +1703,7 @@ func (d *zfs) deleteVolume(vol Volume, expectedStorageIdentity string, op *opera
 		if err != nil {
 			return err
 		}
+
 		err = validateZFSIdentityBoundDeletion(expectedStorageIdentity, len(clones))
 		if err != nil {
 			return err

@@ -153,6 +153,7 @@ func TestStorageReleaseReceiptDigestCoversStorageIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if digest == differentBaselineDigest {
 		t.Fatal("Different materialization baseline retained the prior receipt digest")
 	}
@@ -163,6 +164,7 @@ func TestStorageReleaseReceiptDigestCoversStorageIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if digest == differentDispositionDigest {
 		t.Fatal("Different cleanup disposition retained the prior receipt digest")
 	}
@@ -254,6 +256,7 @@ func TestStorageReleaseReceiptRejectsResidualLocalState(t *testing.T) {
 	if err := validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol); err != nil {
 		t.Fatal(err)
 	}
+
 	if provider.expectedIdentity != receipt.StorageIdentity {
 		t.Fatalf("Local-state proof received %q instead of receipt identity %q", provider.expectedIdentity, receipt.StorageIdentity)
 	}
@@ -262,6 +265,7 @@ func TestStorageReleaseReceiptRejectsResidualLocalState(t *testing.T) {
 	if err := validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol); err == nil {
 		t.Fatal("Receipt without an immutable identity reached local-state proof")
 	}
+
 	receipt.StorageIdentity = "rbd_data.1234567890abcdef"
 
 	inspectErr := errors.New("local state inspection failed")

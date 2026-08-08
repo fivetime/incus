@@ -32,6 +32,7 @@ func storageMaterializationAttemptForRequest(s *state.State, projectName string,
 		config[internalInstance.ConfigOpenStackRootfsMaterializationID],
 		config["user.openstack.uuid"],
 	}
+
 	if values[2] == "" {
 		return nil, nil
 	}
@@ -40,6 +41,7 @@ func storageMaterializationAttemptForRequest(s *state.State, projectName string,
 	if err != nil {
 		return nil, err
 	}
+
 	size, err := strconv.ParseInt(config["security.idmap.size"], 10, 64)
 	if err != nil {
 		return nil, err
@@ -50,10 +52,12 @@ func storageMaterializationAttemptForRequest(s *state.State, projectName string,
 	if err != nil {
 		return nil, err
 	}
+
 	expected := &db.StorageMaterializationAttempt{Token: token, AllocationID: values[0], ComputeID: values[1], Owner: values[3], Project: projectName, InstanceName: req.Name, IDMapBase: base, IDMapSize: size, StorageDriver: attempt.StorageDriver, StoragePool: attempt.StoragePool, StorageVolume: attempt.StorageVolume, RBDImage: attempt.RBDImage, StorageIdentity: attempt.StorageIdentity, BaselineClean: attempt.BaselineClean, CleanupDisposition: attempt.CleanupDisposition}
 	if !storagematerializationattempt.SameBinding(attempt, expected) {
 		return nil, storagematerializationattempt.ErrBindingMismatch
 	}
+
 	return attempt, nil
 }
 
@@ -71,11 +75,13 @@ func validateStorageMaterializationRequest(req *api.InstancesPost) error {
 		token,
 		owner,
 	}
+
 	protocolConfigured := allocationID != "" || computeID != "" || token != ""
 	openStackIDMapConfigured := owner != "" && (idmapBase != "" || idmapSize != "")
 	if !protocolConfigured && !openStackIDMapConfigured {
 		return nil
 	}
+
 	for _, value := range values {
 		if value == "" {
 			return errors.New("OpenStack rootfs materialization A/H/T/U must be supplied together")
@@ -95,6 +101,7 @@ func validateStorageMaterializationRequest(req *api.InstancesPost) error {
 	if err != nil || base < 0 {
 		return errors.New("Storage materialization attempts require a fixed security.idmap.base")
 	}
+
 	size, err := strconv.ParseInt(idmapSize, 10, 64)
 	if err != nil || size <= 0 || size > 1<<32 || base > (1<<32)-size {
 		return errors.New("Storage materialization attempts require a valid fixed security.idmap.size")
@@ -138,9 +145,11 @@ func commitMigrationAndStorageMaterializationAttempts(ctx context.Context, s *st
 	if err != nil {
 		return fmt.Errorf("Load materialized instance before migration commit: %w", err)
 	}
+
 	if err := validateStorageMaterializationInstance(attempt, inst); err != nil {
 		return err
 	}
+
 	if err := validateStorageMaterializationHandoverTarget(attempt, inst.LocalConfig()); err != nil {
 		return err
 	}
@@ -180,15 +189,18 @@ func failStorageMaterializationAttempt(s *state.State, attempt *db.StorageMateri
 	if attempt == nil {
 		return createErr
 	}
+
 	manager := storagematerializationattempt.New(s.DB.Node)
 	latest, err := manager.Abort(context.Background(), attempt.Token)
 	if err != nil {
 		return errors.Join(createErr, err)
 	}
+
 	err = reconcileStorageMaterializationAttempt(context.Background(), s, latest, false)
 	if err != nil {
 		return errors.Join(createErr, fmt.Errorf("Storage materialization cleanup is incomplete: %w", err))
 	}
+
 	return createErr
 }
 
@@ -217,12 +229,14 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 	if err != nil {
 		return err
 	}
+
 	defer unlockInstance()
 
 	unlockAttempt, err := locking.Lock(ctx, "storage_materialization_reconcile_"+attempt.Token)
 	if err != nil {
 		return err
 	}
+
 	defer unlockAttempt()
 
 	manager := storagematerializationattempt.New(s.DB.Node)
@@ -230,15 +244,19 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 	if err != nil {
 		return err
 	}
+
 	if err := validateStorageMaterializationReconcileBoundary(s, attempt, allowUnboundSameDaemon); err != nil {
 		return err
 	}
+
 	if attempt.State == storagematerializationattempt.StateClean {
 		return nil
 	}
+
 	if attempt.State != storagematerializationattempt.StateAborted || !attempt.Started || attempt.Finished {
 		return errors.New("Only an aborted started materialization attempt can be reconciled")
 	}
+
 	deleteBackend, err := storageMaterializationCleanupDeletesBackend(attempt)
 	if err != nil {
 		return err
@@ -248,6 +266,7 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 	if err != nil {
 		return err
 	}
+
 	if pool.Driver().Info().Name != attempt.StorageDriver {
 		return errors.New("Materialization storage driver changed")
 	}
@@ -280,6 +299,7 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 				if err != nil {
 					return fmt.Errorf("Read materialized volume identity before cleanup: %w", err)
 				}
+
 				if identity != attempt.StorageIdentity {
 					return errors.New("Materialized volume identity changed before cleanup")
 				}
@@ -294,9 +314,11 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 		if err := validateStorageMaterializationInstance(attempt, inst); err != nil {
 			return err
 		}
+
 		if inst.IsRunning() {
 			return errors.New("Cannot reconcile a running materialization target")
 		}
+
 		if storageMaterializationCleanupProtectsBackend(attempt.CleanupDisposition) && !internalInstance.StorageDeleteProtected(inst.LocalConfig()) {
 			if err := inst.VolatileSet(map[string]string{internalInstance.ConfigVolatileMigrationStorageDeleteProtection: "true"}); err != nil {
 				return fmt.Errorf("Persist retained storage cleanup disposition on instance: %w", err)
@@ -313,6 +335,7 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 	if err == nil {
 		return errors.New("Materialization instance still exists after cleanup")
 	}
+
 	if !response.IsNotFoundError(err) {
 		return err
 	}
@@ -323,6 +346,7 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 		if attempt.RBDImage != "" && config["ceph.rbd.image_name"] != attempt.RBDImage {
 			return errors.New("Materialization volume DB claim refers to another RBD image")
 		}
+
 		vol := pool.GetVolume(drivers.VolumeTypeContainer, drivers.ContentTypeFS, attempt.StorageVolume, config)
 		if !deleteBackend {
 			// The attempt has failed and its volume record is being torn down, so leftover
@@ -338,6 +362,7 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 				}
 			}
 		}
+
 		if err := storagePools.VolumeDBDelete(pool, attempt.Project, attempt.InstanceName, drivers.VolumeTypeContainer); err != nil {
 			return err
 		}
@@ -349,6 +374,7 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 	if attempt.RBDImage != "" {
 		config["ceph.rbd.image_name"] = attempt.RBDImage
 	}
+
 	vol := pool.GetVolume(drivers.VolumeTypeContainer, drivers.ContentTypeFS, attempt.StorageVolume, config)
 	if !deleteBackend {
 		// No database record exists for this claim, so any leftover mount or mount
@@ -398,9 +424,11 @@ func bindMaterializationCleanupIdentity(ctx context.Context, manager *storagemat
 	if attempt == nil {
 		return nil, errors.New("Storage materialization attempt is required")
 	}
+
 	if !exists || attempt.StorageIdentity != "" {
 		return attempt, nil
 	}
+
 	if !attempt.BaselineClean || attempt.CleanupDisposition != storagematerializationattempt.CleanupDelete || attempt.StoragePhase != storagematerializationattempt.PhasePending {
 		return nil, errors.New("Cannot bind an unproven materialization storage generation during cleanup")
 	}
@@ -409,21 +437,26 @@ func bindMaterializationCleanupIdentity(ctx context.Context, manager *storagemat
 	if !ok {
 		return nil, errors.New("Cannot recover materialized storage without immutable identity support")
 	}
+
 	identity, err := provider.GetVolumeIdentity(vol)
 	if err != nil {
 		return nil, fmt.Errorf("Read newly materialized volume identity during cleanup: %w", err)
 	}
+
 	if identity == "" {
 		return nil, errors.New("Newly materialized volume has an empty immutable identity")
 	}
+
 	markerProvider, ok := driver.(drivers.VolumeMaterializationOwnershipProvider)
 	if !ok {
 		return nil, errors.New("Cannot recover materialized storage without durable ownership evidence")
 	}
+
 	expectedMarker, err := storagematerializationattempt.OwnershipMarker(attempt, identity)
 	if err != nil {
 		return nil, fmt.Errorf("Build materialized volume ownership marker: %w", err)
 	}
+
 	marker, err := markerProvider.GetVolumeMaterializationOwnership(vol)
 	if err != nil {
 		return nil, fmt.Errorf("Read materialized volume ownership marker: %w", err)
@@ -472,6 +505,7 @@ func storageMaterializationCleanupDeletesBackend(attempt *db.StorageMaterializat
 		if attempt.StorageDriver == "cephext" {
 			return false, errors.New("External Ceph materialization cannot delete its backend image")
 		}
+
 		return true, nil
 	case storagematerializationattempt.CleanupDetach, storagematerializationattempt.CleanupHandover:
 		return false, nil
@@ -502,6 +536,7 @@ func reconcileStorageMaterializationAttemptsAfterRestart(ctx context.Context, s 
 		if err == nil {
 			err = reconcileStorageMaterializationAttempt(ctx, s, attempt, false)
 		}
+
 		if err != nil {
 			logger.Error("Storage materialization recovery remains uncertain", logger.Ctx{
 				"attempt":  attempt.Token,

@@ -63,6 +63,7 @@ func storageMaterializationAttemptGet(d *Daemon, r *http.Request) response.Respo
 	if resp != nil {
 		return resp
 	}
+
 	return response.SyncResponse(true, storageMaterializationAttemptToAPI(attempt))
 }
 
@@ -101,6 +102,7 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 	if err != nil {
 		return response.BadRequest(err)
 	}
+
 	req := api.StorageMaterializationAttemptPut{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return response.BadRequest(err)
@@ -114,13 +116,16 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 		if err != nil {
 			return response.BadRequest(err)
 		}
+
 		if err := storageMaterializationAttemptPermission(s, r, projectName, expected.InstanceName); err != nil {
 			return response.SmartError(err)
 		}
+
 		unlock, err := locking.Lock(r.Context(), "storage_materialization_instance_"+expected.Project+"_"+expected.InstanceName)
 		if err != nil {
 			return response.InternalError(err)
 		}
+
 		defer unlock()
 
 		if err := validateStorageMaterializationRegistrationBaseline(r.Context(), s, expected); err != nil {
@@ -131,6 +136,7 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 		if err != nil {
 			return storageMaterializationAttemptError(err)
 		}
+
 		return response.SyncResponse(true, storageMaterializationAttemptToAPI(attempt))
 	case storagematerializationattempt.StateAborted:
 		// Loaded only to reject a request that does not name a live attempt;
@@ -144,6 +150,7 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 		if err != nil {
 			return storageMaterializationAttemptError(err)
 		}
+
 		if attempt.OperationUUID != "" {
 			op, opErr := operations.OperationGetInternal(attempt.OperationUUID)
 			if opErr == nil && op.Status() == api.Running {
@@ -156,20 +163,25 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 		if resp != nil {
 			return resp
 		}
+
 		if !attempt.Started {
 			return response.SyncResponse(true, storageMaterializationAttemptToAPI(attempt))
 		}
+
 		if err := storageMaterializationAttemptOperationFinished(s, attempt); err != nil {
 			return response.Conflict(err)
 		}
+
 		err = reconcileStorageMaterializationAttempt(r.Context(), s, attempt, false)
 		if err != nil {
 			return response.Conflict(err)
 		}
+
 		attempt, err = manager.Get(r.Context(), token)
 		if err != nil {
 			return storageMaterializationAttemptError(err)
 		}
+
 		return response.SyncResponse(true, storageMaterializationAttemptToAPI(attempt))
 	default:
 		return response.BadRequest(fmt.Errorf("Unsupported storage materialization attempt state %q", req.State))
@@ -189,6 +201,7 @@ func validateStorageMaterializationRegistrationBaseline(ctx context.Context, s *
 	if err == nil {
 		return errors.New("Cannot register storage materialization for an existing instance")
 	}
+
 	if !response.IsNotFoundError(err) {
 		return fmt.Errorf("Check materialization instance baseline: %w", err)
 	}
@@ -197,9 +210,11 @@ func validateStorageMaterializationRegistrationBaseline(ctx context.Context, s *
 	if err != nil {
 		return fmt.Errorf("Load materialization storage pool: %w", err)
 	}
+
 	if pool.Driver().Info().Name != expected.StorageDriver {
 		return errors.New("Materialization storage driver does not match its pool")
 	}
+
 	if err := validateStorageMaterializationCleanupCapabilities(pool.Driver(), expected.CleanupDisposition); err != nil {
 		return err
 	}
@@ -213,6 +228,7 @@ func validateStorageMaterializationRegistrationBaseline(ctx context.Context, s *
 	if err == nil {
 		return errors.New("Cannot register materialization while its local volume claim exists")
 	}
+
 	if !response.IsNotFoundError(err) {
 		return fmt.Errorf("Check materialization volume database baseline: %w", err)
 	}
@@ -221,6 +237,7 @@ func validateStorageMaterializationRegistrationBaseline(ctx context.Context, s *
 	if err != nil {
 		return fmt.Errorf("Check materialization snapshot baseline: %w", err)
 	}
+
 	if len(snapshots) != 0 {
 		return errors.New("Cannot register materialization while local volume snapshot claims exist")
 	}
@@ -229,6 +246,7 @@ func validateStorageMaterializationRegistrationBaseline(ctx context.Context, s *
 	if expected.RBDImage != "" {
 		config["ceph.rbd.image_name"] = expected.RBDImage
 	}
+
 	vol := pool.GetVolume(drivers.VolumeTypeContainer, drivers.ContentTypeFS, expected.StorageVolume, config)
 	exists, err := pool.Driver().HasVolume(vol)
 	if err != nil {
@@ -240,37 +258,46 @@ func validateStorageMaterializationRegistrationBaseline(ctx context.Context, s *
 		if exists {
 			return errors.New("Cannot register new root storage materialization over an existing backend volume")
 		}
+
 		expected.StorageIdentity = ""
 	case storagematerializationattempt.CleanupDetach, storagematerializationattempt.CleanupHandover:
 		if !exists {
 			return errors.New("Cannot register shared root storage materialization for an absent backend volume")
 		}
+
 		localStateProvider, ok := pool.Driver().(drivers.VolumeLocalStateProvider)
 		if !ok {
 			return errors.New("Shared root storage driver cannot prove its local claim baseline")
 		}
+
 		identityProvider, ok := pool.Driver().(drivers.VolumeIdentityProvider)
 		if !ok {
 			return errors.New("Shared root storage driver cannot provide immutable identity")
 		}
+
 		identity, err := identityProvider.GetVolumeIdentity(vol)
 		if err != nil {
 			return fmt.Errorf("Read shared root storage baseline identity: %w", err)
 		}
+
 		if identity == "" {
 			return errors.New("Shared root storage baseline identity is empty")
 		}
+
 		hasLocalState, err := localStateProvider.HasVolumeLocalState(vol, identity)
 		if err != nil {
 			return fmt.Errorf("Check materialization local storage baseline: %w", err)
 		}
+
 		if hasLocalState {
 			return errors.New("Cannot register materialization while local storage state exists")
 		}
+
 		expected.StorageIdentity = identity
 	default:
 		return errors.New("Storage materialization cleanup disposition is invalid")
 	}
+
 	expected.BaselineClean = true
 
 	return nil
@@ -284,9 +311,11 @@ func validateStorageMaterializationCleanupCapabilities(driver drivers.Driver, cl
 	if _, ok := driver.(drivers.VolumeIdentityProvider); !ok {
 		return errors.New("Storage materialization cleanup requires immutable volume identity support")
 	}
+
 	if _, ok := driver.(drivers.VolumeMaterializationOwnershipProvider); !ok {
 		return errors.New("Storage materialization cleanup requires durable volume ownership support")
 	}
+
 	if _, ok := driver.(drivers.VolumeIdentityBoundDeleter); !ok {
 		return errors.New("Storage materialization cleanup requires identity-bound volume deletion support")
 	}
@@ -337,13 +366,16 @@ func storageMaterializationAttemptDelete(d *Daemon, r *http.Request) response.Re
 	if resp != nil {
 		return resp
 	}
+
 	if err := validateStorageMaterializationAcknowledgement(r, attempt); err != nil {
 		return response.Conflict(err)
 	}
+
 	err := storagematerializationattempt.New(d.State().DB.Node).Delete(r.Context(), attempt.Token)
 	if err != nil {
 		return storageMaterializationAttemptError(err)
 	}
+
 	return response.EmptySyncResponse
 }
 
@@ -361,11 +393,13 @@ func validateStorageMaterializationAcknowledgement(r *http.Request, attempt *db.
 		"idmap-base":    strconv.FormatInt(attempt.IDMapBase, 10),
 		"idmap-size":    strconv.FormatInt(attempt.IDMapSize, 10),
 	}
+
 	for name, expected := range required {
 		actual := r.URL.Query().Get(name)
 		if actual == "" {
 			return fmt.Errorf("Missing required query parameter %q", name)
 		}
+
 		if subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
 			return storagematerializationattempt.ErrBindingMismatch
 		}
@@ -379,20 +413,25 @@ func loadStorageMaterializationAttempt(d *Daemon, r *http.Request) (*db.StorageM
 	if resp := forwardedResponseIfTargetIsRemote(s, r); resp != nil {
 		return nil, resp
 	}
+
 	token, err := storageMaterializationAttemptToken(r)
 	if err != nil {
 		return nil, response.BadRequest(err)
 	}
+
 	attempt, err := storagematerializationattempt.New(s.DB.Node).Get(r.Context(), token)
 	if err != nil {
 		return nil, storageMaterializationAttemptError(err)
 	}
+
 	if attempt.Project != request.ProjectParam(r) {
 		return nil, response.NotFound(storagematerializationattempt.ErrNotFound)
 	}
+
 	if err := storageMaterializationAttemptPermission(s, r, attempt.Project, attempt.InstanceName); err != nil {
 		return nil, response.SmartError(err)
 	}
+
 	return attempt, nil
 }
 
@@ -401,9 +440,11 @@ func storageMaterializationAttemptToken(r *http.Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if err := validateCanonicalStorageMaterializationUUID(token); err != nil {
 		return "", err
 	}
+
 	return token, nil
 }
 
@@ -416,21 +457,27 @@ func storageMaterializationAttemptFromPut(token string, projectName string, req 
 	if req.IDMapBase == nil || req.IDMapSize == nil || *req.IDMapBase < 0 || *req.IDMapSize <= 0 || *req.IDMapSize > 1<<32 || *req.IDMapBase > (1<<32)-*req.IDMapSize {
 		return nil, errors.New("A fixed idmap_base and idmap_size are required")
 	}
+
 	if req.InstanceName == "" || req.StorageDriver == "" || req.StoragePool == "" || req.StorageVolume == "" {
 		return nil, errors.New("Instance and storage binding are required")
 	}
+
 	if err := serverInstance.ValidName(req.InstanceName, false); err != nil {
 		return nil, fmt.Errorf("Invalid instance name: %w", err)
 	}
+
 	if err := validateStorageMaterializationName("storage driver", req.StorageDriver, 64, false); err != nil {
 		return nil, err
 	}
+
 	if err := validateStorageMaterializationName("storage pool", req.StoragePool, 255, true); err != nil {
 		return nil, err
 	}
+
 	if err := validateStorageMaterializationName("storage volume", req.StorageVolume, 255, true); err != nil {
 		return nil, err
 	}
+
 	if req.RBDImage != "" {
 		if err := validateStorageMaterializationName("RBD image", req.RBDImage, 255, true); err != nil {
 			return nil, err
@@ -439,12 +486,15 @@ func storageMaterializationAttemptFromPut(token string, projectName string, req 
 	if req.CleanupDisposition != storagematerializationattempt.CleanupDelete && req.CleanupDisposition != storagematerializationattempt.CleanupDetach && req.CleanupDisposition != storagematerializationattempt.CleanupHandover {
 		return nil, errors.New("cleanup_disposition must be delete, detach, or handover")
 	}
+
 	if req.StorageDriver == "cephext" && req.CleanupDisposition != storagematerializationattempt.CleanupDetach {
 		return nil, errors.New("cephext materialization requires detach cleanup")
 	}
+
 	if req.CleanupDisposition == storagematerializationattempt.CleanupHandover && req.StorageDriver != "ceph" {
 		return nil, errors.New("handover materialization requires the ceph storage driver")
 	}
+
 	return &db.StorageMaterializationAttempt{Token: token, AllocationID: req.AllocationID, ComputeID: req.ComputeID, Owner: req.Owner, Project: projectName, InstanceName: req.InstanceName, IDMapBase: *req.IDMapBase, IDMapSize: *req.IDMapSize, StorageDriver: req.StorageDriver, StoragePool: req.StoragePool, StorageVolume: req.StorageVolume, RBDImage: req.RBDImage, CleanupDisposition: req.CleanupDisposition}, nil
 }
 
@@ -452,11 +502,13 @@ func validateStorageMaterializationName(label string, value string, maxLength in
 	if value == "" || len(value) > maxLength {
 		return fmt.Errorf("Invalid %s length", label)
 	}
+
 	for _, r := range value {
 		valid := r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_'
 		if allowDot {
 			valid = valid || r == '.'
 		}
+
 		if !valid {
 			return fmt.Errorf("Invalid character %q in %s", r, label)
 		}
@@ -470,6 +522,7 @@ func validateCanonicalStorageMaterializationUUID(value string) error {
 	if err != nil {
 		return err
 	}
+
 	if parsed.String() != value {
 		return errors.New("UUID must use canonical lowercase 8-4-4-4-12 form")
 	}
@@ -482,6 +535,7 @@ func storageMaterializationAttemptToAPI(a *db.StorageMaterializationAttempt) *ap
 	if a.ProofOutcome != "" && a.ProofDigest != "" {
 		result.Proof = &api.StorageMaterializationProof{Outcome: a.ProofOutcome, Digest: a.ProofDigest}
 	}
+
 	return result
 }
 

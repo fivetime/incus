@@ -93,6 +93,7 @@ func (s *fakeCephIdentityReleaseStore) RenameImage(oldName string, newName strin
 	if !found {
 		return errCephIdentityImageNotFound
 	}
+
 	if _, found := s.active[newName]; found {
 		return errors.New("destination exists")
 	}
@@ -149,6 +150,7 @@ func (s *fakeCephIdentityReleaseStore) TrashRestore(imageID string, name string)
 	if !found {
 		return errCephIdentityImageNotFound
 	}
+
 	if _, found := s.active[name]; found {
 		return errors.New("destination exists")
 	}
@@ -205,6 +207,7 @@ func (s *fakeCephIdentityReleaseStore) SnapshotUnprotect(name string, snapshotNa
 	if _, found := s.active[name]; !found {
 		return errCephIdentityImageNotFound
 	}
+
 	if len(s.snapshots[name][snapshotName]) > 0 {
 		return errors.New("snapshot has children")
 	}
@@ -228,9 +231,11 @@ func TestFindRBDMappingsByIdentity(t *testing.T) {
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
+
 		if err := os.WriteFile(filepath.Join(dir, "pool_id"), []byte(fmt.Sprintf("%d\n", poolID)), 0o644); err != nil {
 			t.Fatal(err)
 		}
+
 		if err := os.WriteFile(filepath.Join(dir, "image_id"), []byte(imageID+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -245,6 +250,7 @@ func TestFindRBDMappingsByIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(mappings) != 2 || mappings[0].DevicePath != "/dev/rbd1" || mappings[1].DevicePath != "/dev/rbd4" {
 		t.Fatalf("Unexpected exact mappings: %+v", mappings)
 	}
@@ -259,14 +265,17 @@ func TestDetachedRBDSysfsReadErrorIsTransient(t *testing.T) {
 	if !isDetachedRBDSysfsReadError(enodev) {
 		t.Fatal("ENODEV from a vanishing RBD device must be transient")
 	}
+
 	enoent := &fs.PathError{Op: "open", Path: "/sys/devices/rbd/42/pool", Err: unix.ENOENT}
 	if !isDetachedRBDSysfsReadError(enoent) {
 		t.Fatal("ENOENT from a vanished RBD device must be transient")
 	}
+
 	eacces := &fs.PathError{Op: "open", Path: "/sys/devices/rbd/42/pool", Err: unix.EACCES}
 	if isDetachedRBDSysfsReadError(eacces) {
 		t.Fatal("a real read failure must still abort the scan")
 	}
+
 	if isDetachedRBDSysfsReadError(nil) {
 		t.Fatal("nil error is not a detached-device error")
 	}
@@ -330,6 +339,7 @@ func TestParseRBDTrashEntriesRejectsNonCanonicalIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected valid trash entry: %v", err)
 	}
+
 	if len(entries) != 1 || entries[0] != (cephRBDTrashEntry{ID: "abcdef", Name: "image"}) {
 		t.Fatalf("Unexpected trash entries: %#v", entries)
 	}
@@ -388,9 +398,11 @@ func TestFakeStoreCanMovePoolUnderTheCaller(t *testing.T) {
 		if err == nil {
 			t.Fatal("Deletion accepted a pool that changed under it")
 		}
+
 		if store.active[originalName] != expected {
 			t.Fatalf("Refused deletion still mutated the image: %v", store.active)
 		}
+
 		if len(store.trash) != 0 {
 			t.Fatalf("Refused deletion trashed an image: %v", store.trash)
 		}
@@ -407,6 +419,7 @@ func TestFakeStoreCanMovePoolUnderTheCaller(t *testing.T) {
 		if err == nil {
 			t.Fatal("verifyRBDIdentityReleasePool accepted a different pool id")
 		}
+
 		if store.poolIdentityReads != 1 {
 			t.Fatalf("Expected exactly one pool read, got %d", store.poolIdentityReads)
 		}
@@ -420,6 +433,7 @@ func TestFakeStoreCanMovePoolUnderTheCaller(t *testing.T) {
 		if err != nil || replacementExists {
 			t.Fatalf("Unmoved pool was refused: replacement=%t err=%v", replacementExists, err)
 		}
+
 		if store.poolIdentityReads == 0 {
 			t.Fatal("Deletion never read the pool identity at all")
 		}
@@ -440,6 +454,7 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 		if err != nil || replacementExists {
 			t.Fatalf("Exact deletion failed: replacement=%t err=%v", replacementExists, err)
 		}
+
 		if len(store.active) != 0 || len(store.trash) != 0 {
 			t.Fatalf("Exact image survived deletion: active=%v trash=%v", store.active, store.trash)
 		}
@@ -453,6 +468,7 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 		if err != nil || !replacementExists {
 			t.Fatalf("Stale delete did not identify replacement: replacement=%t err=%v", replacementExists, err)
 		}
+
 		if store.active[originalName] != replacement || len(store.trash) != 0 {
 			t.Fatalf("Same-name replacement was changed: active=%v trash=%v", store.active, store.trash)
 		}
@@ -470,10 +486,12 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 		if err == nil {
 			t.Fatal("Rename ABA was accepted")
 		}
+
 		quarantineName := cephIdentityName(cephIdentityReleaseQuarantinePrefix, replacement)
 		if store.active[quarantineName] != replacement {
 			t.Fatalf("Replacement was not preserved in quarantine: active=%v", store.active)
 		}
+
 		if len(store.trash) != 0 {
 			t.Fatal("Replacement reached destructive trash removal")
 		}
@@ -537,6 +555,7 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Concurrent exact restore was not reconciled: %v", err)
 		}
+
 		if len(store.active) != 0 || len(store.trash) != 0 {
 			t.Fatalf("Restored exact image survived a successful delete: active=%v trash=%v", store.active, store.trash)
 		}
@@ -551,6 +570,7 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 		if err == nil {
 			t.Fatal("Trash removal failure was hidden")
 		}
+
 		if _, found := store.trash[expected.ID]; !found {
 			t.Fatal("Failed removal did not retain exact image in trash")
 		}
@@ -570,6 +590,7 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 		if err == nil {
 			t.Fatal("Dependent clone was silently converted to a completed deletion")
 		}
+
 		if store.active[tombstoneName] != expected || len(store.trash) != 0 {
 			t.Fatalf("Dependent clone did not retain exact tombstone: active=%v trash=%v", store.active, store.trash)
 		}
@@ -598,6 +619,7 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 		if err == nil {
 			t.Fatal("Trash ABA was accepted")
 		}
+
 		quarantineName := cephIdentityName(cephIdentityReleaseQuarantinePrefix, replacement)
 		if store.active[quarantineName] != replacement {
 			t.Fatalf("Trashed replacement was not restored to quarantine: active=%v trash=%v", store.active, store.trash)
@@ -615,6 +637,7 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 	if clusterName == "" {
 		clusterName = CephDefaultCluster
 	}
+
 	userName := os.Getenv("INCUS_TEST_CEPH_USER")
 	if userName == "" {
 		userName = CephDefaultUser
@@ -648,6 +671,7 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 			_, _ = subprocess.RunCommand("rbd", "--id", userName, "--cluster", clusterName, "--pool", poolName, "snap", "purge", name)
 			_, _ = subprocess.RunCommand("rbd", "--id", userName, "--cluster", clusterName, "--pool", poolName, "rm", name)
 		}
+
 		if expected.ID != "" {
 			_, _ = subprocess.RunCommand("rbd", "--id", userName, "--cluster", clusterName, "--pool", poolName, "trash", "rm", expected.ID, "--force")
 		}
@@ -657,6 +681,7 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	expected, err = parseCanonicalRBDVolumeIdentity(identityValue)
 	if err != nil {
 		t.Fatal(err)
@@ -671,10 +696,12 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 	if err != nil || !hasLocalState {
 		t.Fatalf("Exact mapped image was not detected: state=%t err=%v", hasLocalState, err)
 	}
+
 	mappings, err := findRBDMappingsByIdentity("/sys/devices/rbd", expected)
 	if err != nil || len(mappings) == 0 {
 		t.Fatalf("Exact mapped image identity was not found in sysfs: mappings=%v err=%v", mappings, err)
 	}
+
 	for _, mapping := range mappings {
 		if mapping.PoolID != expected.PoolID || mapping.ImageID != expected.ID {
 			t.Fatalf("Unexpected mapped image identity: %#v expected=%#v", mapping, expected)
@@ -693,17 +720,21 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	replacementIdentityValue, err := driver.GetVolumeIdentity(vol)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	replacementIdentity, err := parseCanonicalRBDVolumeIdentity(replacementIdentityValue)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if replacementIdentity.PoolID != expected.PoolID || replacementIdentity.ID == expected.ID {
 		t.Fatalf("Same-name replacement did not receive a distinct immutable identity: A=%#v B=%#v", expected, replacementIdentity)
 	}
+
 	t.Logf("Exact identity probe: A pool_id=%d image_id=%s; B pool_id=%d image_id=%s", expected.PoolID, expected.ID, replacementIdentity.PoolID, replacementIdentity.ID)
 
 	err = driver.deleteVolumeWithExactIdentity(vol, identityValue)
@@ -715,6 +746,7 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 	if err != nil || hasIdentity {
 		t.Fatalf("Exact image survived successful deletion: exists=%t err=%v", hasIdentity, err)
 	}
+
 	hasLocalState, err = driver.HasVolumeLocalState(vol, identityValue)
 	if err != nil || hasLocalState {
 		t.Fatalf("Exact mapping survived successful deletion: state=%t err=%v", hasLocalState, err)
@@ -724,6 +756,7 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if currentReplacementIdentity != replacementIdentityValue {
 		t.Fatalf("Same-name replacement changed during exact deletion: before=%q after=%q", replacementIdentityValue, currentReplacementIdentity)
 	}
@@ -732,10 +765,12 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 	if err != nil || tombstoneExists {
 		t.Fatalf("Exact tombstone survived successful deletion: exists=%t err=%v", tombstoneExists, err)
 	}
+
 	trash, err := store.TrashEntries()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, found := findTrashIdentity(trash, expected.ID); found {
 		t.Fatal("Exact image survived successful deletion in trash")
 	}

@@ -40,6 +40,7 @@ func TestExternalRBDClaimIdentityUsesPhysicalCephIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if identity != alias {
 		t.Fatalf("Pools reaching the same physical RBD image produced different identities: %#v != %#v", identity, alias)
 	}
@@ -51,6 +52,7 @@ func TestExternalRBDClaimIdentityUsesPhysicalCephIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if identity == otherCluster {
 		t.Fatal("Different Ceph clusters produced the same physical claim identity")
 	}
@@ -62,6 +64,7 @@ func TestExternalRBDClaimIdentityUsesPhysicalCephIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if identity == otherPool {
 		t.Fatal("Different OSD pools produced the same physical claim identity")
 	}
@@ -117,6 +120,7 @@ func TestExternalRBDClaimLockSerializesPoolAliases(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 	case <-time.After(time.Second):
 		t.Fatal("Concurrent physical RBD claim lock was not released")
 	}

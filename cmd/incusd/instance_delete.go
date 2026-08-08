@@ -121,6 +121,7 @@ func instanceDelete(d *Daemon, r *http.Request) response.Response {
 	if err != nil {
 		return response.Conflict(err)
 	}
+
 	if requiresRelease && supplied != 4 {
 		return response.Conflict(errors.New("Instance rootfs materialization requires a complete release receipt binding"))
 	}
@@ -208,11 +209,13 @@ func rootfsMaterializationBindingRequiresRelease(localConfig map[string]string) 
 		token,
 		owner,
 	}
+
 	protocolConfigured := allocationID != "" || computeID != "" || token != ""
 	openStackIDMapConfigured := owner != "" && (idmapBase != "" || idmapSize != "")
 	if !protocolConfigured && !openStackIDMapConfigured {
 		return false, nil
 	}
+
 	for _, value := range values {
 		if value == "" {
 			return true, errors.New("Instance has incomplete rootfs materialization A/H/T/U provenance")

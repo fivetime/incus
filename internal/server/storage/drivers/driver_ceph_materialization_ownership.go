@@ -59,6 +59,7 @@ func (d *ceph) SetVolumeMaterializationOwnership(vol Volume, ownership string) e
 	if err != nil {
 		return err
 	}
+
 	if existing == ownership {
 		return nil
 	}
@@ -81,6 +82,7 @@ func (d *ceph) SetVolumeMaterializationOwnership(vol Volume, ownership string) e
 	if err != nil {
 		return err
 	}
+
 	if persisted != ownership {
 		return errors.New("RBD materialization ownership verification failed")
 	}

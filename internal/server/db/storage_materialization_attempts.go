@@ -62,6 +62,7 @@ func (n *NodeTx) GetUnfinishedStorageMaterializationAttempts(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = rows.Close() }()
 
 	attempts := []StorageMaterializationAttempt{}
@@ -70,6 +71,7 @@ func (n *NodeTx) GetUnfinishedStorageMaterializationAttempts(ctx context.Context
 		if err != nil {
 			return nil, err
 		}
+
 		attempts = append(attempts, *attempt)
 	}
 
@@ -93,6 +95,7 @@ func (n *NodeTx) StartStorageMaterializationAttempt(ctx context.Context, token s
 	if err != nil {
 		return false, err
 	}
+
 	return rowsChanged(result)
 }
 
@@ -114,6 +117,7 @@ func (n *NodeTx) AbortStorageMaterializationAttempt(ctx context.Context, token s
 	if err != nil {
 		return false, err
 	}
+
 	return rowsChanged(result)
 }
 
@@ -123,6 +127,7 @@ func (n *NodeTx) CommitStorageMaterializationAttempt(ctx context.Context, token 
 	if err != nil {
 		return false, err
 	}
+
 	return rowsChanged(result)
 }
 
@@ -133,6 +138,7 @@ func (n *NodeTx) SetStorageMaterializationPhase(ctx context.Context, token strin
 	if err != nil {
 		return false, err
 	}
+
 	return rowsChanged(result)
 }
 
@@ -143,6 +149,7 @@ func (n *NodeTx) FinishStorageMaterializationClean(ctx context.Context, token st
 	if err != nil {
 		return false, err
 	}
+
 	return rowsChanged(result)
 }
 
@@ -153,5 +160,6 @@ func (n *NodeTx) RetireStorageMaterializationAttempt(ctx context.Context, token 
 	if err != nil {
 		return false, err
 	}
+
 	return rowsChanged(result)
 }

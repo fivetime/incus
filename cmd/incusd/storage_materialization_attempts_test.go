@@ -183,6 +183,7 @@ func TestMaterializationDestructiveCleanupCapabilitiesFailClosed(t *testing.T) {
 	} {
 		require.Error(t, validateStorageMaterializationCleanupCapabilities(unsupported, disposition))
 	}
+
 	require.NoError(t, validateStorageMaterializationCleanupCapabilities(unsupported, storagematerializationattempt.CleanupDetach))
 
 	supported := &materializationIdentityTestDriver{}
@@ -254,6 +255,7 @@ func TestMaterializationProofIsPersistedNotRecomputedFromState(t *testing.T) {
 		Token: "33333333-3333-4333-8333-333333333333", State: storagematerializationattempt.StateRetired,
 		ProofOutcome: storagematerializationattempt.ProofReconciledClean, ProofDigest: "sha256:durable",
 	}
+
 	result := storageMaterializationAttemptToAPI(attempt)
 	require.NotNil(t, result.Proof)
 	require.Equal(t, storagematerializationattempt.ProofReconciledClean, result.Proof.Outcome)
@@ -267,11 +269,13 @@ func TestMaterializationProofAcknowledgementRequiresExactGeneration(t *testing.T
 		InstanceName: "instance-00000001", IDMapBase: 1000000, IDMapSize: 65536,
 		ProofOutcome: storagematerializationattempt.ProofReconciledClean, ProofDigest: "sha256:durable",
 	}
+
 	query := url.Values{
 		"proof-digest": {attempt.ProofDigest}, "allocation-id": {attempt.AllocationID}, "compute-id": {attempt.ComputeID},
 		"owner": {attempt.Owner}, "instance": {attempt.InstanceName}, "idmap-base": {strconv.FormatInt(attempt.IDMapBase, 10)},
 		"idmap-size": {strconv.FormatInt(attempt.IDMapSize, 10)},
 	}
+
 	req := httptest.NewRequest("DELETE", "/1.0/storage-materialization-attempts/"+attempt.Token+"?"+query.Encode(), nil)
 	require.NoError(t, validateStorageMaterializationAcknowledgement(req, attempt))
 
@@ -351,6 +355,7 @@ func TestCleanupBindsIdentityOnlyForCleanDeleteBaseline(t *testing.T) {
 		StorageDriver: "ceph", StoragePool: "rootfs", StorageVolume: "nova_instance-00000001",
 		BaselineClean: true, CleanupDisposition: storagematerializationattempt.CleanupDelete,
 	}
+
 	_, err := manager.Register(ctx, attempt)
 	require.NoError(t, err)
 	_, err = manager.Start(ctx, attempt.Token, attempt, 42, "")
@@ -406,6 +411,7 @@ func TestCleanupAdoptsAnUnstampedVolumeFromItsOwnAttempt(t *testing.T) {
 		StorageDriver: "ceph", StoragePool: "rootfs", StorageVolume: "nova_instance-00000003",
 		BaselineClean: true, CleanupDisposition: storagematerializationattempt.CleanupDelete,
 	}
+
 	_, err := manager.Register(ctx, attempt)
 	require.NoError(t, err)
 	_, err = manager.Start(ctx, attempt.Token, attempt, 44, "")

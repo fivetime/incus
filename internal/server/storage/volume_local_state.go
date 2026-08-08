@@ -68,6 +68,7 @@ func validateVolumeLocalStateReleased(provider drivers.VolumeLocalStateProvider,
 	if err != nil {
 		return fmt.Errorf("Inspect volume local state: %w", err)
 	}
+
 	if hasLocalState {
 		return errors.New("Volume still has host-local state")
 	}

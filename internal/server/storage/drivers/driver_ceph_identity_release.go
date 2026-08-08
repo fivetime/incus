@@ -283,6 +283,7 @@ func (d *ceph) HasVolumeIdentity(vol Volume, expectedStorageIdentity string) (bo
 	if err != nil {
 		return false, err
 	}
+
 	if poolIdentity.PoolID != expected.PoolID {
 		return false, nil
 	}
@@ -297,6 +298,7 @@ func (d *ceph) HasVolumeIdentity(vol Volume, expectedStorageIdentity string) (bo
 		if err != nil {
 			return false, err
 		}
+
 		if exists && identityMatches(identity, expected) {
 			return true, nil
 		}
@@ -306,6 +308,7 @@ func (d *ceph) HasVolumeIdentity(vol Volume, expectedStorageIdentity string) (bo
 	if err != nil {
 		return false, err
 	}
+
 	_, found := findTrashIdentity(trash, expected.ID)
 	return found, nil
 }
@@ -331,6 +334,7 @@ func findRBDMappingsByIdentity(sysfsRoot string, expected cephRBDVolumeIdentity)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -347,6 +351,7 @@ func findRBDMappingsByIdentity(sysfsRoot string, expected cephRBDVolumeIdentity)
 		if isDetachedRBDSysfsReadError(err) {
 			continue
 		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -360,6 +365,7 @@ func findRBDMappingsByIdentity(sysfsRoot string, expected cephRBDVolumeIdentity)
 		if isDetachedRBDSysfsReadError(err) {
 			continue
 		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -389,6 +395,7 @@ func (d *ceph) releaseCephVolumeLocalState(vol Volume, expectedStorageIdentity s
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	return d.releaseCephVolumeLocalStateLocked(vol, identity, false)
@@ -432,6 +439,7 @@ func (d *ceph) releaseCephVolumeLocalStateLocked(vol Volume, identity cephRBDVol
 		if err != nil {
 			return fmt.Errorf("Inspect exact RBD mappings: %w", err)
 		}
+
 		if len(mappings) == 0 {
 			return nil
 		}
@@ -619,6 +627,7 @@ func (a cephIdentityReleaseAdapter) SnapshotNames(name string) ([]string, error)
 	if isRBDNotFoundExitError(err) {
 		return nil, errCephIdentityImageNotFound
 	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -649,6 +658,7 @@ func (a cephIdentityReleaseAdapter) SnapshotChildren(name string, snapshotName s
 	if isRBDNotFoundExitError(err) {
 		return nil, errCephIdentityImageNotFound
 	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -662,6 +672,7 @@ func (a cephIdentityReleaseAdapter) SnapshotUnprotect(name string, snapshotName 
 	if commandExitCodeIs(err, 22) {
 		return nil
 	}
+
 	if isRBDNotFoundExitError(err) {
 		return errCephIdentityImageNotFound
 	}
@@ -694,6 +705,7 @@ func verifyRBDIdentityReleasePool(store cephIdentityReleaseStore, expectedPoolID
 	if err != nil {
 		return err
 	}
+
 	if poolID != expectedPoolID {
 		return errors.New("Ceph pool identity changed during exact RBD release")
 	}
@@ -726,6 +738,7 @@ func quarantineNamedIdentity(store cephIdentityReleaseStore, sourceName string, 
 	if err != nil {
 		return err
 	}
+
 	if exists {
 		return fmt.Errorf("Cannot quarantine unexpected RBD image at reserved name %q because its quarantine name is occupied", sourceName)
 	}
@@ -739,6 +752,7 @@ func quarantineNamedIdentity(store cephIdentityReleaseStore, sourceName string, 
 	if err != nil {
 		return err
 	}
+
 	if !exists || !identityMatches(quarantined, actual) {
 		return errors.New("Unexpected RBD image was not preserved under its quarantine identity")
 	}
@@ -758,6 +772,7 @@ func restoreTrashIdentityToQuarantine(store cephIdentityReleaseStore, entry ceph
 	if err != nil {
 		return err
 	}
+
 	if exists {
 		return errors.New("Cannot restore unexpected trashed RBD image because its quarantine name is occupied")
 	}
@@ -771,6 +786,7 @@ func restoreTrashIdentityToQuarantine(store cephIdentityReleaseStore, entry ceph
 	if err != nil {
 		return err
 	}
+
 	if !exists || actual.PoolID != expectedPoolID || actual.ID != entry.ID {
 		return errors.New("Unexpected trashed RBD image was not restored under its quarantine identity")
 	}
@@ -792,6 +808,7 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 		if err != nil {
 			return "", false, err
 		}
+
 		if quarantineExists && identityMatches(quarantineIdentity, expected) {
 			return "", false, errors.New("Expected RBD image exists in quarantine and cannot be deleted automatically")
 		}
@@ -800,6 +817,7 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 		if err != nil {
 			return "", false, err
 		}
+
 		if tombstoneExists {
 			if !identityMatches(tombstoneIdentity, expected) {
 				return "", false, quarantineNamedIdentity(store, tombstoneName, tombstoneIdentity)
@@ -812,6 +830,7 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 		if err != nil {
 			return "", false, err
 		}
+
 		if _, found := findTrashIdentity(trashEntries, expected.ID); found {
 			err = store.TrashRestore(expected.ID, tombstoneName)
 			if err != nil && !errors.Is(err, errCephIdentityImageNotFound) {
@@ -825,12 +844,14 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 		if err != nil {
 			return "", false, err
 		}
+
 		if !originalExists || !identityMatches(originalIdentity, expected) {
 			// Recheck reserved states after observing the original name, as another daemon may be moving A.
 			trashEntries, err = store.TrashEntries()
 			if err != nil {
 				return "", false, err
 			}
+
 			if _, found := findTrashIdentity(trashEntries, expected.ID); found {
 				continue
 			}
@@ -842,6 +863,7 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 			if err != nil {
 				return "", false, err
 			}
+
 			if tombstoneExists {
 				continue
 			}
@@ -869,6 +891,7 @@ func inspectRBDIdentityReleasePostcondition(store cephIdentityReleaseStore, orig
 	if err != nil {
 		return false, false, err
 	}
+
 	if quarantineExists && identityMatches(quarantineIdentity, expected) {
 		return false, false, errors.New("Expected RBD image remains in quarantine")
 	}
@@ -878,6 +901,7 @@ func inspectRBDIdentityReleasePostcondition(store cephIdentityReleaseStore, orig
 	if err != nil {
 		return false, false, err
 	}
+
 	if tombstoneExists {
 		if identityMatches(tombstoneIdentity, expected) {
 			return true, false, nil
@@ -890,6 +914,7 @@ func inspectRBDIdentityReleasePostcondition(store cephIdentityReleaseStore, orig
 	if err != nil {
 		return false, false, err
 	}
+
 	if _, found := findTrashIdentity(trash, expected.ID); found {
 		return true, false, nil
 	}
@@ -898,6 +923,7 @@ func inspectRBDIdentityReleasePostcondition(store cephIdentityReleaseStore, orig
 	if err != nil {
 		return false, false, err
 	}
+
 	if !originalExists {
 		return false, false, nil
 	}
@@ -925,6 +951,7 @@ func purgeRBDIdentitySnapshots(store cephIdentityReleaseStore, tombstoneName str
 		if err != nil {
 			return err
 		}
+
 		if len(children) > 0 {
 			return fmt.Errorf("Cannot release exact RBD image while snapshot %q has dependent clones", snapshotName)
 		}
@@ -935,6 +962,7 @@ func purgeRBDIdentitySnapshots(store cephIdentityReleaseStore, tombstoneName str
 		if err != nil {
 			return err
 		}
+
 		if !exists || !identityMatches(identity, expected) {
 			return errors.New("RBD tombstone identity changed before snapshot unprotect")
 		}
@@ -948,6 +976,7 @@ func purgeRBDIdentitySnapshots(store cephIdentityReleaseStore, tombstoneName str
 		if err != nil {
 			return err
 		}
+
 		if !exists || !identityMatches(identity, expected) {
 			return errors.New("RBD tombstone identity changed after snapshot unprotect")
 		}
@@ -961,6 +990,7 @@ func purgeRBDIdentitySnapshots(store cephIdentityReleaseStore, tombstoneName str
 	if err != nil {
 		return err
 	}
+
 	if !exists || !identityMatches(identity, expected) {
 		return errors.New("RBD tombstone identity changed before snapshot purge")
 	}
@@ -974,6 +1004,7 @@ func purgeRBDIdentitySnapshots(store cephIdentityReleaseStore, tombstoneName str
 	if err != nil {
 		return err
 	}
+
 	if !exists || !identityMatches(identity, expected) {
 		return errors.New("RBD tombstone identity changed after snapshot purge")
 	}
@@ -991,6 +1022,7 @@ func trashAndRemoveRBDIdentity(store cephIdentityReleaseStore, tombstoneName str
 	if err != nil {
 		return err
 	}
+
 	beforeIDs := map[string]struct{}{}
 	for _, entry := range before {
 		beforeIDs[entry.ID] = struct{}{}
@@ -1000,6 +1032,7 @@ func trashAndRemoveRBDIdentity(store cephIdentityReleaseStore, tombstoneName str
 	if err != nil {
 		return err
 	}
+
 	if !exists || !identityMatches(identity, expected) {
 		return errors.New("RBD tombstone identity changed before trash transition")
 	}
@@ -1018,6 +1051,7 @@ func trashAndRemoveRBDIdentity(store cephIdentityReleaseStore, tombstoneName str
 	if err != nil {
 		return err
 	}
+
 	if _, found := findTrashIdentity(after, expected.ID); !found {
 		for _, entry := range after {
 			_, existed := beforeIDs[entry.ID]
@@ -1049,6 +1083,7 @@ func trashAndRemoveRBDIdentity(store cephIdentityReleaseStore, tombstoneName str
 	if err != nil {
 		return err
 	}
+
 	if _, found := findTrashIdentity(after, expected.ID); found {
 		return errors.New("Exact RBD image remains in trash after identity-bound removal")
 	}
@@ -1062,11 +1097,13 @@ func deleteRBDVolumeWithIdentity(store cephIdentityReleaseStore, originalName st
 		if err != nil {
 			return false, err
 		}
+
 		if tombstoneName == "" {
 			expectedExists, currentReplacementExists, err := inspectRBDIdentityReleasePostcondition(store, originalName, expected)
 			if err != nil {
 				return false, err
 			}
+
 			if expectedExists {
 				continue
 			}
@@ -1078,6 +1115,7 @@ func deleteRBDVolumeWithIdentity(store cephIdentityReleaseStore, originalName st
 		if errors.Is(err, errCephIdentityImageNotFound) {
 			continue
 		}
+
 		if err != nil {
 			return false, err
 		}
@@ -1086,6 +1124,7 @@ func deleteRBDVolumeWithIdentity(store cephIdentityReleaseStore, originalName st
 		if errors.Is(err, errCephIdentityImageNotFound) {
 			continue
 		}
+
 		if err != nil {
 			return false, err
 		}
@@ -1094,6 +1133,7 @@ func deleteRBDVolumeWithIdentity(store cephIdentityReleaseStore, originalName st
 		if err != nil {
 			return false, err
 		}
+
 		if expectedExists {
 			continue
 		}
@@ -1118,6 +1158,7 @@ func (d *ceph) deleteVolumeWithExactIdentity(vol Volume, expectedStorageIdentity
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	err = d.releaseCephVolumeLocalStateLocked(vol, expected, true)
@@ -1134,6 +1175,7 @@ func (d *ceph) deleteVolumeWithExactIdentity(vol Volume, expectedStorageIdentity
 	if err != nil {
 		return err
 	}
+
 	if len(mappings) > 0 {
 		return errors.New("Exact RBD mappings remain after storage deletion")
 	}

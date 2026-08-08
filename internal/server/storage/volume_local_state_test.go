@@ -32,6 +32,7 @@ func (d *testVolumeLocalStateDriver) ReleaseVolumeLocalState(_ drivers.Volume, e
 	if d.identity != expectedStorageIdentity {
 		return errors.New("identity mismatch")
 	}
+
 	d.releases++
 	if d.releaseErr != nil {
 		return d.releaseErr
@@ -50,6 +51,7 @@ func TestReleaseVolumeLocalState(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if driver.releases != 1 || driver.hasState {
 			t.Fatalf("Local state was not released exactly once: releases=%d state=%t", driver.releases, driver.hasState)
 		}
@@ -60,6 +62,7 @@ func TestReleaseVolumeLocalState(t *testing.T) {
 		if err := releaseVolumeLocalState(driver, vol, "immutable"); err == nil {
 			t.Fatal("Recreated storage object was released")
 		}
+
 		if driver.releases != 0 {
 			t.Fatal("Identity mismatch reached the release operation")
 		}
@@ -72,6 +75,7 @@ func TestReleaseVolumeLocalState(t *testing.T) {
 		if !errors.Is(err, releaseErr) {
 			t.Fatalf("Release error was not preserved: %v", err)
 		}
+
 		if !driver.hasState {
 			t.Fatal("Failed release was treated as clean")
 		}
@@ -106,6 +110,7 @@ func TestCompleteStorageReleaseRequiresLocalStateProof(t *testing.T) {
 	if err == nil {
 		t.Fatal("Storage release completed while local state remained")
 	}
+
 	if completed {
 		t.Fatal("Completion callback ran without a local state proof")
 	}
@@ -118,6 +123,7 @@ func TestCompleteStorageReleaseRequiresLocalStateProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !completed {
 		t.Fatal("Completion callback did not run after a clean proof")
 	}

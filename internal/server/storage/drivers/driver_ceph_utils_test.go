@@ -58,6 +58,7 @@ func TestRunVolumeIdentityBoundAction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if actions != 1 {
 			t.Fatalf("Identity-bound action ran %d times", actions)
 		}
@@ -74,6 +75,7 @@ func TestRunVolumeIdentityBoundAction(t *testing.T) {
 		if err == nil {
 			t.Fatal("Recreated storage object was accepted")
 		}
+
 		if actions != 0 {
 			t.Fatal("Identity mismatch reached unmap or delete action")
 		}

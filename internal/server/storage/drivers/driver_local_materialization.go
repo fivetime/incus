@@ -51,6 +51,7 @@ func getMaterializationXattr(path string, name string) (string, error) {
 	if errors.Is(err, unix.ENODATA) {
 		return "", nil
 	}
+
 	if err != nil {
 		return "", err
 	}
@@ -103,6 +104,7 @@ func setXattrMaterializationOwnership(vol Volume, ownership string) error {
 	if err != nil {
 		return err
 	}
+
 	if persisted != ownership {
 		return errors.New("Materialization ownership xattr verification failed")
 	}
@@ -120,6 +122,7 @@ func (d *dir) InitializeVolumeIdentity(vol Volume) error {
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	identity := uuid.NewString()
@@ -131,6 +134,7 @@ func (d *dir) InitializeVolumeIdentity(vol Volume) error {
 	if err != nil {
 		return fmt.Errorf("Read directory volume identity: %w", err)
 	}
+
 	if persisted != identity {
 		return errors.New("Directory volume identity verification failed")
 	}
@@ -176,6 +180,7 @@ func (d *dir) SetVolumeMaterializationOwnership(vol Volume, ownership string) er
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	return setXattrMaterializationOwnership(vol, ownership)
@@ -251,9 +256,11 @@ func (d *lvm) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if len(tags) == 0 {
 		return "", nil
 	}
+
 	if len(tags) != 1 {
 		return "", errors.New("LVM volume has conflicting materialization ownership tags")
 	}
@@ -276,6 +283,7 @@ func (d *lvm) SetVolumeMaterializationOwnership(vol Volume, ownership string) er
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	tags, err := d.getLVMMaterializationTags(vol)
@@ -289,6 +297,7 @@ func (d *lvm) SetVolumeMaterializationOwnership(vol Volume, ownership string) er
 	for _, tag := range tags {
 		found = found || tag == desired
 	}
+
 	if !found {
 		_, err = subprocess.RunCommand("lvchange", "--addtag", desired, volPath)
 		if err != nil {
@@ -311,6 +320,7 @@ func (d *lvm) SetVolumeMaterializationOwnership(vol Volume, ownership string) er
 	if err != nil {
 		return err
 	}
+
 	if persisted != ownership {
 		return errors.New("LVM materialization ownership verification failed")
 	}
@@ -360,9 +370,11 @@ func parseZFSMaterializationOwnership(output string) (string, error) {
 	if len(fields) != 2 {
 		return "", errors.New("Invalid ZFS materialization ownership property output")
 	}
+
 	if fields[0] == "-" && fields[1] == "-" {
 		return "", nil
 	}
+
 	if fields[1] != "local" {
 		return "", nil
 	}
@@ -394,6 +406,7 @@ func (d *zfs) SetVolumeMaterializationOwnership(vol Volume, ownership string) er
 	if err := validateMaterializationVolume(vol); err != nil {
 		return err
 	}
+
 	if _, err := validateMaterializationOwnership(ownership); err != nil {
 		return err
 	}
@@ -402,6 +415,7 @@ func (d *zfs) SetVolumeMaterializationOwnership(vol Volume, ownership string) er
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	err = d.setDatasetProperties(d.dataset(vol, false), zfsMaterializationOwnershipProp+"="+ownership)
@@ -413,6 +427,7 @@ func (d *zfs) SetVolumeMaterializationOwnership(vol Volume, ownership string) er
 	if err != nil {
 		return err
 	}
+
 	if persisted != ownership {
 		return errors.New("ZFS materialization ownership verification failed")
 	}
@@ -472,6 +487,7 @@ func (d *btrfs) SetVolumeMaterializationOwnership(vol Volume, ownership string) 
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	return setXattrMaterializationOwnership(vol, ownership)
@@ -481,6 +497,7 @@ func deleteMaterializedVolumeWithIdentity(vol Volume, expectedStorageIdentity st
 	if err := validateMaterializationVolume(vol); err != nil {
 		return err
 	}
+
 	if expectedStorageIdentity == "" {
 		return errors.New("Cannot delete materialized volume without an immutable storage identity")
 	}
@@ -489,6 +506,7 @@ func deleteMaterializedVolumeWithIdentity(vol Volume, expectedStorageIdentity st
 	if err != nil {
 		return err
 	}
+
 	defer unlock()
 
 	return action()

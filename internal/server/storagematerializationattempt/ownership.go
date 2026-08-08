@@ -19,9 +19,11 @@ func OwnershipMarker(attempt *db.StorageMaterializationAttempt, storageIdentity 
 	if attempt == nil {
 		return "", errors.New("Storage materialization attempt is required")
 	}
+
 	if attempt.CleanupDisposition != CleanupDelete || !attempt.BaselineClean {
 		return "", errors.New("Only a clean-baseline delete attempt can own a newly materialized storage object")
 	}
+
 	if storageIdentity == "" {
 		return "", errors.New("Materialization ownership requires an immutable storage identity")
 	}

@@ -662,6 +662,7 @@ func (b *backend) CreateInstance(inst instance.Instance, op *operations.Operatio
 	if err != nil {
 		return err
 	}
+
 	defer unlockMaterialization()
 
 	volType, err := InstanceTypeToVolumeType(inst.Type())
@@ -2036,6 +2037,7 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 	if err != nil {
 		return err
 	}
+
 	defer unlockMaterialization()
 
 	volType, err := InstanceTypeToVolumeType(inst.Type())
@@ -2251,6 +2253,7 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 	if err != nil {
 		return err
 	}
+
 	defer unlockMaterialization()
 
 	if args.Config != nil {
@@ -2881,6 +2884,7 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 		} else {
 			err = b.validatePendingInstanceStorageRelease(vol, volExists, *releaseReceipt)
 		}
+
 		if err != nil {
 			return fmt.Errorf("Prove root storage release before deleting its database record: %w", err)
 		}
@@ -2905,6 +2909,7 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 		if err == nil {
 			_, err = storagereleasereceipt.New(b.state.DB.Node).Complete(context.Background(), *releaseReceipt)
 		}
+
 		if err != nil {
 			return fmt.Errorf("Complete detached root storage release receipt: %w", err)
 		}
@@ -3065,11 +3070,13 @@ func (b *backend) instanceStorageReleaseReceipt(inst instance.Instance, vol driv
 	if err != nil {
 		return nil, fmt.Errorf("Load root storage materialization generation before release: %w", err)
 	}
+
 	switch attempt.State {
 	case storagematerializationattempt.StateCommitted:
 		if !attempt.Started || !attempt.Finished || attempt.StoragePhase != storagematerializationattempt.PhaseMaterialized {
 			return nil, errors.New("Committed root storage materialization is incomplete")
 		}
+
 	case storagematerializationattempt.StateAborted, storagematerializationattempt.StateClean:
 		// Failed materialization cleanup is proven by the attempt itself and must
 		// not create a release receipt that can only retire a committed attempt.
@@ -3132,6 +3139,7 @@ func (b *backend) instanceStorageReleaseReceipt(inst instance.Instance, vol driv
 		BaselineClean:      attempt.BaselineClean,
 		CleanupDisposition: attempt.CleanupDisposition,
 	}
+
 	if !storagematerializationattempt.SameBinding(attempt, expectedAttempt) {
 		return nil, storagematerializationattempt.ErrBindingMismatch
 	}
@@ -3346,6 +3354,7 @@ func (b *backend) validateCompletedInstanceStorageRelease(vol drivers.Volume, vo
 			if err != nil {
 				return err
 			}
+
 			if identity == receipt.StorageIdentity {
 				return errors.New("Completed root storage deletion receipt conflicts with the deleted identity")
 			}
@@ -3384,6 +3393,7 @@ func validateDeletedStorageIdentityAbsent(driver any, vol drivers.Volume, receip
 	if err != nil {
 		return err
 	}
+
 	if exists {
 		return errors.New("Exact deleted storage identity still exists")
 	}
@@ -3432,6 +3442,7 @@ func (b *backend) checkInstanceStorageMaterializationFence(inst instance.Instanc
 	if err == nil {
 		return fmt.Errorf("Instance name is fenced by storage materialization attempt %q", attempt.Token)
 	}
+
 	if !errors.Is(err, storagematerializationattempt.ErrNotFound) {
 		return fmt.Errorf("Check storage materialization instance fence: %w", err)
 	}
@@ -3447,6 +3458,7 @@ func (b *backend) instanceStorageMaterializationBinding(inst instance.Instance, 
 		if err == nil {
 			return nil, fmt.Errorf("Instance name is fenced by storage materialization attempt %q", attempt.Token)
 		}
+
 		if !errors.Is(err, storagematerializationattempt.ErrNotFound) {
 			return nil, fmt.Errorf("Check storage materialization instance fence: %w", err)
 		}
@@ -3555,6 +3567,7 @@ func (b *backend) deleteInstanceStorageVolume(inst instance.Instance, vol driver
 	} else {
 		err = b.driver.DeleteVolume(vol, op)
 	}
+
 	if err != nil {
 		return fmt.Errorf("Error deleting storage volume: %w", err)
 	}

@@ -199,6 +199,7 @@ func TestRWLockContextCancel(t *testing.T) {
 		if err == nil {
 			t.Fatal("cancelled writer acquired the lock")
 		}
+
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelled writer never returned")
 	}

@@ -362,6 +362,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 	if err != nil {
 		return storageMaterializationAttemptError(err)
 	}
+
 	materializationStarted := false
 	materializationRunOwnsCleanup := false
 	if materializationAttempt != nil {
@@ -369,6 +370,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 		if err != nil {
 			return storageMaterializationAttemptError(err)
 		}
+
 		materializationStarted = true
 
 		// This defer owns synchronous failures before the target operation can be bound.
@@ -382,6 +384,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 			if cleanupErr == nil {
 				cleanupErr = reconcileStorageMaterializationAttempt(context.Background(), s, latest, true)
 			}
+
 			if cleanupErr != nil {
 				logger.Error("Failed settling storage materialization after synchronous migration setup failure", logger.Ctx{
 					"attempt":  materializationAttempt.Token,
@@ -694,6 +697,7 @@ func createFromMigration(ctx context.Context, s *state.State, r *http.Request, p
 				attemptCommitted = true
 				materializationCommitted = true
 			}
+
 			runReverter.Success()
 			return nil
 		}

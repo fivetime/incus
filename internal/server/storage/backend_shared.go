@@ -42,6 +42,7 @@ func externalRBDClaimIdentityFromConfig(config map[string]string, imageName stri
 	if osdPoolName == "" {
 		osdPoolName = config["source"]
 	}
+
 	if osdPoolName == "" {
 		return externalRBDClaimIdentity{}, fmt.Errorf("Cannot identify an external RBD claim without an OSD pool")
 	}
@@ -50,6 +51,7 @@ func externalRBDClaimIdentityFromConfig(config map[string]string, imageName stri
 	if err != nil {
 		return externalRBDClaimIdentity{}, fmt.Errorf("Get Ceph FSID for external RBD claim: %w", err)
 	}
+
 	if fsid == "" {
 		return externalRBDClaimIdentity{}, fmt.Errorf("Ceph cluster %q returned an empty FSID", clusterName)
 	}

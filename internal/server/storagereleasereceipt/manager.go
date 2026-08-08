@@ -252,6 +252,7 @@ func (m *Manager) Delete(ctx context.Context, expected db.StorageReleaseReceipt)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrBindingMismatch
 		}
+
 		if err != nil {
 			return err
 		}
@@ -335,6 +336,7 @@ func validateExpected(receipt db.StorageReleaseReceipt) error {
 	if receipt.CleanupDisposition == storagematerializationattempt.CleanupDetach && receipt.StorageDriver != "ceph" && receipt.StorageDriver != "cephext" {
 		return errors.New("Detached storage release receipt requires a Ceph storage driver")
 	}
+
 	if receipt.CleanupDisposition == storagematerializationattempt.CleanupHandover && receipt.StorageDriver != "ceph" {
 		return errors.New("Storage handover release receipt requires the Incus-owned Ceph driver")
 	}
@@ -353,9 +355,11 @@ func validateExpected(receipt db.StorageReleaseReceipt) error {
 		case storagematerializationattempt.CleanupDetach:
 			validOutcome = receipt.Outcome == OutcomeDetached
 		}
+
 	default:
 		validOutcome = receipt.CleanupDisposition == storagematerializationattempt.CleanupDelete && receipt.Outcome == OutcomeDeleted
 	}
+
 	if !validOutcome {
 		return fmt.Errorf("Storage release receipt outcome %q is invalid for driver %q with cleanup disposition %q", receipt.Outcome, receipt.StorageDriver, receipt.CleanupDisposition)
 	}
