@@ -37,6 +37,7 @@ bugfixes
 CAS
 Centos
 Ceph
+ceph
 CephFS
 Ceph's
 CFS
@@ -58,6 +59,7 @@ cron
 CSV
 CUDA
 customizable
+config
 dataset
 DCO
 dereferenced
@@ -99,6 +101,7 @@ FQDNs
 FreeBSD
 frontend
 FSID
+fsid
 Furo
 gapped
 GARM
@@ -163,6 +166,7 @@ KVM
 LINBIT
 LINSTOR
 LINSTOR's
+linearizable
 LLM
 LLMs
 lookups
@@ -181,6 +185,7 @@ macvlan
 Makefile
 manpages
 Markerless
+markerless
 Mbit
 mDNS
 MiB
@@ -222,6 +227,8 @@ openSUSE
 OpenSUSE
 OpenTofu
 orchestrator
+orchestrators
+orchestrator's
 Orchestrators
 OSD
 overcommit
@@ -260,6 +267,7 @@ qdisc
 QEMU
 qgroup
 qgroups
+queryable
 QMP
 RADOS
 RBAC

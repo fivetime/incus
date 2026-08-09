@@ -352,7 +352,7 @@ ORDER BY 1, 2, 3, 4
 	if err != nil {
 		return nil, fmt.Errorf("Query ID map usage: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	resources := make([]IDMapUsageResource, 0)
 	for rows.Next() {
