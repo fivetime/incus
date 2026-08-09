@@ -3789,3 +3789,28 @@ record carrying negotiated handover state, requires server-administrator
 authorization like `source-owned`, and makes the subsequent local delete
 release only local state: no rootfs ID map normalization and no shared volume
 deletion, with the release receipt recording the `detached` outcome.
+
+## `idmap_usage`
+
+Adds the `GET /1.0/idmap-usage` endpoint. The endpoint performs an indexed,
+all-project query for instances and profiles whose effective
+`user.openstack.uuid` value matches or whose effective ID-map range overlaps
+the requested half-open range. Instance lookup follows runtime precedence
+(a non-empty `volatile.idmap.base`, local `security.idmap.base`, then profile
+config), and a missing, empty, or `auto` ID-map size is 65536. Profile
+inheritance and local
+instance overrides use the same ordering as normal instance config expansion.
+The normal 65536-wide range path uses bounded partial indexes. Resources that
+explicitly configure a different size are held in separate covering partial
+indexes and conservatively checked so variable-width intervals cannot yield a
+false absent result; that path costs O(C + F), where C is the number of custom
+size entries and F is their attached-profile fan-out. Malformed or overflowing
+ID-map configuration makes the request fail instead of being treated as absent.
+
+The result is a transactionally consistent snapshot of persistent instances
+and profiles, not a linearizable reservation primitive. It does not include
+in-memory transient or node-local migration-attempt reservations, and it cannot
+atomically cover an external action performed after the response. Callers that
+use it before releasing an allocation must serialize their own actors and keep
+the Incus management boundary dedicated; concurrent unmanaged Incus changes
+remain outside this endpoint's guarantee.

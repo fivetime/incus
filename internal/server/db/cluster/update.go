@@ -114,6 +114,73 @@ var updates = map[int]schema.Update{
 	75: updateFromV74,
 	76: updateFromV75,
 	77: updateFromV76,
+	78: updateFromV77,
+}
+
+func updateFromV77(ctx context.Context, tx *sql.Tx) error {
+	stmts := `
+CREATE INDEX instances_config_idmap_owner_usage_idx ON instances_config (
+    replace(replace(replace(replace(lower(value), '-', ''), '{', ''), '}', ''), 'urn:uuid:', ''),
+    instance_id) WHERE key = 'user.openstack.uuid';
+CREATE INDEX instances_config_idmap_range_usage_idx ON instances_config (
+    CAST(value AS INTEGER), instance_id)
+    WHERE key = 'security.idmap.base';
+CREATE INDEX instances_config_idmap_volatile_range_usage_idx ON instances_config (
+    CAST(value AS INTEGER), instance_id)
+    WHERE key = 'volatile.idmap.base';
+CREATE INDEX instances_config_idmap_nondefault_size_usage_idx ON instances_config (
+    instance_id)
+    WHERE key = 'security.idmap.size'
+    AND value NOT IN ('', 'auto', '65536');
+CREATE INDEX instances_config_idmap_malformed_usage_idx ON instances_config (
+    instance_id, key)
+    WHERE (
+        (key IN ('security.idmap.base', 'volatile.idmap.base')
+         AND value != ''
+         AND ((CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) = ''
+              OR (CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) < 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        OR
+        (key = 'security.idmap.size'
+         AND value NOT IN ('', 'auto')
+         AND ((CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) = ''
+              OR (CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) <= 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        );
+CREATE INDEX profiles_config_idmap_owner_usage_idx ON profiles_config (
+    replace(replace(replace(replace(lower(value), '-', ''), '{', ''), '}', ''), 'urn:uuid:', ''),
+    profile_id) WHERE key = 'user.openstack.uuid';
+CREATE INDEX profiles_config_idmap_range_usage_idx ON profiles_config (
+    CAST(value AS INTEGER), profile_id)
+    WHERE key = 'security.idmap.base';
+CREATE INDEX profiles_config_idmap_nondefault_size_usage_idx ON profiles_config (
+    profile_id)
+    WHERE key = 'security.idmap.size'
+    AND value NOT IN ('', 'auto', '65536');
+CREATE INDEX profiles_config_idmap_malformed_usage_idx ON profiles_config (
+    profile_id, key)
+    WHERE (
+        (key = 'security.idmap.base'
+         AND value != ''
+         AND ((CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) = ''
+              OR (CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) < 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        OR
+        (key = 'security.idmap.size'
+         AND value NOT IN ('', 'auto')
+         AND ((CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) = ''
+              OR (CASE WHEN substr(value, 1, 1) = '+' THEN substr(value, 2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) <= 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        );
+CREATE INDEX instances_profiles_profile_id_instance_id_idx ON instances_profiles (profile_id, instance_id);
+CREATE INDEX instances_profiles_instance_id_apply_order_idx ON instances_profiles (instance_id, apply_order DESC, profile_id);
+`
+	_, err := tx.Exec(stmts)
+	return err
 }
 
 func updateFromV76(ctx context.Context, tx *sql.Tx) error {

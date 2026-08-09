@@ -78,6 +78,7 @@ var api10 = []APIEndpoint{
 	instanceSnapshotsCmd,
 	instanceStateCmd,
 	instanceStorageHandoverCmd,
+	idmapUsageCmd,
 	instanceAccessCmd,
 	instanceDebugMemoryCmd,
 	instanceDebugRepairCmd,

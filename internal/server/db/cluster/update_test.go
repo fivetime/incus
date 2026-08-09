@@ -778,3 +778,33 @@ func TestUpdateFromV34(t *testing.T) {
 	assert.Equal(t, id, 2)
 	assert.Equal(t, nodeID, nil)
 }
+
+func TestUpdateFromV77IDMapUsageIndexes(t *testing.T) {
+	schema := cluster.Schema()
+	db, err := schema.ExerciseUpdate(78, nil)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	indexNames := []string{
+		"instances_config_idmap_owner_usage_idx",
+		"instances_config_idmap_range_usage_idx",
+		"instances_config_idmap_volatile_range_usage_idx",
+		"instances_config_idmap_nondefault_size_usage_idx",
+		"instances_config_idmap_malformed_usage_idx",
+		"profiles_config_idmap_owner_usage_idx",
+		"profiles_config_idmap_range_usage_idx",
+		"profiles_config_idmap_nondefault_size_usage_idx",
+		"profiles_config_idmap_malformed_usage_idx",
+		"instances_profiles_profile_id_instance_id_idx",
+		"instances_profiles_instance_id_apply_order_idx",
+	}
+	for _, indexName := range indexNames {
+		var count int
+		err = db.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+			indexName,
+		).Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, 1, count, indexName)
+	}
+}

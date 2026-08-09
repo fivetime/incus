@@ -142,6 +142,63 @@ CREATE TABLE "instances_config" (
     FOREIGN KEY (instance_id) REFERENCES "instances" (id) ON DELETE CASCADE,
     UNIQUE (instance_id, key)
 );
+CREATE INDEX instances_config_idmap_malformed_usage_idx ON instances_config (
+    instance_id,
+    key)
+    WHERE (
+        (key IN ('security.idmap.base',
+    'volatile.idmap.base')
+         AND value != ''
+         AND ((CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) = ''
+              OR (CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) < 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        OR
+        (key = 'security.idmap.size'
+         AND value NOT IN ('',
+    'auto')
+         AND ((CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) = ''
+              OR (CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) <= 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        );
+CREATE INDEX instances_config_idmap_nondefault_size_usage_idx ON instances_config (
+    instance_id)
+    WHERE key = 'security.idmap.size'
+    AND value NOT IN ('',
+    'auto',
+    '65536');
+CREATE INDEX instances_config_idmap_owner_usage_idx ON instances_config (
+    replace(replace(replace(replace(lower(value),
+    '-',
+    ''),
+    '{',
+    ''),
+    '}',
+    ''),
+    'urn:uuid:',
+    ''),
+    instance_id) WHERE key = 'user.openstack.uuid';
+CREATE INDEX instances_config_idmap_range_usage_idx ON instances_config (
+    CAST(value AS INTEGER),
+    instance_id)
+    WHERE key = 'security.idmap.base';
+CREATE INDEX instances_config_idmap_volatile_range_usage_idx ON instances_config (
+    CAST(value AS INTEGER),
+    instance_id)
+    WHERE key = 'volatile.idmap.base';
 CREATE TABLE "instances_devices" (
     id INTEGER primary key AUTOINCREMENT NOT NULL,
     instance_id INTEGER NOT NULL,
@@ -168,6 +225,11 @@ CREATE TABLE "instances_profiles" (
     FOREIGN KEY (instance_id) REFERENCES "instances" (id) ON DELETE CASCADE,
     FOREIGN KEY (profile_id) REFERENCES "profiles"(id) ON DELETE CASCADE
 );
+CREATE INDEX instances_profiles_instance_id_apply_order_idx ON instances_profiles (instance_id,
+    apply_order DESC,
+    profile_id);
+CREATE INDEX instances_profiles_profile_id_instance_id_idx ON instances_profiles (profile_id,
+    instance_id);
 CREATE INDEX instances_project_id_and_name_idx ON instances (project_id,
     name);
 CREATE INDEX instances_project_id_and_node_id_and_name_idx ON instances (project_id,
@@ -454,6 +516,58 @@ CREATE TABLE "profiles_config" (
     UNIQUE (profile_id, key),
     FOREIGN KEY (profile_id) REFERENCES "profiles"(id) ON DELETE CASCADE
 );
+CREATE INDEX profiles_config_idmap_malformed_usage_idx ON profiles_config (
+    profile_id,
+    key)
+    WHERE (
+        (key = 'security.idmap.base'
+         AND value != ''
+         AND ((CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) = ''
+              OR (CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) < 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        OR
+        (key = 'security.idmap.size'
+         AND value NOT IN ('',
+    'auto')
+         AND ((CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) = ''
+              OR (CASE WHEN substr(value,
+    1,
+    1) = '+' THEN substr(value,
+    2) ELSE value END) GLOB '*[^0-9]*'
+              OR CAST(value AS INTEGER) <= 0
+              OR CAST(value AS INTEGER) > 4294967295))
+        );
+CREATE INDEX profiles_config_idmap_nondefault_size_usage_idx ON profiles_config (
+    profile_id)
+    WHERE key = 'security.idmap.size'
+    AND value NOT IN ('',
+    'auto',
+    '65536');
+CREATE INDEX profiles_config_idmap_owner_usage_idx ON profiles_config (
+    replace(replace(replace(replace(lower(value),
+    '-',
+    ''),
+    '{',
+    ''),
+    '}',
+    ''),
+    'urn:uuid:',
+    ''),
+    profile_id) WHERE key = 'user.openstack.uuid';
+CREATE INDEX profiles_config_idmap_range_usage_idx ON profiles_config (
+    CAST(value AS INTEGER),
+    profile_id)
+    WHERE key = 'security.idmap.base';
 CREATE TABLE "profiles_devices" (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     profile_id INTEGER NOT NULL,
@@ -675,5 +789,5 @@ CREATE TABLE "warnings" (
 );
 CREATE UNIQUE INDEX warnings_unique_node_id_project_id_entity_type_code_entity_id_type_code ON warnings(IFNULL(node_id, -1), IFNULL(project_id, -1), entity_type_code, entity_id, type_code);
 
-INSERT INTO schema (version, updated_at) VALUES (77, strftime("%s"))
+INSERT INTO schema (version, updated_at) VALUES (78, strftime("%s"))
 `
