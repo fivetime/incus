@@ -528,7 +528,8 @@ func parseRBDTrashEntries(data string) ([]cephRBDTrashEntry, error) {
 			return nil, errors.New("RBD trash listing contains a non-canonical image ID")
 		}
 
-		if _, found := seenIDs[entry.ID]; found {
+		_, found := seenIDs[entry.ID]
+		if found {
 			return nil, errors.New("RBD trash listing contains a duplicate image ID")
 		}
 
@@ -831,7 +832,8 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 			return "", false, err
 		}
 
-		if _, found := findTrashIdentity(trashEntries, expected.ID); found {
+		_, found := findTrashIdentity(trashEntries, expected.ID)
+		if found {
 			err = store.TrashRestore(expected.ID, tombstoneName)
 			if err != nil && !errors.Is(err, errCephIdentityImageNotFound) {
 				return "", false, err
@@ -852,7 +854,8 @@ func prepareRBDIdentityTombstone(store cephIdentityReleaseStore, originalName st
 				return "", false, err
 			}
 
-			if _, found := findTrashIdentity(trashEntries, expected.ID); found {
+			_, found := findTrashIdentity(trashEntries, expected.ID)
+			if found {
 				continue
 			}
 
@@ -915,7 +918,8 @@ func inspectRBDIdentityReleasePostcondition(store cephIdentityReleaseStore, orig
 		return false, false, err
 	}
 
-	if _, found := findTrashIdentity(trash, expected.ID); found {
+	_, found := findTrashIdentity(trash, expected.ID)
+	if found {
 		return true, false, nil
 	}
 
@@ -1052,7 +1056,8 @@ func trashAndRemoveRBDIdentity(store cephIdentityReleaseStore, tombstoneName str
 		return err
 	}
 
-	if _, found := findTrashIdentity(after, expected.ID); !found {
+	_, found := findTrashIdentity(after, expected.ID)
+	if !found {
 		for _, entry := range after {
 			_, existed := beforeIDs[entry.ID]
 			if !existed && entry.Name == tombstoneName {
@@ -1084,7 +1089,8 @@ func trashAndRemoveRBDIdentity(store cephIdentityReleaseStore, tombstoneName str
 		return err
 	}
 
-	if _, found := findTrashIdentity(after, expected.ID); found {
+	_, found = findTrashIdentity(after, expected.ID)
+	if found {
 		return errors.New("Exact RBD image remains in trash after identity-bound removal")
 	}
 

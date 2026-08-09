@@ -1154,7 +1154,8 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 		return err
 	}
 
-	if err := b.checkInstanceStorageMaterializationFence(inst); err != nil {
+	err = b.checkInstanceStorageMaterializationFence(inst)
+	if err != nil {
 		return err
 	}
 
@@ -3425,7 +3426,8 @@ func (b *backend) lockInstanceStorageMaterialization(inst instance.Instance) (fu
 		return nil, err
 	}
 
-	if err := b.checkInstanceStorageMaterializationFence(inst); err != nil {
+	err = b.checkInstanceStorageMaterializationFence(inst)
+	if err != nil {
 		unlock()
 		return nil, err
 	}
@@ -3536,7 +3538,8 @@ func (b *backend) markInstanceStorageMaterialized(inst instance.Instance, vol dr
 		return fmt.Errorf("Read materialized root storage identity: %w", err)
 	}
 
-	if err := persistStorageMaterializationOwnership(b.driver, vol, attempt, identity); err != nil {
+	err = persistStorageMaterializationOwnership(b.driver, vol, attempt, identity)
+	if err != nil {
 		return err
 	}
 

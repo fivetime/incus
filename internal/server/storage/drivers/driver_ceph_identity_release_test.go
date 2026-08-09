@@ -94,13 +94,15 @@ func (s *fakeCephIdentityReleaseStore) RenameImage(oldName string, newName strin
 		return errCephIdentityImageNotFound
 	}
 
-	if _, found := s.active[newName]; found {
+	_, found = s.active[newName]
+	if found {
 		return errors.New("destination exists")
 	}
 
 	delete(s.active, oldName)
 	s.active[newName] = identity
-	if snapshots, found := s.snapshots[oldName]; found {
+	snapshots, found := s.snapshots[oldName]
+	if found {
 		delete(s.snapshots, oldName)
 		s.snapshots[newName] = snapshots
 	}
@@ -151,7 +153,8 @@ func (s *fakeCephIdentityReleaseStore) TrashRestore(imageID string, name string)
 		return errCephIdentityImageNotFound
 	}
 
-	if _, found := s.active[name]; found {
+	_, found = s.active[name]
+	if found {
 		return errors.New("destination exists")
 	}
 
@@ -173,7 +176,8 @@ func (s *fakeCephIdentityReleaseStore) TrashRemove(imageID string) error {
 		return err
 	}
 
-	if _, found := s.trash[imageID]; !found {
+	_, found := s.trash[imageID]
+	if !found {
 		return errCephIdentityImageNotFound
 	}
 
@@ -182,7 +186,8 @@ func (s *fakeCephIdentityReleaseStore) TrashRemove(imageID string) error {
 }
 
 func (s *fakeCephIdentityReleaseStore) SnapshotNames(name string) ([]string, error) {
-	if _, found := s.active[name]; !found {
+	_, found := s.active[name]
+	if !found {
 		return nil, errCephIdentityImageNotFound
 	}
 
@@ -196,7 +201,8 @@ func (s *fakeCephIdentityReleaseStore) SnapshotNames(name string) ([]string, err
 }
 
 func (s *fakeCephIdentityReleaseStore) SnapshotChildren(name string, snapshotName string) ([]string, error) {
-	if _, found := s.active[name]; !found {
+	_, found := s.active[name]
+	if !found {
 		return nil, errCephIdentityImageNotFound
 	}
 
@@ -204,7 +210,8 @@ func (s *fakeCephIdentityReleaseStore) SnapshotChildren(name string, snapshotNam
 }
 
 func (s *fakeCephIdentityReleaseStore) SnapshotUnprotect(name string, snapshotName string) error {
-	if _, found := s.active[name]; !found {
+	_, found := s.active[name]
+	if !found {
 		return errCephIdentityImageNotFound
 	}
 
@@ -216,7 +223,8 @@ func (s *fakeCephIdentityReleaseStore) SnapshotUnprotect(name string, snapshotNa
 }
 
 func (s *fakeCephIdentityReleaseStore) SnapshotPurge(name string) error {
-	if _, found := s.active[name]; !found {
+	_, found := s.active[name]
+	if !found {
 		return errCephIdentityImageNotFound
 	}
 
@@ -228,15 +236,18 @@ func TestFindRBDMappingsByIdentity(t *testing.T) {
 	root := t.TempDir()
 	writeMapping := func(index int, poolID uint64, imageID string) {
 		dir := filepath.Join(root, fmt.Sprintf("%d", index))
-		if err := os.Mkdir(dir, 0o755); err != nil {
+		err := os.Mkdir(dir, 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
 
-		if err := os.WriteFile(filepath.Join(dir, "pool_id"), []byte(fmt.Sprintf("%d\n", poolID)), 0o644); err != nil {
+		err = os.WriteFile(filepath.Join(dir, "pool_id"), []byte(fmt.Sprintf("%d\n", poolID)), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 
-		if err := os.WriteFile(filepath.Join(dir, "image_id"), []byte(imageID+"\n"), 0o644); err != nil {
+		err = os.WriteFile(filepath.Join(dir, "image_id"), []byte(imageID+"\n"), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -292,7 +303,8 @@ func TestParseRBDPoolIdentity(t *testing.T) {
 		`{"pool":"incus-rootfs"}`,
 		`not-json`,
 	} {
-		if _, err := parseRBDPoolIdentity(input, "incus-rootfs"); err == nil {
+		_, err := parseRBDPoolIdentity(input, "incus-rootfs")
+		if err == nil {
 			t.Fatalf("Invalid pool mapping %q was accepted", input)
 		}
 	}
@@ -315,7 +327,8 @@ func TestParseRadosDFPoolIdentity(t *testing.T) {
 		`{}`,
 		`not-json`,
 	} {
-		if _, err := parseRadosDFPoolIdentity(input, "incus-rootfs"); err == nil {
+		_, err := parseRadosDFPoolIdentity(input, "incus-rootfs")
+		if err == nil {
 			t.Fatalf("Invalid pool usage report %q was accepted", input)
 		}
 	}
@@ -356,7 +369,8 @@ func TestRBDImageIDsMayBeOddLength(t *testing.T) {
 			BlockNamePrefix: "rbd_data." + id,
 		}
 
-		if err := identity.validate(); err != nil {
+		err := identity.validate()
+		if err != nil {
 			t.Fatalf("Odd-length RBD image ID %q was rejected: %v", id, err)
 		}
 
@@ -373,7 +387,8 @@ func TestRBDImageIDsMayBeOddLength(t *testing.T) {
 			BlockNamePrefix: "rbd_data." + id,
 		}
 
-		if err := identity.validate(); err == nil {
+		err := identity.validate()
+		if err == nil {
 			t.Fatalf("Non-canonical RBD image ID %q was accepted", id)
 		}
 	}
@@ -571,7 +586,8 @@ func TestDeleteRBDVolumeWithIdentity(t *testing.T) {
 			t.Fatal("Trash removal failure was hidden")
 		}
 
-		if _, found := store.trash[expected.ID]; !found {
+		_, found := store.trash[expected.ID]
+		if !found {
 			t.Fatal("Failed removal did not retain exact image in trash")
 		}
 
@@ -771,7 +787,8 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, found := findTrashIdentity(trash, expected.ID); found {
+	_, found := findTrashIdentity(trash, expected.ID)
+	if found {
 		t.Fatal("Exact image survived successful deletion in trash")
 	}
 }

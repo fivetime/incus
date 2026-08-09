@@ -21,7 +21,8 @@ import (
 )
 
 func storageMaterializationAttemptForRequest(s *state.State, projectName string, req *api.InstancesPost) (*db.StorageMaterializationAttempt, error) {
-	if err := validateStorageMaterializationRequest(req); err != nil {
+	err := validateStorageMaterializationRequest(req)
+	if err != nil {
 		return nil, err
 	}
 
@@ -88,7 +89,8 @@ func validateStorageMaterializationRequest(req *api.InstancesPost) error {
 		}
 	}
 	for _, value := range values {
-		if err := validateCanonicalStorageMaterializationUUID(value); err != nil {
+		err := validateCanonicalStorageMaterializationUUID(value)
+		if err != nil {
 			return fmt.Errorf("Invalid rootfs materialization identity: %w", err)
 		}
 	}
@@ -129,7 +131,8 @@ func commitStorageMaterializationAttempt(ctx context.Context, s *state.State, at
 		return fmt.Errorf("Load materialized instance before commit: %w", err)
 	}
 
-	if err := validateStorageMaterializationInstance(attempt, inst); err != nil {
+	err = validateStorageMaterializationInstance(attempt, inst)
+	if err != nil {
 		return err
 	}
 
@@ -146,11 +149,13 @@ func commitMigrationAndStorageMaterializationAttempts(ctx context.Context, s *st
 		return fmt.Errorf("Load materialized instance before migration commit: %w", err)
 	}
 
-	if err := validateStorageMaterializationInstance(attempt, inst); err != nil {
+	err = validateStorageMaterializationInstance(attempt, inst)
+	if err != nil {
 		return err
 	}
 
-	if err := validateStorageMaterializationHandoverTarget(attempt, inst.LocalConfig()); err != nil {
+	err = validateStorageMaterializationHandoverTarget(attempt, inst.LocalConfig())
+	if err != nil {
 		return err
 	}
 
@@ -245,7 +250,8 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 		return err
 	}
 
-	if err := validateStorageMaterializationReconcileBoundary(s, attempt, allowUnboundSameDaemon); err != nil {
+	err = validateStorageMaterializationReconcileBoundary(s, attempt, allowUnboundSameDaemon)
+	if err != nil {
 		return err
 	}
 
@@ -289,7 +295,8 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 			return err
 		}
 
-		if provider, ok := pool.Driver().(drivers.VolumeIdentityProvider); ok {
+		provider, ok := pool.Driver().(drivers.VolumeIdentityProvider)
+		if ok {
 			if exists && attempt.StorageIdentity == "" {
 				return errors.New("Materialized volume has no recorded immutable identity")
 			}
@@ -311,7 +318,8 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 
 	inst, err := serverInstance.LoadByProjectAndName(s, attempt.Project, attempt.InstanceName)
 	if err == nil {
-		if err := validateStorageMaterializationInstance(attempt, inst); err != nil {
+		err = validateStorageMaterializationInstance(attempt, inst)
+		if err != nil {
 			return err
 		}
 
@@ -320,11 +328,13 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 		}
 
 		if storageMaterializationCleanupProtectsBackend(attempt.CleanupDisposition) && !internalInstance.StorageDeleteProtected(inst.LocalConfig()) {
-			if err := inst.VolatileSet(map[string]string{internalInstance.ConfigVolatileMigrationStorageDeleteProtection: "true"}); err != nil {
+			err = inst.VolatileSet(map[string]string{internalInstance.ConfigVolatileMigrationStorageDeleteProtection: "true"})
+			if err != nil {
 				return fmt.Errorf("Persist retained storage cleanup disposition on instance: %w", err)
 			}
 		}
-		if err := inst.Delete(true, true); err != nil {
+		err = inst.Delete(true, true)
+		if err != nil {
 			return fmt.Errorf("Delete failed materialization instance: %w", err)
 		}
 	} else if !response.IsNotFoundError(err) {
@@ -351,7 +361,8 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 		if !deleteBackend {
 			// The attempt has failed and its volume record is being torn down, so leftover
 			// mounts or references are stale state from the failed receive, not live users.
-			if err := storagePools.ReleaseVolumeLocalStateDetached(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
+			err = storagePools.ReleaseVolumeLocalStateDetached(pool.Driver(), vol, attempt.StorageIdentity)
+			if err != nil {
 				return fmt.Errorf("Release failed materialization storage local state: %w", err)
 			}
 		} else {
@@ -363,7 +374,8 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 			}
 		}
 
-		if err := storagePools.VolumeDBDelete(pool, attempt.Project, attempt.InstanceName, drivers.VolumeTypeContainer); err != nil {
+		err = storagePools.VolumeDBDelete(pool, attempt.Project, attempt.InstanceName, drivers.VolumeTypeContainer)
+		if err != nil {
 			return err
 		}
 	} else if !response.IsNotFoundError(dbErr) {
@@ -379,11 +391,13 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 	if !deleteBackend {
 		// No database record exists for this claim, so any leftover mount or mount
 		// reference was leaked by a failed receive and is exactly what must be released.
-		if err := storagePools.ReleaseVolumeLocalStateDetached(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
+		err = storagePools.ReleaseVolumeLocalStateDetached(pool.Driver(), vol, attempt.StorageIdentity)
+		if err != nil {
 			return fmt.Errorf("Release detached Ceph local claim state: %w", err)
 		}
 
-		if err := storagePools.ValidateVolumeLocalStateReleased(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
+		err = storagePools.ValidateVolumeLocalStateReleased(pool.Driver(), vol, attempt.StorageIdentity)
+		if err != nil {
 			return fmt.Errorf("Prove detached Ceph local claim release: %w", err)
 		}
 	} else {
@@ -398,7 +412,8 @@ func reconcileStorageMaterializationAttempt(ctx context.Context, s *state.State,
 		}
 
 		if attempt.StorageIdentity != "" {
-			if err := deleteStorageMaterializationVolumeWithIdentity(pool.Driver(), vol, attempt.StorageIdentity); err != nil {
+			err = deleteStorageMaterializationVolumeWithIdentity(pool.Driver(), vol, attempt.StorageIdentity)
+			if err != nil {
 				return err
 			}
 		}

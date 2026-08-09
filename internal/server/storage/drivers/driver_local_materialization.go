@@ -114,7 +114,8 @@ func setXattrMaterializationOwnership(vol Volume, ownership string) error {
 
 // InitializeVolumeIdentity replaces any identity inherited by a copied directory volume.
 func (d *dir) InitializeVolumeIdentity(vol Volume) error {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return err
 	}
 
@@ -126,7 +127,8 @@ func (d *dir) InitializeVolumeIdentity(vol Volume) error {
 	defer unlock()
 
 	identity := uuid.NewString()
-	if err := setMaterializationXattr(vol.MountPath(), dirMaterializationIdentityXattr, identity); err != nil {
+	err = setMaterializationXattr(vol.MountPath(), dirMaterializationIdentityXattr, identity)
+	if err != nil {
 		return fmt.Errorf("Set directory volume identity: %w", err)
 	}
 
@@ -144,7 +146,8 @@ func (d *dir) InitializeVolumeIdentity(vol Volume) error {
 
 // GetVolumeIdentity returns the trusted random identity assigned after directory materialization.
 func (d *dir) GetVolumeIdentity(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -163,7 +166,8 @@ func (d *dir) GetVolumeIdentity(vol Volume) (string, error) {
 
 // GetVolumeMaterializationOwnership returns directory ownership evidence.
 func (d *dir) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -172,7 +176,8 @@ func (d *dir) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
 
 // SetVolumeMaterializationOwnership persists directory ownership evidence.
 func (d *dir) SetVolumeMaterializationOwnership(vol Volume, ownership string) error {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return err
 	}
 
@@ -203,7 +208,8 @@ func parseLVMVolumeIdentity(output string) (string, error) {
 
 // GetVolumeIdentity returns the LVM logical volume UUID.
 func (d *lvm) GetVolumeIdentity(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -248,7 +254,8 @@ func (d *lvm) getLVMMaterializationTags(vol Volume) ([]string, error) {
 
 // GetVolumeMaterializationOwnership returns the single ownership tag stored on an LVM volume.
 func (d *lvm) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -270,7 +277,8 @@ func (d *lvm) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
 
 // SetVolumeMaterializationOwnership persists ownership as an LVM tag.
 func (d *lvm) SetVolumeMaterializationOwnership(vol Volume, ownership string) error {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return err
 	}
 
@@ -348,7 +356,8 @@ func validateZFSIdentityBoundDeletion(expectedStorageIdentity string, dependentC
 
 // GetVolumeIdentity returns the immutable ZFS dataset GUID.
 func (d *zfs) GetVolumeIdentity(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -389,7 +398,8 @@ func parseZFSMaterializationOwnership(output string) (string, error) {
 
 // GetVolumeMaterializationOwnership returns a locally-set ZFS ownership property.
 func (d *zfs) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -403,11 +413,13 @@ func (d *zfs) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
 
 // SetVolumeMaterializationOwnership persists a local ZFS ownership property.
 func (d *zfs) SetVolumeMaterializationOwnership(vol Volume, ownership string) error {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return err
 	}
 
-	if _, err := validateMaterializationOwnership(ownership); err != nil {
+	_, err = validateMaterializationOwnership(ownership)
+	if err != nil {
 		return err
 	}
 
@@ -456,7 +468,8 @@ func parseBtrfsVolumeIdentity(output string) (string, error) {
 
 // GetVolumeIdentity returns the Btrfs subvolume UUID.
 func (d *btrfs) GetVolumeIdentity(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -470,7 +483,8 @@ func (d *btrfs) GetVolumeIdentity(vol Volume) (string, error) {
 
 // GetVolumeMaterializationOwnership returns Btrfs ownership evidence.
 func (d *btrfs) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return "", err
 	}
 
@@ -479,7 +493,8 @@ func (d *btrfs) GetVolumeMaterializationOwnership(vol Volume) (string, error) {
 
 // SetVolumeMaterializationOwnership persists Btrfs ownership evidence.
 func (d *btrfs) SetVolumeMaterializationOwnership(vol Volume, ownership string) error {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return err
 	}
 
@@ -494,7 +509,8 @@ func (d *btrfs) SetVolumeMaterializationOwnership(vol Volume, ownership string) 
 }
 
 func deleteMaterializedVolumeWithIdentity(vol Volume, expectedStorageIdentity string, action func() error) error {
-	if err := validateMaterializationVolume(vol); err != nil {
+	err := validateMaterializationVolume(vol)
+	if err != nil {
 		return err
 	}
 

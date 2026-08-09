@@ -106,12 +106,13 @@ func (m *Manager) ListUnfinished(ctx context.Context) ([]db.StorageMaterializati
 // Register records a new attempt, or returns the caller's own existing one so a retried request
 // is not treated as a collision. An attempt bound to a different rootfs is refused.
 func (m *Manager) Register(ctx context.Context, expected db.StorageMaterializationAttempt) (*db.StorageMaterializationAttempt, error) {
-	if err := validateBinding(&expected); err != nil {
+	err := validateBinding(&expected)
+	if err != nil {
 		return nil, err
 	}
 
 	var attempt *db.StorageMaterializationAttempt
-	err := m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
+	err = m.node.Transaction(ctx, func(ctx context.Context, tx *db.NodeTx) error {
 		current, err := tx.GetStorageMaterializationAttempt(ctx, expected.Token)
 		if err == nil {
 			if current.State == StateRetired || !SameBinding(current, &expected) {

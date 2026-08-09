@@ -59,7 +59,8 @@ func TestReleaseVolumeLocalState(t *testing.T) {
 
 	t.Run("identity mismatch", func(t *testing.T) {
 		driver := &testVolumeLocalStateDriver{identity: "recreated", hasState: true}
-		if err := releaseVolumeLocalState(driver, vol, "immutable"); err == nil {
+		err := releaseVolumeLocalState(driver, vol, "immutable")
+		if err == nil {
 			t.Fatal("Recreated storage object was released")
 		}
 
@@ -85,16 +86,19 @@ func TestReleaseVolumeLocalState(t *testing.T) {
 func TestValidateVolumeLocalStateReleased(t *testing.T) {
 	vol := drivers.NewVolume(nil, "pool", drivers.VolumeTypeContainer, drivers.ContentTypeFS, "instance", nil, nil)
 	provider := &testVolumeLocalStateDriver{identity: "immutable", hasState: true}
-	if err := validateVolumeLocalStateReleased(provider, vol, "immutable"); err == nil {
+	err := validateVolumeLocalStateReleased(provider, vol, "immutable")
+	if err == nil {
 		t.Fatal("Residual local state was accepted")
 	}
 
 	provider.hasState = false
-	if err := validateVolumeLocalStateReleased(provider, vol, "immutable"); err != nil {
+	err = validateVolumeLocalStateReleased(provider, vol, "immutable")
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := validateVolumeLocalStateReleased(provider, vol, ""); err == nil {
+	err = validateVolumeLocalStateReleased(provider, vol, "")
+	if err == nil {
 		t.Fatal("Empty identity was accepted for local-state proof")
 	}
 }

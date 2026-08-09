@@ -30,7 +30,8 @@ func OwnershipMarker(attempt *db.StorageMaterializationAttempt, storageIdentity 
 
 	bound := *attempt
 	bound.StorageIdentity = storageIdentity
-	if err := validateBinding(&bound); err != nil {
+	err := validateBinding(&bound)
+	if err != nil {
 		return "", err
 	}
 

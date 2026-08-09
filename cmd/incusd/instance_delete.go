@@ -223,7 +223,8 @@ func rootfsMaterializationBindingRequiresRelease(localConfig map[string]string) 
 	}
 
 	for _, value := range values {
-		if err := validateCanonicalStorageMaterializationUUID(value); err != nil {
+		err := validateCanonicalStorageMaterializationUUID(value)
+		if err != nil {
 			return true, fmt.Errorf("Instance has invalid rootfs materialization provenance: %w", err)
 		}
 	}

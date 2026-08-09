@@ -79,15 +79,18 @@ func TestParseZFSVolumeIdentity(t *testing.T) {
 }
 
 func TestValidateZFSIdentityBoundDeletion(t *testing.T) {
-	if err := validateZFSIdentityBoundDeletion("", 1); err != nil {
+	err := validateZFSIdentityBoundDeletion("", 1)
+	if err != nil {
 		t.Fatalf("Ordinary ZFS deletion unexpectedly rejected clones: %v", err)
 	}
 
-	if err := validateZFSIdentityBoundDeletion("immutable", 0); err != nil {
+	err = validateZFSIdentityBoundDeletion("immutable", 0)
+	if err != nil {
 		t.Fatalf("Clone-free identity deletion was rejected: %v", err)
 	}
 
-	if err := validateZFSIdentityBoundDeletion("immutable", 1); err == nil {
+	err = validateZFSIdentityBoundDeletion("immutable", 1)
+	if err == nil {
 		t.Fatal("Identity-bound ZFS deletion accepted a dependent clone")
 	}
 }

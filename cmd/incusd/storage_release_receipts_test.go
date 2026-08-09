@@ -248,12 +248,14 @@ func TestStorageReleaseReceiptRejectsResidualLocalState(t *testing.T) {
 	receipt := testStorageReleaseReceipt()
 	receipt.Outcome = storagereleasereceipt.OutcomeDeleted
 	provider := &testStorageReleaseReceiptLocalStateProvider{hasState: true}
-	if err := validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol); err == nil {
+	err := validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol)
+	if err == nil {
 		t.Fatal("First GET or acknowledgement accepted a deleted receipt with a residual mapping")
 	}
 
 	provider.hasState = false
-	if err := validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol); err != nil {
+	err = validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -262,7 +264,8 @@ func TestStorageReleaseReceiptRejectsResidualLocalState(t *testing.T) {
 	}
 
 	receipt.StorageIdentity = ""
-	if err := validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol); err == nil {
+	err = validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol)
+	if err == nil {
 		t.Fatal("Receipt without an immutable identity reached local-state proof")
 	}
 
@@ -270,7 +273,8 @@ func TestStorageReleaseReceiptRejectsResidualLocalState(t *testing.T) {
 
 	inspectErr := errors.New("local state inspection failed")
 	provider.err = inspectErr
-	if err := validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol); !errors.Is(err, inspectErr) {
+	err = validateRequiredStorageReleaseReceiptLocalState(receipt, provider, vol)
+	if !errors.Is(err, inspectErr) {
 		t.Fatalf("Receipt validation did not preserve local state inspection failure: %v", err)
 	}
 }
@@ -282,21 +286,25 @@ func TestDeletedStorageReceiptAllowsDifferentSameNameGeneration(t *testing.T) {
 	receipt.Outcome = storagereleasereceipt.OutcomeDeleted
 	provider := &testDeletedStorageIdentityProvider{logicalIdentity: "second-generation", exactExists: true}
 
-	if err := validateDeletedStorageReleaseReceiptIdentity(provider, vol, true, receipt); err == nil {
+	err := validateDeletedStorageReleaseReceiptIdentity(provider, vol, true, receipt)
+	if err == nil {
 		t.Fatal("Receipt GET accepted the old generation while it remained in tombstone or trash")
 	}
 
 	provider.exactExists = false
-	if err := validateDeletedStorageReleaseReceiptIdentity(provider, vol, true, receipt); err != nil {
+	err = validateDeletedStorageReleaseReceiptIdentity(provider, vol, true, receipt)
+	if err != nil {
 		t.Fatalf("Different same-name generation blocked old receipt retirement: %v", err)
 	}
 
 	provider.logicalIdentity = receipt.StorageIdentity
-	if err := validateDeletedStorageReleaseReceiptIdentity(provider, vol, true, receipt); err == nil {
+	err = validateDeletedStorageReleaseReceiptIdentity(provider, vol, true, receipt)
+	if err == nil {
 		t.Fatal("Same exact generation reappeared under the logical name")
 	}
 
-	if err := validateDeletedStorageReleaseReceiptIdentity(provider, vol, false, receipt); err != nil {
+	err = validateDeletedStorageReleaseReceiptIdentity(provider, vol, false, receipt)
+	if err != nil {
 		t.Fatal(err)
 	}
 }

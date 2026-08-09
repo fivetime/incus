@@ -39,7 +39,8 @@ func parseCephMaterializationOwnership(data string) (string, error) {
 	}
 
 	metadata := map[string]string{}
-	if err := json.Unmarshal([]byte(data), &metadata); err != nil {
+	err := json.Unmarshal([]byte(data), &metadata)
+	if err != nil {
 		return "", fmt.Errorf("Invalid RBD image metadata: %w", err)
 	}
 

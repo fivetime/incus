@@ -38,7 +38,8 @@ func TestParseRBDVolumeIdentity(t *testing.T) {
 		`{ "pool_id":29,"id":"abcd","block_name_prefix":"rbd_data.abcd"}`,
 		`{"pool_id":29,"id":"abcd","block_name_prefix":"rbd_data.abcd","extra":true}`,
 	} {
-		if _, err := parseCanonicalRBDVolumeIdentity(nonCanonical); err == nil {
+		_, err := parseCanonicalRBDVolumeIdentity(nonCanonical)
+		if err == nil {
 			t.Fatalf("Non-canonical identity %q was accepted", nonCanonical)
 		}
 	}

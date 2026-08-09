@@ -69,7 +69,8 @@ func TestExternalRBDClaimIdentityUsesPhysicalCephIdentity(t *testing.T) {
 		t.Fatal("Different OSD pools produced the same physical claim identity")
 	}
 
-	if _, err := externalRBDClaimIdentityFromConfig(map[string]string{"ceph.cluster_name": "ceph-a"}, imageName, lookup); err == nil {
+	_, err = externalRBDClaimIdentityFromConfig(map[string]string{"ceph.cluster_name": "ceph-a"}, imageName, lookup)
+	if err == nil {
 		t.Fatal("Missing OSD pool was accepted")
 	}
 }

@@ -203,7 +203,8 @@ func TestSeedNormalizedRootfsIDMapProvenanceRejectsExistingNonNormalizedState(t 
 			t.Fatal(err)
 		}
 
-		if err := SeedNormalizedRootfsIDMapProvenance(volumePath); err == nil {
+		err = SeedNormalizedRootfsIDMapProvenance(volumePath)
+		if err == nil {
 			t.Fatal("Existing shifted provenance was accepted as a normalized seed")
 		}
 	})
@@ -215,7 +216,8 @@ func TestSeedNormalizedRootfsIDMapProvenanceRejectsExistingNonNormalizedState(t 
 			t.Fatal(err)
 		}
 
-		if err := SeedNormalizedRootfsIDMapProvenance(volumePath); err == nil {
+		err = SeedNormalizedRootfsIDMapProvenance(volumePath)
+		if err == nil {
 			t.Fatal("Existing transition provenance was accepted as a normalized seed")
 		}
 	})
@@ -259,7 +261,8 @@ func TestValidateRootfsIDMapRejectsValuesOutsideUIDSpace(t *testing.T) {
 		NSID:     rootfsIDMapIDSpaceSize - 1,
 		MapRange: 1,
 	}}}
-	if err := validateRootfsIDMap(validBoundary); err != nil {
+	err := validateRootfsIDMap(validBoundary)
+	if err != nil {
 		t.Fatalf("Valid 32-bit boundary was rejected: %v", err)
 	}
 
@@ -271,7 +274,8 @@ func TestValidateRootfsIDMapRejectsValuesOutsideUIDSpace(t *testing.T) {
 	}
 
 	for i, entry := range tests {
-		if err := validateRootfsIDMap(&idmap.Set{Entries: []idmap.Entry{entry}}); err == nil {
+		err = validateRootfsIDMap(&idmap.Set{Entries: []idmap.Entry{entry}})
+		if err == nil {
 			t.Fatalf("Entry %d outside the 32-bit UID/GID space was accepted", i)
 		}
 	}

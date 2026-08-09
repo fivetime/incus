@@ -30,7 +30,8 @@ func persistStorageMaterializationOwnership(driver drivers.Driver, vol drivers.V
 		return fmt.Errorf("Build materialized root storage ownership marker: %w", err)
 	}
 
-	if err := provider.SetVolumeMaterializationOwnership(vol, marker); err != nil {
+	err = provider.SetVolumeMaterializationOwnership(vol, marker)
+	if err != nil {
 		return fmt.Errorf("Persist materialized root storage ownership marker: %w", err)
 	}
 

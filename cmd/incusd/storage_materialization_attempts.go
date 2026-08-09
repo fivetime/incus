@@ -94,7 +94,8 @@ func storageMaterializationAttemptGet(d *Daemon, r *http.Request) response.Respo
 //	    description: Storage materialization attempt
 func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Response {
 	s := d.State()
-	if resp := forwardedResponseIfTargetIsRemote(s, r); resp != nil {
+	resp := forwardedResponseIfTargetIsRemote(s, r)
+	if resp != nil {
 		return resp
 	}
 
@@ -104,7 +105,8 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 	}
 
 	req := api.StorageMaterializationAttemptPut{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
 		return response.BadRequest(err)
 	}
 
@@ -117,7 +119,8 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 			return response.BadRequest(err)
 		}
 
-		if err := storageMaterializationAttemptPermission(s, r, projectName, expected.InstanceName); err != nil {
+		err = storageMaterializationAttemptPermission(s, r, projectName, expected.InstanceName)
+		if err != nil {
 			return response.SmartError(err)
 		}
 
@@ -128,7 +131,8 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 
 		defer unlock()
 
-		if err := validateStorageMaterializationRegistrationBaseline(r.Context(), s, expected); err != nil {
+		err = validateStorageMaterializationRegistrationBaseline(r.Context(), s, expected)
+		if err != nil {
 			return response.Conflict(err)
 		}
 
@@ -168,7 +172,8 @@ func storageMaterializationAttemptPut(d *Daemon, r *http.Request) response.Respo
 			return response.SyncResponse(true, storageMaterializationAttemptToAPI(attempt))
 		}
 
-		if err := storageMaterializationAttemptOperationFinished(s, attempt); err != nil {
+		err = storageMaterializationAttemptOperationFinished(s, attempt)
+		if err != nil {
 			return response.Conflict(err)
 		}
 
@@ -215,7 +220,8 @@ func validateStorageMaterializationRegistrationBaseline(ctx context.Context, s *
 		return errors.New("Materialization storage driver does not match its pool")
 	}
 
-	if err := validateStorageMaterializationCleanupCapabilities(pool.Driver(), expected.CleanupDisposition); err != nil {
+	err = validateStorageMaterializationCleanupCapabilities(pool.Driver(), expected.CleanupDisposition)
+	if err != nil {
 		return err
 	}
 
@@ -308,15 +314,18 @@ func validateStorageMaterializationCleanupCapabilities(driver drivers.Driver, cl
 		return nil
 	}
 
-	if _, ok := driver.(drivers.VolumeIdentityProvider); !ok {
+	_, ok := driver.(drivers.VolumeIdentityProvider)
+	if !ok {
 		return errors.New("Storage materialization cleanup requires immutable volume identity support")
 	}
 
-	if _, ok := driver.(drivers.VolumeMaterializationOwnershipProvider); !ok {
+	_, ok = driver.(drivers.VolumeMaterializationOwnershipProvider)
+	if !ok {
 		return errors.New("Storage materialization cleanup requires durable volume ownership support")
 	}
 
-	if _, ok := driver.(drivers.VolumeIdentityBoundDeleter); !ok {
+	_, ok = driver.(drivers.VolumeIdentityBoundDeleter)
+	if !ok {
 		return errors.New("Storage materialization cleanup requires identity-bound volume deletion support")
 	}
 
@@ -367,11 +376,12 @@ func storageMaterializationAttemptDelete(d *Daemon, r *http.Request) response.Re
 		return resp
 	}
 
-	if err := validateStorageMaterializationAcknowledgement(r, attempt); err != nil {
+	err := validateStorageMaterializationAcknowledgement(r, attempt)
+	if err != nil {
 		return response.Conflict(err)
 	}
 
-	err := storagematerializationattempt.New(d.State().DB.Node).Delete(r.Context(), attempt.Token)
+	err = storagematerializationattempt.New(d.State().DB.Node).Delete(r.Context(), attempt.Token)
 	if err != nil {
 		return storageMaterializationAttemptError(err)
 	}
@@ -410,7 +420,8 @@ func validateStorageMaterializationAcknowledgement(r *http.Request, attempt *db.
 
 func loadStorageMaterializationAttempt(d *Daemon, r *http.Request) (*db.StorageMaterializationAttempt, response.Response) {
 	s := d.State()
-	if resp := forwardedResponseIfTargetIsRemote(s, r); resp != nil {
+	resp := forwardedResponseIfTargetIsRemote(s, r)
+	if resp != nil {
 		return nil, resp
 	}
 
@@ -428,7 +439,8 @@ func loadStorageMaterializationAttempt(d *Daemon, r *http.Request) (*db.StorageM
 		return nil, response.NotFound(storagematerializationattempt.ErrNotFound)
 	}
 
-	if err := storageMaterializationAttemptPermission(s, r, attempt.Project, attempt.InstanceName); err != nil {
+	err = storageMaterializationAttemptPermission(s, r, attempt.Project, attempt.InstanceName)
+	if err != nil {
 		return nil, response.SmartError(err)
 	}
 
@@ -441,7 +453,8 @@ func storageMaterializationAttemptToken(r *http.Request) (string, error) {
 		return "", err
 	}
 
-	if err := validateCanonicalStorageMaterializationUUID(token); err != nil {
+	err = validateCanonicalStorageMaterializationUUID(token)
+	if err != nil {
 		return "", err
 	}
 
@@ -450,7 +463,8 @@ func storageMaterializationAttemptToken(r *http.Request) (string, error) {
 
 func storageMaterializationAttemptFromPut(token string, projectName string, req api.StorageMaterializationAttemptPut) (*db.StorageMaterializationAttempt, error) {
 	for name, value := range map[string]string{"allocation_id": req.AllocationID, "compute_id": req.ComputeID, "owner": req.Owner} {
-		if err := validateCanonicalStorageMaterializationUUID(value); err != nil {
+		err := validateCanonicalStorageMaterializationUUID(value)
+		if err != nil {
 			return nil, fmt.Errorf("Invalid %s: %w", name, err)
 		}
 	}
@@ -462,24 +476,29 @@ func storageMaterializationAttemptFromPut(token string, projectName string, req 
 		return nil, errors.New("Instance and storage binding are required")
 	}
 
-	if err := serverInstance.ValidName(req.InstanceName, false); err != nil {
+	err := serverInstance.ValidName(req.InstanceName, false)
+	if err != nil {
 		return nil, fmt.Errorf("Invalid instance name: %w", err)
 	}
 
-	if err := validateStorageMaterializationName("storage driver", req.StorageDriver, 64, false); err != nil {
+	err = validateStorageMaterializationName("storage driver", req.StorageDriver, 64, false)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := validateStorageMaterializationName("storage pool", req.StoragePool, 255, true); err != nil {
+	err = validateStorageMaterializationName("storage pool", req.StoragePool, 255, true)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := validateStorageMaterializationName("storage volume", req.StorageVolume, 255, true); err != nil {
+	err = validateStorageMaterializationName("storage volume", req.StorageVolume, 255, true)
+	if err != nil {
 		return nil, err
 	}
 
 	if req.RBDImage != "" {
-		if err := validateStorageMaterializationName("RBD image", req.RBDImage, 255, true); err != nil {
+		err = validateStorageMaterializationName("RBD image", req.RBDImage, 255, true)
+		if err != nil {
 			return nil, err
 		}
 	}

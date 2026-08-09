@@ -160,24 +160,29 @@ func TestPendingStorageReleaseRejectsSameNameRecreation(t *testing.T) {
 		Outcome:         storagereleasereceipt.OutcomeDetached,
 	}
 
-	if err := validatePendingStorageReleaseBinding(true, "rbd_data.second-generation", receipt); err == nil {
+	err := validatePendingStorageReleaseBinding(true, "rbd_data.second-generation", receipt)
+	if err == nil {
 		t.Fatal("Same-name replacement reached receipt completion or volume DB deletion")
 	}
 
-	if err := validatePendingStorageReleaseBinding(true, receipt.StorageIdentity, receipt); err != nil {
+	err = validatePendingStorageReleaseBinding(true, receipt.StorageIdentity, receipt)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	receipt.Outcome = storagereleasereceipt.OutcomeDeleted
-	if err := validatePendingStorageReleaseBinding(true, receipt.StorageIdentity, receipt); err == nil {
+	err = validatePendingStorageReleaseBinding(true, receipt.StorageIdentity, receipt)
+	if err == nil {
 		t.Fatal("Deleted identity reached receipt completion after reappearing")
 	}
 
-	if err := validatePendingStorageReleaseBinding(true, "rbd_data.second-generation", receipt); err != nil {
+	err = validatePendingStorageReleaseBinding(true, "rbd_data.second-generation", receipt)
+	if err != nil {
 		t.Fatalf("Same-name replacement blocked exact old-generation completion: %v", err)
 	}
 
-	if err := validatePendingStorageReleaseBinding(false, "", receipt); err != nil {
+	err = validatePendingStorageReleaseBinding(false, "", receipt)
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -187,21 +192,25 @@ func TestDeletedStorageReleaseRequiresExactIdentityAbsence(t *testing.T) {
 	receipt := db.StorageReleaseReceipt{StorageDriver: "ceph", StorageIdentity: "immutable", Outcome: storagereleasereceipt.OutcomeDeleted}
 	provider := &storageReleaseIdentityPresenceTestProvider{exists: true}
 
-	if err := validateDeletedStorageIdentityAbsent(provider, vol, receipt); err == nil {
+	err := validateDeletedStorageIdentityAbsent(provider, vol, receipt)
+	if err == nil {
 		t.Fatal("Deleted receipt accepted an exact identity retained in tombstone or trash")
 	}
 
 	provider.exists = false
-	if err := validateDeletedStorageIdentityAbsent(provider, vol, receipt); err != nil {
+	err = validateDeletedStorageIdentityAbsent(provider, vol, receipt)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := validateDeletedStorageIdentityAbsent(struct{}{}, vol, receipt); err == nil {
+	err = validateDeletedStorageIdentityAbsent(struct{}{}, vol, receipt)
+	if err == nil {
 		t.Fatal("Ceph deletion was accepted without an exact identity presence proof")
 	}
 
 	receipt.Outcome = storagereleasereceipt.OutcomeDetached
-	if err := validateDeletedStorageIdentityAbsent(struct{}{}, vol, receipt); err != nil {
+	err = validateDeletedStorageIdentityAbsent(struct{}{}, vol, receipt)
+	if err != nil {
 		t.Fatal(err)
 	}
 }
