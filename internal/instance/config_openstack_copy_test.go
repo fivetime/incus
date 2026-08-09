@@ -1,6 +1,8 @@
 package instance
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestOpenStackMaterializationProvenanceIsNotCopied(t *testing.T) {
 	for _, key := range []string{
