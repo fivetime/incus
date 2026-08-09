@@ -604,6 +604,13 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, func(), error) {
 			continue
 		}
 
+		// Snapshots are immutable and cannot run, so they do not consume an
+		// active isolated ID map range. In particular, a snapshot must be able
+		// to retain its parent's fixed range without conflicting with it.
+		if container.IsSnapshot() {
+			continue
+		}
+
 		/* Don't change our map Just Because. */
 		if container.ID() == d.id {
 			continue
