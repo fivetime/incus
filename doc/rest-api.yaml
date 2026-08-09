@@ -9214,6 +9214,39 @@ paths:
             summary: Get the event stream
             tags:
                 - server
+    /1.0/idmap-usage:
+        get:
+            description: |-
+                Returns instances and profiles across all projects whose effective ID map
+                owner matches or whose effective ID map overlaps the supplied range.
+            operationId: idmap_usage_get
+            parameters:
+                - in: query
+                  name: owner
+                  required: true
+                  type: string
+                - in: query
+                  name: base
+                  required: true
+                  type: integer
+                - in: query
+                  name: size
+                  required: true
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                "200":
+                    description: Matching instances and profiles
+                "400":
+                    $ref: '#/responses/BadRequest'
+                "403":
+                    $ref: '#/responses/Forbidden'
+                "500":
+                    $ref: '#/responses/InternalServerError'
+            summary: Get exact ID map usage
+            tags:
+                - idmap-usage
     /1.0/images:
         get:
             description: Returns a list of images (URLs).
