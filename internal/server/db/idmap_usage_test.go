@@ -140,12 +140,15 @@ WHERE (
 					_ = rows.Close()
 					return err
 				}
+
 				found = found || strings.Contains(detail, tt.indexName)
 			}
+
 			err = rows.Close()
 			if err != nil {
 				return err
 			}
+
 			if !found {
 				return fmt.Errorf("%s query did not use %s", tt.name, tt.indexName)
 			}

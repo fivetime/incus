@@ -79,6 +79,7 @@ func idmapUsageGet(d *Daemon, r *http.Request) response.Response {
 	if err != nil {
 		return response.BadRequest(err)
 	}
+
 	err = validateIDMapUsageRange(base, size)
 	if err != nil {
 		return response.BadRequest(err)

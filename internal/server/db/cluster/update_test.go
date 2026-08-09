@@ -798,6 +798,7 @@ func TestUpdateFromV77IDMapUsageIndexes(t *testing.T) {
 		"instances_profiles_profile_id_instance_id_idx",
 		"instances_profiles_instance_id_apply_order_idx",
 	}
+
 	for _, indexName := range indexNames {
 		var count int
 		err = db.QueryRow(

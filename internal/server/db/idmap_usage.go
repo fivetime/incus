@@ -352,6 +352,7 @@ ORDER BY 1, 2, 3, 4
 	if err != nil {
 		return nil, fmt.Errorf("Query ID map usage: %w", err)
 	}
+
 	defer func() { _ = rows.Close() }()
 
 	resources := make([]IDMapUsageResource, 0)
@@ -364,6 +365,7 @@ ORDER BY 1, 2, 3, 4
 		if err != nil {
 			return nil, fmt.Errorf("Scan ID map usage: %w", err)
 		}
+
 		if resultKind == 0 {
 			return nil, fmt.Errorf("Invalid effective ID map range on %s %q in project %q: base=%d size=%d", resource.Type, resource.Name, resource.Project, invalidBase.Int64, invalidSize.Int64)
 		}
