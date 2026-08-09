@@ -586,6 +586,31 @@ func (d *lxc) findIdmap() (*idmap.Set, int64, func(), error) {
 		return nil, 0, noRelease, err
 	}
 
+	// Snapshots are immutable and cannot run. Preserve their parent's fixed
+	// map without reserving it or treating the running parent as a conflict.
+	if d.IsSnapshot() {
+		baseValue := d.expandedConfig["volatile.idmap.base"]
+		if baseValue == "" {
+			baseValue = d.expandedConfig["security.idmap.base"]
+		}
+
+		if baseValue == "" {
+			return nil, 0, noRelease, errors.New("Isolated instance snapshot is missing its fixed idmap base")
+		}
+
+		base, err := strconv.ParseInt(baseValue, 10, 64)
+		if err != nil {
+			return nil, 0, noRelease, err
+		}
+
+		set, err := mkIdmap(base, size)
+		if err != nil {
+			return nil, 0, noRelease, err
+		}
+
+		return set, base, noRelease, nil
+	}
+
 	unlockIDMap, err := locking.Lock(context.TODO(), idmapreservation.LockName)
 	if err != nil {
 		return nil, 0, noRelease, err
