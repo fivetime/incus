@@ -6192,23 +6192,23 @@ func getCRIULogErrors(imagesDir string, method string) (string, error) {
 
 // Check if CRIU supports pre-dumping and number of pre-dump iterations.
 func (d *lxc) migrationSendCheckForPreDumpSupport() (bool, int) {
+	return migrationPreDumpSettings(d.ExpandedConfig(), func() error {
+		_, err := subprocess.RunCommand("criu", "check", "--feature", "mem_dirty_track")
+		return err
+	})
+}
+
+func migrationPreDumpSettings(config map[string]string, checkSupport func() error) (bool, int) {
+	if !util.IsTrue(config["migration.incremental.memory"]) {
+		return false, 0
+	}
+
 	// Check if this architecture/kernel/criu combination supports pre-copy dirty memory tracking feature.
-	_, err := subprocess.RunCommand("criu", "check", "--feature", "mem_dirty_track")
+	err := checkSupport()
 	if err != nil {
 		// CRIU says it does not know about dirty memory tracking.
 		// This means the rest of this function is irrelevant.
 		return false, 0
-	}
-
-	// CRIU says it can actually do pre-dump. Let's set it to true
-	// unless the user wants something else.
-	usePreDumps := true
-
-	// What does the configuration say about pre-copy
-	tmp := d.ExpandedConfig()["migration.incremental.memory"]
-
-	if tmp != "" {
-		usePreDumps = util.IsTrue(tmp)
 	}
 
 	var maxIterations int
@@ -6216,7 +6216,7 @@ func (d *lxc) migrationSendCheckForPreDumpSupport() (bool, int) {
 	// migration.incremental.memory.iterations is the value after which the
 	// container will be definitely migrated, even if the remaining number
 	// of memory pages is below the defined threshold.
-	tmp = d.ExpandedConfig()["migration.incremental.memory.iterations"]
+	tmp := config["migration.incremental.memory.iterations"]
 	if tmp != "" {
 		maxIterations, _ = strconv.Atoi(tmp)
 	} else {
@@ -6234,7 +6234,7 @@ func (d *lxc) migrationSendCheckForPreDumpSupport() (bool, int) {
 
 	logger.Debugf("Using maximal %d iterations for pre-dumping", maxIterations)
 
-	return usePreDumps, maxIterations
+	return true, maxIterations
 }
 
 func (d *lxc) migrationSendWriteActionScript(directory string, operation string, secret string, execPath string) error {
@@ -6652,7 +6652,12 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 						final, err = d.migrateSendPreDumpLoop(&loopArgs)
 						if err != nil {
-							return err
+							removed, cleanupErr := removeFailedCRIUCheckpoint(checkpointDir, err)
+							if removed {
+								liveSharedCheckpointDir = ""
+							}
+
+							return cleanupErr
 						}
 
 						preDumpDir = dumpDir
@@ -6673,23 +6678,13 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				}
 
 				err = d.migrate(&criuMigrationArgs)
-				if err != nil && preDumpDir != "" && d.IsRunning() {
-					// A process created after the last pre-dump can leave CRIU
-					// without a matching parent page image. Retry the final
-					// checkpoint once without incremental parents. The source
-					// is still running here, so no storage handover has begun.
-					d.logger.Warn("Incremental final CRIU dump failed, retrying a full final dump", logger.Ctx{"err": err})
-					removeErr := os.RemoveAll(filepath.Join(checkpointDir, criuMigrationArgs.DumpDir))
-					if removeErr != nil {
-						return errors.Join(err, fmt.Errorf("Failed removing incomplete final CRIU dump: %w", removeErr))
+				if err != nil {
+					removed, cleanupErr := cleanupFailedCRIUCheckpoint(checkpointDir, err, d.IsRunning())
+					if removed {
+						liveSharedCheckpointDir = ""
 					}
 
-					criuMigrationArgs.PreDumpDir = ""
-					err = d.migrate(&criuMigrationArgs)
-				}
-
-				if err != nil {
-					return err
+					return cleanupErr
 				}
 
 				err = d.unmount()
@@ -6781,6 +6776,13 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					return err
 				}
 
+				// Start now so every later error completes the operation through restoreSuccess.
+				err = actionScriptOp.Start()
+				if err != nil {
+					_ = os.RemoveAll(checkpointDir)
+					return err
+				}
+
 				err = d.migrationSendWriteActionScript(checkpointDir, actionScriptOp.URL(), actionScriptOpSecret, d.state.OS.ExecPath)
 				if err != nil {
 					_ = os.RemoveAll(checkpointDir)
@@ -6816,8 +6818,8 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 						final, err = d.migrateSendPreDumpLoop(&loopArgs)
 						if err != nil {
-							_ = os.RemoveAll(checkpointDir)
-							return err
+							_, cleanupErr := removeFailedCRIUCheckpoint(checkpointDir, err)
+							return cleanupErr
 						}
 
 						preDumpDir = fmt.Sprintf("%03d", preDumpCounter)
@@ -6825,12 +6827,6 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					}
 				} else {
 					d.logger.Debug("The other side does not support pre-copy")
-				}
-
-				err = actionScriptOp.Start()
-				if err != nil {
-					_ = os.RemoveAll(checkpointDir)
-					return err
 				}
 
 				go func() {
@@ -6948,7 +6944,11 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				if recoveryErr != nil {
 					err = errors.Join(err, fmt.Errorf("Failed restoring source after live shared storage migration failure: %w", recoveryErr))
 				} else {
-					_ = os.RemoveAll(liveSharedCheckpointDir)
+					removeErr := os.RemoveAll(liveSharedCheckpointDir)
+					if removeErr != nil {
+						err = errors.Join(err, fmt.Errorf("Failed removing restored source CRIU checkpoint %q: %w", liveSharedCheckpointDir, removeErr))
+					}
+
 					markerErr := d.VolatileSet(map[string]string{
 						internalInstance.ConfigVolatileMigrationStorageHandover:     "",
 						internalInstance.ConfigVolatileMigrationStorageHandoverRole: "",
@@ -7006,7 +7006,10 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		}
 
 		if liveSharedCheckpointDir != "" {
-			_ = os.RemoveAll(liveSharedCheckpointDir)
+			removeErr := os.RemoveAll(liveSharedCheckpointDir)
+			if removeErr != nil {
+				d.logger.Error("Failed removing committed CRIU checkpoint", logger.Ctx{"path": liveSharedCheckpointDir, "err": removeErr})
+			}
 		}
 
 		op.Done(nil)
@@ -7025,6 +7028,23 @@ type preDumpLoopArgs struct {
 	dumpDir       string
 	final         bool
 	rsyncFeatures []string
+}
+
+func removeFailedCRIUCheckpoint(checkpointDir string, migrationErr error) (bool, error) {
+	removeErr := os.RemoveAll(checkpointDir)
+	if removeErr != nil {
+		return false, errors.Join(migrationErr, fmt.Errorf("Failed removing CRIU checkpoint: %w", removeErr))
+	}
+
+	return true, migrationErr
+}
+
+func cleanupFailedCRIUCheckpoint(checkpointDir string, migrationErr error, sourceRunning bool) (bool, error) {
+	if !sourceRunning {
+		return false, migrationErr
+	}
+
+	return removeFailedCRIUCheckpoint(checkpointDir, migrationErr)
 }
 
 // migrateSendPreDumpLoop is the main logic behind the pre-copy migration.
@@ -7051,22 +7071,8 @@ func (d *lxc) migrateSendPreDumpLoop(args *preDumpLoopArgs) (bool, error) {
 	}
 
 	err := d.migrate(&criuMigrationArgs)
-	preDumpFailed := err != nil
 	if err != nil {
-		// Pre-copy is an optional live migration optimization. A transient
-		// CRIU pre-dump failure must not abort a migration that can still use
-		// a full final checkpoint. Remove the incomplete generation, send an
-		// empty pre-dump update and tell the receiver to expect the final dump.
-		d.logger.Warn("CRIU pre-dump failed, continuing with a full final dump", logger.Ctx{"err": err})
-		removeErr := os.RemoveAll(filepath.Join(args.checkpointDir, args.dumpDir))
-		if removeErr != nil {
-			return final, errors.Join(err, fmt.Errorf("Failed removing incomplete CRIU pre-dump: %w", removeErr))
-		}
-
-		// Keep the last successful generation as the final dump's parent. On
-		// the first pre-dump failure this is empty, making the final dump full.
-		args.dumpDir = args.preDumpDir
-		final = true
+		return final, fmt.Errorf("Failed sending instance: %w", err)
 	}
 
 	// Send the pre-dump.
@@ -7076,51 +7082,49 @@ func (d *lxc) migrateSendPreDumpLoop(args *preDumpLoopArgs) (bool, error) {
 		return final, err
 	}
 
-	if !preDumpFailed {
-		// The function readCriuStatsDump() reads the CRIU 'stats-dump' file
-		// in path and returns the pages_written, pages_skipped_parent, error.
-		readCriuStatsDump := func(statsPath string) (uint64, uint64, error) {
-			// Get dump statistics with crit
-			dumpStats, err := crit.GetDumpStats(statsPath)
-			if err != nil {
-				return 0, 0, fmt.Errorf("Failed to parse CRIU's 'stats-dump' file: %w", err)
-			}
-
-			return dumpStats.GetPagesWritten(), dumpStats.GetPagesSkippedParent(), nil
-		}
-
-		// Read the CRIU's 'stats-dump' file
-		dumpPath := internalUtil.AddSlash(args.checkpointDir)
-		dumpPath += internalUtil.AddSlash(args.dumpDir)
-		written, skippedParent, err := readCriuStatsDump(dumpPath)
+	// The function readCriuStatsDump() reads the CRIU 'stats-dump' file
+	// in path and returns the pages_written, pages_skipped_parent, error.
+	readCriuStatsDump := func(statsPath string) (uint64, uint64, error) {
+		// Get dump statistics with crit
+		dumpStats, err := crit.GetDumpStats(statsPath)
 		if err != nil {
-			return final, err
+			return 0, 0, fmt.Errorf("Failed to parse CRIU's 'stats-dump' file: %w", err)
 		}
 
-		totalPages := written + skippedParent
-		var percentageSkipped int
-		if totalPages > 0 {
-			percentageSkipped = int(100 - ((100 * written) / totalPages))
-		}
+		return dumpStats.GetPagesWritten(), dumpStats.GetPagesSkippedParent(), nil
+	}
 
-		d.logger.Debug("CRIU pages", logger.Ctx{"pages": written, "skipped": skippedParent, "skippedPerc": percentageSkipped})
+	// Read the CRIU's 'stats-dump' file
+	dumpPath := internalUtil.AddSlash(args.checkpointDir)
+	dumpPath += internalUtil.AddSlash(args.dumpDir)
+	written, skippedParent, err := readCriuStatsDump(dumpPath)
+	if err != nil {
+		return final, err
+	}
 
-		// threshold is the percentage of memory pages that needs
-		// to be pre-copied for the pre-copy migration to stop.
-		var threshold int
-		tmp := d.ExpandedConfig()["migration.incremental.memory.goal"]
-		if tmp != "" {
-			threshold, _ = strconv.Atoi(tmp)
-		} else {
-			// defaults to 70%
-			threshold = 70
-		}
+	totalPages := written + skippedParent
+	var percentageSkipped int
+	if totalPages > 0 {
+		percentageSkipped = int(100 - ((100 * written) / totalPages))
+	}
 
-		if percentageSkipped > threshold {
-			d.logger.Debug("Memory pages skipped due to pre-copy is larger than threshold", logger.Ctx{"skippedPerc": percentageSkipped, "thresholdPerc": threshold})
-			d.logger.Debug("This was the last pre-dump; next dump is the final dump")
-			final = true
-		}
+	d.logger.Debug("CRIU pages", logger.Ctx{"pages": written, "skipped": skippedParent, "skippedPerc": percentageSkipped})
+
+	// threshold is the percentage of memory pages that needs
+	// to be pre-copied for the pre-copy migration to stop.
+	var threshold int
+	tmp := d.ExpandedConfig()["migration.incremental.memory.goal"]
+	if tmp != "" {
+		threshold, _ = strconv.Atoi(tmp)
+	} else {
+		// defaults to 70%
+		threshold = 70
+	}
+
+	if percentageSkipped > threshold {
+		d.logger.Debug("Memory pages skipped due to pre-copy is larger than threshold", logger.Ctx{"skippedPerc": percentageSkipped, "thresholdPerc": threshold})
+		d.logger.Debug("This was the last pre-dump; next dump is the final dump")
+		final = true
 	}
 
 	// If in pre-dump mode, the receiving side expects a message to know if this was the last pre-dump.
