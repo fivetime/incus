@@ -82,7 +82,7 @@ timeout 5 head -n 1 /var/lib/lxcfs/proc/meminfo >/dev/null \
 
 CURRENT_PROFILE=$(cat /proc/self/attr/current 2>/dev/null || true)
 case "$CURRENT_PROFILE" in
-  unconfined*) ;;
+  unconfined*|*"(unconfined)"*) ;;
   *) fail "The outer runtime must use the unconfined AppArmor profile" ;;
 esac
 
