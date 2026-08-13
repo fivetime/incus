@@ -55,12 +55,14 @@ type rwState struct {
 	waitCh chan struct{}
 }
 
-// rwLocks is the map of named read-write lock states.
-// Note that any access to this map must be done while holding rwLocksMutex.
-var rwLocks = map[string]*rwState{}
+var (
+	// rwLocks is the map of named read-write lock states.
+	// Note that any access to this map must be done while holding rwLocksMutex.
+	rwLocks = map[string]*rwState{}
 
-// rwLocksMutex is used to access rwLocks safely.
-var rwLocksMutex sync.Mutex
+	// rwLocksMutex is used to access rwLocks safely.
+	rwLocksMutex sync.Mutex
+)
 
 // rwBroadcast wakes all waiters of the state and prepares a fresh wait channel.
 // Must be called while holding rwLocksMutex.
