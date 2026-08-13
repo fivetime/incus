@@ -6015,23 +6015,24 @@ func getCRIULogErrors(imagesDir string, method string) (string, error) {
 
 // Check if CRIU supports pre-dumping and number of pre-dump iterations.
 func (d *lxc) migrationSendCheckForPreDumpSupport() (bool, int) {
+	return migrationPreDumpSettings(d.ExpandedConfig(), func() error {
+		_, err := subprocess.RunCommand("criu", "check", "--feature", "mem_dirty_track")
+		return err
+	})
+}
+
+func migrationPreDumpSettings(config map[string]string, checkSupport func() error) (bool, int) {
+	// Incremental memory migration is opt-in, matching the documented default and avoiding an unnecessary CRIU probe.
+	if !util.IsTrue(config["migration.incremental.memory"]) {
+		return false, 0
+	}
+
 	// Check if this architecture/kernel/criu combination supports pre-copy dirty memory tracking feature.
-	_, err := subprocess.RunCommand("criu", "check", "--feature", "mem_dirty_track")
+	err := checkSupport()
 	if err != nil {
 		// CRIU says it does not know about dirty memory tracking.
 		// This means the rest of this function is irrelevant.
 		return false, 0
-	}
-
-	// CRIU says it can actually do pre-dump. Let's set it to true
-	// unless the user wants something else.
-	usePreDumps := true
-
-	// What does the configuration say about pre-copy
-	tmp := d.ExpandedConfig()["migration.incremental.memory"]
-
-	if tmp != "" {
-		usePreDumps = util.IsTrue(tmp)
 	}
 
 	var maxIterations int
@@ -6039,7 +6040,7 @@ func (d *lxc) migrationSendCheckForPreDumpSupport() (bool, int) {
 	// migration.incremental.memory.iterations is the value after which the
 	// container will be definitely migrated, even if the remaining number
 	// of memory pages is below the defined threshold.
-	tmp = d.ExpandedConfig()["migration.incremental.memory.iterations"]
+	tmp := config["migration.incremental.memory.iterations"]
 	if tmp != "" {
 		maxIterations, _ = strconv.Atoi(tmp)
 	} else {
@@ -6057,7 +6058,7 @@ func (d *lxc) migrationSendCheckForPreDumpSupport() (bool, int) {
 
 	logger.Debugf("Using maximal %d iterations for pre-dumping", maxIterations)
 
-	return usePreDumps, maxIterations
+	return true, maxIterations
 }
 
 func (d *lxc) migrationSendWriteActionScript(directory string, operation string, secret string, execPath string) error {
