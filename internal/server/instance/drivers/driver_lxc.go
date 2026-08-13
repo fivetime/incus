@@ -7712,7 +7712,13 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			// shifted IDs. Normalize only those shifted owners before
 			// migrate() applies the target container's idmap to the tree.
 			if len(srcIdmap.Entries) > 0 {
-				err = srcIdmap.UnshiftPath(imagesDir, criuStateUnshiftSkipper)
+				err = srcIdmap.UnshiftPath(imagesDir, func(_ string, _ string, _ os.FileInfo, newUID int64, newGID int64) error {
+					if newUID < 0 && newGID < 0 {
+						return errors.New("CRIU state owner is not source-idmapped")
+					}
+
+					return nil
+				})
 				if err != nil {
 					return fmt.Errorf("Failed normalizing CRIU state ownership: %w", err)
 				}
@@ -7875,16 +7881,6 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 }
 
 // Migrate migrates the instance to another node.
-var errCRIUStateOwnerNotShifted = errors.New("CRIU state owner is not source-idmapped")
-
-func criuStateUnshiftSkipper(_ string, _ string, _ os.FileInfo, newuid int64, newgid int64) error {
-	if newuid < 0 && newgid < 0 {
-		return errCRIUStateOwnerNotShifted
-	}
-
-	return nil
-}
-
 func (d *lxc) migrate(args *instance.CriuMigrationArgs) error {
 	ctxMap := logger.Ctx{
 		"created":      d.creationDate,
