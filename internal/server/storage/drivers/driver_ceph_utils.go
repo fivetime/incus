@@ -1236,8 +1236,9 @@ func (d *ceph) getRBDMappedDevPath(vol Volume, mapIfMissing bool) (bool, string,
 		// Get the pool for the RBD device.
 		devPoolName, err := os.ReadFile(fmt.Sprintf("/sys/devices/rbd/%s/pool", fName))
 		if err != nil {
-			// Skip if the device disappeared (concurrent unmap) or has no pool file.
-			if isDetachedRBDSysfsReadError(err) {
+			// A concurrent unmap can remove the device, or make its attributes return ENODEV,
+			// between the directory listing and this read.
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ENODEV) {
 				continue
 			}
 
@@ -1252,8 +1253,7 @@ func (d *ceph) getRBDMappedDevPath(vol Volume, mapIfMissing bool) (bool, string,
 		// Get the volume name for the RBD device.
 		devName, err := os.ReadFile(fmt.Sprintf("/sys/devices/rbd/%s/name", fName))
 		if err != nil {
-			// Skip if the device disappeared (concurrent unmap) or has no name file.
-			if isDetachedRBDSysfsReadError(err) {
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ENODEV) {
 				continue
 			}
 
