@@ -8,14 +8,15 @@
 # Incus API, so no web UI is included.
 #
 # Build context must be the repository root:
-#   docker build -f docker/quadlet/Dockerfile .
+#   docker build -f deploy/image/Dockerfile .
 
-# Pinned to a stable release rather than edge: edge is a rolling repository
-# where packages get renamed or dropped without notice (e.g. ceph20 -> ceph19).
-# Bump deliberately when moving to a newer Alpine release.
-ARG ALPINE_VERSION=3.24
+# Pin the multi-platform index so rebuilding one Incus revision cannot silently
+# replace the runtime base. Bump this only as an explicit base-image release.
+ARG ALPINE_IMAGE=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
-FROM alpine:${ALPINE_VERSION} AS incus-build
+FROM ${ALPINE_IMAGE} AS incus-build
+
+ARG INCUS_REVISION=unknown
 
 RUN apk add --no-cache \
       acl-dev \
@@ -45,16 +46,17 @@ COPY . .
 RUN --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -ldflags "-s -w" -o /out/incusd ./cmd/incusd \
-    && go build -trimpath -ldflags "-s -w" -o /out/incus ./cmd/incus
+    && go build -trimpath -ldflags "-s -w" -o /out/incus ./cmd/incus \
+    && printf '%s\n' "${INCUS_REVISION}" > /out/incus-revision
 
 # Build the minimal aa-exec replacement (see aa-exec.c). Incus needs aa-exec to
 # unpack images under a restricted AppArmor profile, and Alpine only ships it in
 # the heavyweight apparmor-utils package (python3/perl/bash), which this image
 # omits. Compiled here to reuse the toolchain already present in this stage.
-RUN cc -O2 -Wall -Wextra docker/quadlet/aa-exec.c -lapparmor -o /out/aa-exec \
+RUN cc -O2 -Wall -Wextra deploy/image/aa-exec.c -lapparmor -o /out/aa-exec \
     && strip /out/aa-exec
 
-FROM alpine:${ALPINE_VERSION} AS criu-build
+FROM ${ALPINE_IMAGE} AS criu-build
 
 ARG CRIU_COMMIT=b7bdc14736b1e8598f2ffbb371f42318835a111f
 
@@ -84,12 +86,13 @@ RUN apk add --no-cache \
     && git clone --filter=blob:none https://github.com/checkpoint-restore/criu.git /build/criu \
     && git -C /build/criu checkout --detach "${CRIU_COMMIT}" \
     && make -C /build/criu -j"$(nproc)" criu WERROR=0 \
-    && /build/criu/criu/criu --version
+    && /build/criu/criu/criu --version \
+    && git -C /build/criu rev-parse HEAD > /build/criu.commit
 
-FROM alpine:${ALPINE_VERSION} AS lxc-build
+FROM ${ALPINE_IMAGE} AS lxc-build
 
 ARG LXC_REPOSITORY=https://github.com/lxc/lxc.git
-ARG LXC_REF=main
+ARG LXC_REF=v7.0.0
 
 RUN apk add --no-cache \
       build-base \
@@ -116,9 +119,13 @@ RUN meson setup /build/lxc/build /build/lxc \
     && ninja -C /build/lxc/build liblxc.so.1.9.0 \
     && ldd /build/lxc/build/liblxc.so.1.9.0 \
     && ! ldd /build/lxc/build/liblxc.so.1.9.0 | grep -q "not found" \
-    && strings /build/lxc/build/liblxc.so.1.9.0 | grep -q "apparmor"
+    && strings /build/lxc/build/liblxc.so.1.9.0 | grep -q "apparmor" \
+    && git -C /build/lxc rev-parse HEAD > /build/lxc.commit \
+    && printf '%s\n' "${LXC_REF}" > /build/lxc.ref
 
-FROM alpine:${ALPINE_VERSION}
+FROM ${ALPINE_IMAGE}
+
+ARG ALPINE_IMAGE
 
 # Newest Ceph packaged by Alpine edge. The ceph/rbd CLI is wire-compatible with
 # newer clusters (e.g. a Squid 19 client against a Tentacle 20 cluster) and RBD
@@ -152,6 +159,7 @@ RUN apk add --no-cache \
       apparmor-profiles-tunables \
       attr \
       ceph${CEPH_VERSION}-common \
+      cgroup-tools \
       coreutils \
       dnsmasq \
       e2fsprogs \
@@ -197,11 +205,18 @@ RUN apk add --no-cache \
 COPY --from=incus-build /out/incusd /usr/sbin/incusd
 COPY --from=incus-build /out/incus /usr/bin/incus
 COPY --from=incus-build /out/aa-exec /usr/local/bin/aa-exec
+COPY --from=incus-build /out/incus-revision /usr/share/incus-runtime/incus-revision
 COPY --from=criu-build /build/criu/criu/criu /usr/local/sbin/criu
+COPY --from=criu-build /build/criu.commit /usr/share/incus-runtime/criu-commit
 COPY --from=lxc-build /build/lxc/build/liblxc.so.1.9.0 /usr/lib/liblxc.so.1.9.0
+COPY --from=lxc-build /build/lxc.commit /usr/share/incus-runtime/lxc-commit
+COPY --from=lxc-build /build/lxc.ref /usr/share/incus-runtime/lxc-ref
 RUN incus_version="$(incusd --version)" \
     && printf '%s\n' "${incus_version}" | grep -Eq '^7\.[0-9]+(\.[0-9]+)?$' \
     && criu --version \
+    && command -v cgcreate \
+    && command -v cgexec \
+    && command -v nsenter \
     && command -v lvm \
     && command -v udevadm \
     && command -v zfs \
@@ -210,11 +225,24 @@ RUN incus_version="$(incusd --version)" \
     && ! ldd /usr/sbin/incusd | grep -q "not found" \
     && ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found" \
     && strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor" \
-    && ! ldd /usr/local/sbin/criu | grep -q "not found"
+    && ! ldd /usr/local/sbin/criu | grep -q "not found" \
+    && apk list --installed 2>/dev/null | awk '{print $1}' | sort > /usr/share/incus-runtime/apk-packages.txt \
+    && packages_sha256="$(sha256sum /usr/share/incus-runtime/apk-packages.txt | awk '{print $1}')" \
+    && lxcfs_package="$(grep '^lxcfs-' /usr/share/incus-runtime/apk-packages.txt)" \
+    && printf '%s\n' \
+      "INCUS_REVISION=$(cat /usr/share/incus-runtime/incus-revision)" \
+      "LXC_REF=$(cat /usr/share/incus-runtime/lxc-ref)" \
+      "LXC_COMMIT=$(cat /usr/share/incus-runtime/lxc-commit)" \
+      "LXCFS_PACKAGE=${lxcfs_package}" \
+      "CRIU_COMMIT=$(cat /usr/share/incus-runtime/criu-commit)" \
+      "ALPINE_IMAGE=${ALPINE_IMAGE}" \
+      "ALPINE_RELEASE=$(cat /etc/alpine-release)" \
+      "APK_PACKAGES_SHA256=${packages_sha256}" \
+      > /usr/share/incus-runtime/components.env
 
-COPY docker/quadlet/start.sh docker/quadlet/lxcfs-start.sh docker/quadlet/healthcheck.sh /usr/local/sbin/
-RUN sed -i 's/\r$//' /usr/local/sbin/start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh \
-    && chmod 0755 /usr/local/sbin/start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh
+COPY deploy/image/incus-start.sh deploy/image/lxcfs-start.sh deploy/image/healthcheck.sh /usr/local/sbin/
+RUN sed -i 's/\r$//' /usr/local/sbin/incus-start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh \
+    && chmod 0755 /usr/local/sbin/incus-start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh
 
 # SIGTERM is Incus' control-plane reload signal and deliberately leaves LXC
 # instances running. Full node maintenance must use `incus admin shutdown`
@@ -223,4 +251,4 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD ["/usr/local/sbin/healthcheck.sh"]
 
-ENTRYPOINT ["/usr/local/sbin/start.sh"]
+ENTRYPOINT ["/usr/local/sbin/incus-start.sh"]

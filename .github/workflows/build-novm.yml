@@ -1,4 +1,4 @@
-name: Build Incus runtime images
+name: Build Incus novm image
 
 on:
   push:
@@ -16,29 +16,15 @@ env:
 
 jobs:
   build:
-    name: build-${{ matrix.variant }} (${{ matrix.arch }})
+    name: build-novm (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - variant: kubelet
-            file: docker/kubelet/Dockerfile
-            arch: amd64
+          - arch: amd64
             platform: linux/amd64
             runner: ubuntu-24.04
-          - variant: kubelet
-            file: docker/kubelet/Dockerfile
-            arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-          - variant: quadlet
-            file: docker/quadlet/Dockerfile
-            arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-          - variant: quadlet
-            file: docker/quadlet/Dockerfile
-            arch: arm64
+          - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -63,72 +49,72 @@ jobs:
         run: |
           docker buildx build --load \
             --platform ${{ matrix.platform }} \
-            --tag incus-${{ matrix.variant }}-test:${{ matrix.arch }} \
-            --file ${{ matrix.file }} .
-          if [ "${{ matrix.variant }}" = kubelet ]; then
-            docker run --rm --entrypoint sh incus-kubelet-test:${{ matrix.arch }} -ec '
-              incus --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
-              ! command -v incusd
-              ! command -v criu
-              ! command -v rbd
-              ! command -v lxcfs
-              test ! -e /usr/local/sbin/start.sh
-              test ! -e /usr/local/sbin/healthcheck.sh
-            '
-          else
-            docker run --rm --entrypoint sh incus-quadlet-test:${{ matrix.arch }} -ec '
-              incusd --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
-              incus --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
-              criu --version
-              command -v rbd
-              command -v lvm
-              command -v udevadm
-              command -v zfs
-              command -v zpool
-              command -v iptables-restore
-              command -v ip6tables-restore
-              command -v iptables-legacy-restore
-              command -v ip6tables-legacy-restore
-              command -v lxcfs
-              test -x /usr/local/sbin/start.sh
-              test -x /usr/local/sbin/lxcfs-start.sh
-              test -x /usr/local/sbin/healthcheck.sh
-              sh -n /usr/local/sbin/start.sh
-              sh -n /usr/local/sbin/lxcfs-start.sh
-              sh -n /usr/local/sbin/healthcheck.sh
-              ! grep -Eq "^[[:space:]]*lxcfs .*&" /usr/local/sbin/start.sh
-              tar --help 2>&1 | grep -q -- "--no-unquote"
-              ! ldd /usr/sbin/incusd | grep -q "not found"
-              ! ldd /usr/local/sbin/criu | grep -q "not found"
-              ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found"
-              strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor"
-            '
-            test "$(docker image inspect \
-              --format "{{.Config.StopSignal}}" \
-              incus-quadlet-test:${{ matrix.arch }})" = "SIGTERM"
-          fi
+            --build-arg INCUS_REVISION=${{ github.sha }} \
+            --tag incus-novm-test:${{ matrix.arch }} \
+            --file deploy/image/Dockerfile .
+          docker run --rm --entrypoint sh incus-novm-test:${{ matrix.arch }} -ec '
+            incusd --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
+            incus --version | grep -Eq "^7[.][0-9]+([.][0-9]+)?$"
+            criu --version
+            command -v cgcreate
+            command -v cgexec
+            command -v nsenter
+            command -v rbd
+            command -v lvm
+            command -v udevadm
+            command -v zfs
+            command -v zpool
+            command -v iptables-restore
+            command -v ip6tables-restore
+            command -v iptables-legacy-restore
+            command -v ip6tables-legacy-restore
+            command -v lxcfs
+            test -x /usr/local/sbin/incus-start.sh
+            test -x /usr/local/sbin/lxcfs-start.sh
+            test -x /usr/local/sbin/healthcheck.sh
+            sh -n /usr/local/sbin/incus-start.sh
+            sh -n /usr/local/sbin/lxcfs-start.sh
+            sh -n /usr/local/sbin/healthcheck.sh
+            ! grep -Eq "^[[:space:]]*lxcfs .*&" /usr/local/sbin/incus-start.sh
+            tar --help 2>&1 | grep -q -- "--no-unquote"
+            ! ldd /usr/sbin/incusd | grep -q "not found"
+            ! ldd /usr/local/sbin/criu | grep -q "not found"
+            ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found"
+            strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor"
+            grep -qx "INCUS_REVISION=${{ github.sha }}" /usr/share/incus-runtime/components.env
+            grep -Eq "^LXC_REF=v[0-9]+[.][0-9]+[.][0-9]+$" /usr/share/incus-runtime/components.env
+            grep -Eq "^LXC_COMMIT=[0-9a-f]{40}$" /usr/share/incus-runtime/components.env
+            grep -Eq "^LXCFS_PACKAGE=lxcfs-.+$" /usr/share/incus-runtime/components.env
+            grep -Eq "^CRIU_COMMIT=[0-9a-f]{40}$" /usr/share/incus-runtime/components.env
+            grep -Eq "^ALPINE_IMAGE=alpine:[^@]+@sha256:[0-9a-f]{64}$" /usr/share/incus-runtime/components.env
+            grep -Eq "^APK_PACKAGES_SHA256=[0-9a-f]{64}$" /usr/share/incus-runtime/components.env
+          '
+          test "$(docker image inspect \
+            --format "{{.Config.StopSignal}}" \
+            incus-novm-test:${{ matrix.arch }})" = "SIGTERM"
 
       - name: Build and push image
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
-          file: ${{ matrix.file }}
+          file: deploy/image/Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }}-${{ matrix.arch }}
+          build-args: |
+            INCUS_REVISION=${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:novm-${{ github.sha }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            io.github.fivetime.incus.variant=${{ matrix.variant }}
+            io.github.fivetime.incus.variant=novm
           platforms: ${{ matrix.platform }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
 
   publish:
-    name: publish-${{ matrix.variant }} manifest
+    name: publish-novm manifest
     needs: build
-    strategy:
-      matrix:
-        variant: [kubelet, quadlet]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -149,9 +135,15 @@ jobs:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         run: |
           short_sha="${GITHUB_SHA::7}"
+          tags=(
+            --tag "${IMAGE}:novm"
+            --tag "${IMAGE}:novm-${short_sha}"
+          )
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            tags+=(--tag "${IMAGE}:novm-${GITHUB_REF_NAME}")
+          fi
           docker buildx imagetools create \
-            --tag "${IMAGE}:${{ matrix.variant }}" \
-            --tag "${IMAGE}:${{ matrix.variant }}-${short_sha}" \
-            "${IMAGE}:${{ matrix.variant }}-amd64" \
-            "${IMAGE}:${{ matrix.variant }}-arm64"
-          docker buildx imagetools inspect "${IMAGE}:${{ matrix.variant }}"
+            "${tags[@]}" \
+            "${IMAGE}:novm-${GITHUB_SHA}-amd64" \
+            "${IMAGE}:novm-${GITHUB_SHA}-arm64"
+          docker buildx imagetools inspect "${IMAGE}:novm"

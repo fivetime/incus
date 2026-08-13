@@ -1,6 +1,8 @@
 .git
 .github
-deploy
+deploy/*
+!deploy/image/
+!deploy/image/**
 doc
 po
 test

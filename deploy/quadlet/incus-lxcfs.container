@@ -4,7 +4,7 @@
 #   systemctl daemon-reload
 #   systemctl enable --now incus-lxcfs.service
 #
-# Pin Image independently from incus-podman.container in production. Updating or
+# Pin this image independently from the Kubernetes incusd image. Updating or
 # restarting this data-plane service disconnects the LXCFS mounts of every
 # running system container and therefore requires a guest maintenance window.
 
@@ -20,7 +20,7 @@ RequiresMountsFor=/var/lib/lxcfs
 AssertPathIsDirectory=/var/lib/lxcfs
 
 [Container]
-Image=ghcr.io/fivetime/incus:quadlet
+Image=ghcr.io/fivetime/incus:novm
 ContainerName=incus-lxcfs
 Network=none
 Environment=INCUS_RUNTIME_ROLE=lxcfs
