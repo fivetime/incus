@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sys/unix"
 
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/server/db"
@@ -35,6 +36,10 @@ const cephBlockVolSuffix = ".block"
 const cephISOVolSuffix = ".iso"
 
 const cephVolumeTypeZombieImage = VolumeType("zombie_image")
+
+func isDetachedRBDSysfsReadError(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, unix.ENODEV)
+}
 
 // CephDefaultCluster represents the default ceph cluster name.
 const CephDefaultCluster = "ceph"
@@ -1213,8 +1218,9 @@ func (d *ceph) getRBDMappedDevPath(vol Volume, mapIfMissing bool) (bool, string,
 		// Get the pool for the RBD device.
 		devPoolName, err := os.ReadFile(fmt.Sprintf("/sys/devices/rbd/%s/pool", fName))
 		if err != nil {
-			// Skip if no pool file.
-			if errors.Is(err, fs.ErrNotExist) {
+			// A concurrent unmap can remove the device, or make its attributes return ENODEV,
+			// between the directory listing and this read.
+			if isDetachedRBDSysfsReadError(err) {
 				continue
 			}
 
@@ -1229,8 +1235,7 @@ func (d *ceph) getRBDMappedDevPath(vol Volume, mapIfMissing bool) (bool, string,
 		// Get the volume name for the RBD device.
 		devName, err := os.ReadFile(fmt.Sprintf("/sys/devices/rbd/%s/name", fName))
 		if err != nil {
-			// Skip if no name file.
-			if errors.Is(err, fs.ErrNotExist) {
+			if isDetachedRBDSysfsReadError(err) {
 				continue
 			}
 
@@ -1249,8 +1254,14 @@ func (d *ceph) getRBDMappedDevPath(vol Volume, mapIfMissing bool) (bool, string,
 
 		// Get the snapshot name for the RBD device (if exists).
 		devSnap, err := os.ReadFile(fmt.Sprintf("/sys/devices/rbd/%s/current_snap", fName))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return false, "", err
+		if err != nil {
+			if errors.Is(err, unix.ENODEV) {
+				continue
+			}
+
+			if !errors.Is(err, fs.ErrNotExist) {
+				return false, "", err
+			}
 		}
 
 		devSnapName := strings.TrimSpace(string(devSnap))

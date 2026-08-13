@@ -2,8 +2,30 @@ package drivers
 
 import (
 	"fmt"
+	"io/fs"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
+
+func TestDetachedRBDSysfsReadError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		detached bool
+	}{
+		{name: "Missing", err: &fs.PathError{Op: "read", Path: "/sys/devices/rbd/42/pool", Err: unix.ENOENT}, detached: true},
+		{name: "Detached", err: &fs.PathError{Op: "read", Path: "/sys/devices/rbd/42/pool", Err: unix.ENODEV}, detached: true},
+		{name: "Permission denied", err: &fs.PathError{Op: "read", Path: "/sys/devices/rbd/42/pool", Err: unix.EACCES}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.detached, isDetachedRBDSysfsReadError(tt.err))
+		})
+	}
+}
 
 func Test_ceph_getRBDVolumeName(t *testing.T) {
 	type args struct {
