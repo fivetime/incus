@@ -6192,19 +6192,15 @@ func getCRIULogErrors(imagesDir string, method string) (string, error) {
 
 // Check if CRIU supports pre-dumping and number of pre-dump iterations.
 func (d *lxc) migrationSendCheckForPreDumpSupport() (bool, int) {
-	return migrationPreDumpSettings(d.ExpandedConfig(), func() error {
-		_, err := subprocess.RunCommand("criu", "check", "--feature", "mem_dirty_track")
-		return err
-	})
-}
+	config := d.ExpandedConfig()
 
-func migrationPreDumpSettings(config map[string]string, checkSupport func() error) (bool, int) {
+	// Incremental memory migration is opt-in, matching the documented default and avoiding an unnecessary CRIU probe.
 	if !util.IsTrue(config["migration.incremental.memory"]) {
 		return false, 0
 	}
 
 	// Check if this architecture/kernel/criu combination supports pre-copy dirty memory tracking feature.
-	err := checkSupport()
+	_, err := subprocess.RunCommand("criu", "check", "--feature", "mem_dirty_track")
 	if err != nil {
 		// CRIU says it does not know about dirty memory tracking.
 		// This means the rest of this function is irrelevant.
