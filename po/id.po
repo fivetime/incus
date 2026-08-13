@@ -7,11 +7,11 @@ msgid ""
 msgstr ""
 "Project-Id-Version: incus\n"
 "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
-"POT-Creation-Date: 2026-08-06 09:02+0000\n"
-"PO-Revision-Date: 2026-08-07 19:44+0000\n"
+"POT-Creation-Date: 2026-08-12 16:17-0400\n"
+"PO-Revision-Date: 2026-08-12 03:51+0000\n"
 "Last-Translator: Kazantsev Mikhail <kazan417@mail.ru>\n"
-"Language-Team: Indonesian <https://hosted.weblate.org/projects/incus/cli/id/>"
-"\n"
+"Language-Team: Indonesian <https://hosted.weblate.org/projects/incus/cli/id/"
+">\n"
 "Language: id\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -392,7 +392,7 @@ msgstr "%q bukan suatu alamat IP"
 msgid "%s %q on pool %q in project %q (includes %d snapshots)"
 msgstr "%s %q pada pool %q dalam proyek %q (termasuk %d snapshot)"
 
-#: cmd/incus/image.go:1143
+#: cmd/incus/image.go:1161
 #, c-format
 msgid "%s (%d more)"
 msgstr "%s (%d lagi)"
@@ -555,7 +555,7 @@ msgstr ""
 msgid "--timestamp cannot be used with --format=%s"
 msgstr "--console tidak bisa dipakai dengan --allx"
 
-#: cmd/incus/admin_sql.go:128
+#: cmd/incus/admin_sql.go:132
 #, c-format
 msgid "=> Query %d:"
 msgstr "=> Query %d:"
@@ -583,11 +583,11 @@ msgstr "ALAMAT"
 msgid "ADDRESSES"
 msgstr "ALAMAT"
 
-#: cmd/incus/alias.go:155 cmd/incus/image.go:1110 cmd/incus/image_alias.go:248
+#: cmd/incus/alias.go:155 cmd/incus/image.go:1112 cmd/incus/image_alias.go:248
 msgid "ALIAS"
 msgstr "ALIAS"
 
-#: cmd/incus/image.go:1111
+#: cmd/incus/image.go:1113
 msgid "ALIASES"
 msgstr "ALIAS"
 
@@ -599,7 +599,7 @@ msgstr ""
 msgid "APP"
 msgstr "APP"
 
-#: cmd/incus/cluster.go:200 cmd/incus/image.go:1105 cmd/incus/list.go:537
+#: cmd/incus/cluster.go:200 cmd/incus/image.go:1107 cmd/incus/list.go:537
 msgid "ARCHITECTURE"
 msgstr "ARSITEKTUR"
 
@@ -866,7 +866,7 @@ msgstr ""
 msgid "As neither could be found, the raw SPICE socket can be found at:"
 msgstr ""
 
-#: cmd/incus/create.go:339 cmd/incus/rebuild.go:100
+#: cmd/incus/create.go:343 cmd/incus/rebuild.go:100
 msgid "Asked for a VM but image is of type container"
 msgstr ""
 
@@ -992,7 +992,7 @@ msgstr "Cadangan:"
 msgid "Bad device override syntax, expecting <device>,<key>=<value>: %s"
 msgstr ""
 
-#: cmd/incus/copy.go:176 cmd/incus/create.go:205 cmd/incus/move.go:269
+#: cmd/incus/copy.go:176 cmd/incus/create.go:209 cmd/incus/move.go:269
 #: cmd/incus/network_integration.go:139 cmd/incus/project.go:168
 #, c-format
 msgid "Bad key=value pair: %q"
@@ -1185,7 +1185,7 @@ msgstr ""
 msgid "Cannot mix HTTPS and Unix URLs"
 msgstr ""
 
-#: cmd/incus/create.go:314
+#: cmd/incus/create.go:318
 #, c-format
 msgid ""
 "Cannot override config for device %q: Device not found in profile devices"
@@ -1384,7 +1384,7 @@ msgstr ""
 
 #: cmd/incus/cluster.go:172 cmd/incus/cluster.go:1130
 #: cmd/incus/cluster_group.go:443 cmd/incus/config_trust.go:402
-#: cmd/incus/config_trust.go:589 cmd/incus/image.go:1077
+#: cmd/incus/config_trust.go:589 cmd/incus/image.go:1079
 #: cmd/incus/image_alias.go:211 cmd/incus/list.go:154
 #: cmd/incus/low_level.go:696 cmd/incus/network.go:1054
 #: cmd/incus/network.go:1253 cmd/incus/network_allocations.go:75
@@ -1430,20 +1430,28 @@ msgid ""
 msgstr ""
 
 #: cmd/incus/copy.go:60 cmd/incus/create.go:62 cmd/incus/import.go:43
-msgid "Config key/value to apply to the new instance"
-msgstr ""
+#, fuzzy
+msgid ""
+"Config key/value to apply to the new instance (may be passed multiple times)"
+msgstr "Profil yang akan diterapkan ke instansi baru"
 
 #: cmd/incus/network_integration.go:96
-msgid "Config key/value to apply to the new network integration"
+msgid ""
+"Config key/value to apply to the new network integration (may be passed "
+"multiple times)"
 msgstr ""
 
 #: cmd/incus/project.go:119
-msgid "Config key/value to apply to the new project"
+msgid ""
+"Config key/value to apply to the new project (may be passed multiple times)"
 msgstr ""
 
 #: cmd/incus/move.go:62
-msgid "Config key/value to apply to the target instance"
-msgstr ""
+#, fuzzy
+msgid ""
+"Config key/value to apply to the target instance (may be passed multiple "
+"times)"
+msgstr "Profil yang akan diterapkan ke instansi target"
 
 #: cmd/incus/admin_recover.go:129
 msgid "Config option should be in the format KEY=VALUE"
@@ -1820,7 +1828,7 @@ msgid "DEFAULT TARGET ADDRESS"
 msgstr ""
 
 #: cmd/incus/cluster.go:202 cmd/incus/cluster_group.go:469
-#: cmd/incus/config_trust.go:420 cmd/incus/image.go:1106
+#: cmd/incus/config_trust.go:420 cmd/incus/image.go:1108
 #: cmd/incus/image_alias.go:251 cmd/incus/list.go:540 cmd/incus/network.go:1086
 #: cmd/incus/network_acl.go:163 cmd/incus/network_address_set.go:155
 #: cmd/incus/network_forward.go:144 cmd/incus/network_integration.go:433
@@ -2110,7 +2118,7 @@ msgstr "Perangkat: %s"
 msgid "DevicePath: %v"
 msgstr "Perangkat: %s"
 
-#: cmd/incus/create.go:396
+#: cmd/incus/create.go:400
 msgid "Didn't get name of new instance from the server"
 msgstr ""
 
@@ -2163,7 +2171,7 @@ msgstr "Disk:"
 msgid "Display clusters from all projects"
 msgstr ""
 
-#: cmd/incus/image.go:1079
+#: cmd/incus/image.go:1081
 msgid "Display images from all projects"
 msgstr ""
 
@@ -2402,7 +2410,7 @@ msgstr ""
 
 #: cmd/incus/cluster.go:213 cmd/incus/cluster.go:1159
 #: cmd/incus/cluster_group.go:477 cmd/incus/config_trust.go:432
-#: cmd/incus/config_trust.go:614 cmd/incus/image.go:1124
+#: cmd/incus/config_trust.go:614 cmd/incus/image.go:1126
 #: cmd/incus/image_alias.go:260 cmd/incus/list.go:598
 #: cmd/incus/low_level.go:728 cmd/incus/network.go:1101
 #: cmd/incus/network.go:1291 cmd/incus/network_allocations.go:101
@@ -2417,6 +2425,11 @@ msgstr ""
 #: cmd/incus/warning.go:236
 #, c-format
 msgid "Empty column entry (redundant, leading or trailing command) in '%s'"
+msgstr ""
+
+#: cmd/incus/image.go:1132
+#, c-format
+msgid "Empty property name in '%s'"
 msgstr ""
 
 #: cmd/incus/cluster.go:775
@@ -2452,7 +2465,9 @@ msgid "Entry TTL"
 msgstr ""
 
 #: cmd/incus/exec.go:64
-msgid "Environment variable to set (e.g. HOME=/home/foo)"
+msgid ""
+"Environment variable to set (e.g. HOME=/home/foo) (may be passed multiple "
+"times)"
 msgstr ""
 
 #: cmd/incus/copy.go:63 cmd/incus/create.go:65
@@ -2537,8 +2552,8 @@ msgstr ""
 msgid ""
 "Evacuate cluster member\n"
 "\n"
-"The action flag allows overriding the default server-side action (\"cluster."
-"evacuate\" instance configuration option)"
+"The action flag allows overriding the default server-side action "
+"(\"cluster.evacuate\" instance configuration option)"
 msgstr ""
 
 #: cmd/incus/cluster.go:1555
@@ -2547,18 +2562,18 @@ msgid "Evacuating cluster member: %s"
 msgstr ""
 
 #: cmd/incus/monitor.go:58
-msgid "Event type to listen for"
+msgid "Event type to listen for (may be passed multiple times)"
 msgstr ""
 
 #: cmd/incus/color/color.go:40
 msgid "Examples:"
 msgstr ""
 
-#: cmd/incus/admin_sql.go:29
+#: cmd/incus/admin_sql.go:30
 msgid "Execute a SQL query against the local or global database"
 msgstr ""
 
-#: cmd/incus/admin_sql.go:30
+#: cmd/incus/admin_sql.go:31
 msgid ""
 "Execute a SQL query against the local or global database\n"
 "\n"
@@ -2709,8 +2724,8 @@ msgstr ""
 msgid "FILENAME"
 msgstr "NAMA_BERKAS"
 
-#: cmd/incus/config_trust.go:419 cmd/incus/image.go:1108
-#: cmd/incus/image.go:1109 cmd/incus/image_alias.go:249
+#: cmd/incus/config_trust.go:419 cmd/incus/image.go:1110
+#: cmd/incus/image.go:1111 cmd/incus/image_alias.go:249
 msgid "FINGERPRINT"
 msgstr "SIDIKJARI"
 
@@ -2803,12 +2818,12 @@ msgstr ""
 msgid "Failed loading network %q: %w"
 msgstr ""
 
-#: cmd/incus/create.go:297
+#: cmd/incus/create.go:301
 #, c-format
 msgid "Failed loading profile %q for device override: %w"
 msgstr ""
 
-#: cmd/incus/create.go:215
+#: cmd/incus/create.go:219
 #, c-format
 msgid "Failed loading storage pool %q: %w"
 msgstr ""
@@ -3016,7 +3031,7 @@ msgstr ""
 msgid "Failed to open target file %q: %w"
 msgstr ""
 
-#: cmd/incus/admin_sql.go:103
+#: cmd/incus/admin_sql.go:104
 #, c-format
 msgid "Failed to parse dump response: %w"
 msgstr ""
@@ -3036,7 +3051,7 @@ msgstr ""
 msgid "Failed to read from file: %w"
 msgstr ""
 
-#: cmd/incus/admin_init_preseed.go:25 cmd/incus/admin_sql.go:80
+#: cmd/incus/admin_init_preseed.go:25 cmd/incus/admin_sql.go:81
 #, c-format
 msgid "Failed to read from stdin: %w"
 msgstr ""
@@ -3067,7 +3082,7 @@ msgstr ""
 msgid "Failed to repair instance: %w"
 msgstr ""
 
-#: cmd/incus/admin_sql.go:97
+#: cmd/incus/admin_sql.go:98
 #, c-format
 msgid "Failed to request dump: %w"
 msgstr ""
@@ -3276,10 +3291,10 @@ msgid ""
 "disable headers and \",header\" to enable if demanded, e.g. csv,header"
 msgstr ""
 
-#: cmd/incus/admin_sql.go:57 cmd/incus/alias.go:118 cmd/incus/cluster.go:173
+#: cmd/incus/admin_sql.go:58 cmd/incus/alias.go:118 cmd/incus/cluster.go:173
 #: cmd/incus/cluster_group.go:444 cmd/incus/config_template.go:272
 #: cmd/incus/config_trust.go:403 cmd/incus/config_trust.go:588
-#: cmd/incus/image.go:1078 cmd/incus/image_alias.go:210 cmd/incus/list.go:155
+#: cmd/incus/image.go:1080 cmd/incus/image_alias.go:210 cmd/incus/list.go:155
 #: cmd/incus/low_level.go:695 cmd/incus/network.go:1055
 #: cmd/incus/network.go:1252 cmd/incus/network_acl.go:104
 #: cmd/incus/network_allocations.go:72 cmd/incus/network_forward.go:121
@@ -3400,11 +3415,11 @@ msgid ""
 "to another Incus server."
 msgstr ""
 
-#: cmd/incus/image.go:1737
+#: cmd/incus/image.go:1755
 msgid "Generate a metadata tarball"
 msgstr ""
 
-#: cmd/incus/image.go:1739
+#: cmd/incus/image.go:1757
 msgid ""
 "Generate a metadata tarball\n"
 "\n"
@@ -3445,7 +3460,7 @@ msgstr ""
 msgid "Get current load-balancer status"
 msgstr "Hapus load balancer jaringan"
 
-#: cmd/incus/image.go:1532 cmd/incus/image.go:1533
+#: cmd/incus/image.go:1550 cmd/incus/image.go:1551
 msgid "Get image properties"
 msgstr ""
 
@@ -3783,7 +3798,7 @@ msgstr ""
 msgid "Image alias description"
 msgstr "deskripsi"
 
-#: cmd/incus/image.go:1448
+#: cmd/incus/image.go:1466
 msgid "Image already up to date."
 msgstr ""
 
@@ -3808,7 +3823,7 @@ msgstr ""
 msgid "Image imported with fingerprint: %s"
 msgstr ""
 
-#: cmd/incus/image.go:1446
+#: cmd/incus/image.go:1464
 msgid "Image refreshed successfully!"
 msgstr ""
 
@@ -3875,7 +3890,7 @@ msgid "Importing instance: %s"
 msgstr ""
 
 #: cmd/incus/create.go:66
-msgid "Include environment variables from file"
+msgid "Include environment variables from file (may be passed multiple times)"
 msgstr ""
 
 #: cmd/incus/manpage.go:33
@@ -3917,7 +3932,7 @@ msgstr ""
 msgid "Instance disconnected for client %q"
 msgstr ""
 
-#: cmd/incus/create.go:406
+#: cmd/incus/create.go:410
 #, c-format
 msgid "Instance name is: %s"
 msgstr ""
@@ -4603,7 +4618,9 @@ msgid ""
 "    a - Architecture\n"
 "    s - Size\n"
 "    u - Upload date\n"
-"    t - Type"
+"    t - Type\n"
+"\n"
+"Custom columns are defined with \"properties:key\", e.g. \"properties:os\""
 msgstr ""
 
 #: cmd/incus/config_device.go:301 cmd/incus/config_device.go:302
@@ -4719,8 +4736,8 @@ msgid ""
 "  f - Base Image Fingerprint (short)\n"
 "  F - Base Image Fingerprint (long)\n"
 "\n"
-"Custom columns are defined with \"[config:|devices:]key[:name][:"
-"maxWidth]\":\n"
+"Custom columns are defined with \"[config:|devices:]key[:name][:maxWidth]"
+"\":\n"
 "  KEY: The (extended) config or devices key to display. If [config:|"
 "devices:] is omitted then it defaults to config key.\n"
 "  NAME: Name to display in the column header.\n"
@@ -5403,8 +5420,8 @@ msgstr ""
 msgid ""
 "Manage storage volumes\n"
 "\n"
-"Unless specified through a prefix, all volume operations affect "
-"\"custom\" (user created) volumes."
+"Unless specified through a prefix, all volume operations affect \"custom\" "
+"(user created) volumes."
 msgstr ""
 
 #: cmd/incus/remote.go:52 cmd/incus/remote.go:53
@@ -5959,16 +5976,17 @@ msgid "Never follow symbolic links in source path"
 msgstr ""
 
 #: cmd/incus/publish.go:42
-msgid "New alias to define at target"
+msgid "New alias to define at target (may be passed multiple times)"
 msgstr ""
 
 #: cmd/incus/image.go:180 cmd/incus/image.go:704
-msgid "New aliases to add to the image"
+msgid "New aliases to add to the image (may be passed multiple times)"
 msgstr ""
 
 #: cmd/incus/copy.go:61 cmd/incus/create.go:64 cmd/incus/import.go:44
 #: cmd/incus/move.go:63
-msgid "New key/value to apply to a specific device"
+msgid ""
+"New key/value to apply to a specific device (may be passed multiple times)"
 msgstr ""
 
 #: cmd/incus/admin_init_interactive.go:270
@@ -6137,7 +6155,7 @@ msgstr ""
 msgid "PROFILES"
 msgstr ""
 
-#: cmd/incus/image.go:1107 cmd/incus/list.go:542 cmd/incus/network.go:1080
+#: cmd/incus/image.go:1109 cmd/incus/list.go:542 cmd/incus/network.go:1080
 #: cmd/incus/network_acl.go:168 cmd/incus/network_address_set.go:161
 #: cmd/incus/network_zone.go:144 cmd/incus/profile.go:731
 #: cmd/incus/storage_bucket.go:482 cmd/incus/storage_volume.go:1645
@@ -6153,7 +6171,7 @@ msgstr ""
 msgid "PROTOCOL"
 msgstr ""
 
-#: cmd/incus/image.go:1112 cmd/incus/remote.go:1058
+#: cmd/incus/image.go:1114 cmd/incus/remote.go:1058
 msgid "PUBLIC"
 msgstr ""
 
@@ -6378,15 +6396,18 @@ msgid "Profile description"
 msgstr "deskripsi"
 
 #: cmd/incus/image.go:184
-msgid "Profile to apply to the new image"
+#, fuzzy
+msgid "Profile to apply to the new image (may be passed multiple times)"
 msgstr "Profil yang akan diterapkan ke image baru"
 
 #: cmd/incus/copy.go:62 cmd/incus/create.go:63
-msgid "Profile to apply to the new instance"
+#, fuzzy
+msgid "Profile to apply to the new instance (may be passed multiple times)"
 msgstr "Profil yang akan diterapkan ke instansi baru"
 
 #: cmd/incus/move.go:64
-msgid "Profile to apply to the target instance"
+#, fuzzy
+msgid "Profile to apply to the target instance (may be passed multiple times)"
 msgstr "Profil yang akan diterapkan ke instansi target"
 
 #: cmd/incus/profile.go:249
@@ -6430,7 +6451,7 @@ msgstr ""
 msgid "Properties:"
 msgstr ""
 
-#: cmd/incus/image.go:1577
+#: cmd/incus/image.go:1595
 msgid "Property not found"
 msgstr ""
 
@@ -6500,7 +6521,7 @@ msgstr ""
 msgid "Query path must start with /"
 msgstr ""
 
-#: cmd/incus/image.go:529 cmd/incus/image.go:913 cmd/incus/image.go:1471
+#: cmd/incus/image.go:529 cmd/incus/image.go:913 cmd/incus/image.go:1489
 msgid "Query virtual machine images"
 msgstr ""
 
@@ -6582,7 +6603,7 @@ msgstr ""
 msgid "Refresh and update the existing storage volume copies"
 msgstr ""
 
-#: cmd/incus/image.go:1391 cmd/incus/image.go:1392
+#: cmd/incus/image.go:1409 cmd/incus/image.go:1410
 msgid "Refresh images"
 msgstr ""
 
@@ -6591,7 +6612,7 @@ msgstr ""
 msgid "Refreshing instance: %s"
 msgstr ""
 
-#: cmd/incus/image.go:1415
+#: cmd/incus/image.go:1433
 #, c-format
 msgid "Refreshing the image: %s"
 msgstr ""
@@ -6869,7 +6890,7 @@ msgstr ""
 msgid "Retrieve the instance's console log"
 msgstr ""
 
-#: cmd/incus/create.go:353
+#: cmd/incus/create.go:357
 #, c-format
 msgid "Retrieving image: %s"
 msgstr ""
@@ -6886,7 +6907,7 @@ msgstr ""
 msgid "Role (admin or read-only)"
 msgstr ""
 
-#: cmd/incus/admin_sql.go:137
+#: cmd/incus/admin_sql.go:141
 #, c-format
 msgid "Rows affected: %d"
 msgstr ""
@@ -6934,7 +6955,7 @@ msgstr ""
 msgid "SEVERITY"
 msgstr ""
 
-#: cmd/incus/image.go:1113
+#: cmd/incus/image.go:1115
 msgid "SIZE"
 msgstr ""
 
@@ -7125,7 +7146,7 @@ msgid ""
 "    incus profile device set [<remote>:]<profile> <device> <key> <value>"
 msgstr ""
 
-#: cmd/incus/image.go:1595 cmd/incus/image.go:1596
+#: cmd/incus/image.go:1613 cmd/incus/image.go:1614
 msgid "Set image properties"
 msgstr ""
 
@@ -7494,7 +7515,7 @@ msgstr ""
 msgid "Show full device configuration"
 msgstr ""
 
-#: cmd/incus/image.go:1468 cmd/incus/image.go:1469
+#: cmd/incus/image.go:1486 cmd/incus/image.go:1487
 msgid "Show image properties"
 msgstr ""
 
@@ -7967,7 +7988,7 @@ msgstr ""
 msgid "TOKEN"
 msgstr ""
 
-#: cmd/incus/config_trust.go:417 cmd/incus/image.go:1114
+#: cmd/incus/config_trust.go:417 cmd/incus/image.go:1116
 #: cmd/incus/image_alias.go:250 cmd/incus/list.go:555 cmd/incus/network.go:1082
 #: cmd/incus/network.go:1279 cmd/incus/network_allocations.go:91
 #: cmd/incus/network_integration.go:434 cmd/incus/network_peer.go:142
@@ -8086,7 +8107,7 @@ msgid ""
 "restarted"
 msgstr ""
 
-#: cmd/incus/create.go:428
+#: cmd/incus/create.go:432
 msgid "The instance you are starting doesn't have any network attached to it."
 msgstr ""
 
@@ -8332,11 +8353,11 @@ msgstr ""
 msgid "Timestamps:"
 msgstr ""
 
-#: cmd/incus/create.go:430
+#: cmd/incus/create.go:434
 msgid "To attach a network to an instance, use: incus network attach"
 msgstr ""
 
-#: cmd/incus/create.go:429
+#: cmd/incus/create.go:433
 msgid "To create a new network, use: incus network create"
 msgstr ""
 
@@ -8451,7 +8472,7 @@ msgstr "Profil %s dihapus"
 msgid "UNLIMITED"
 msgstr ""
 
-#: cmd/incus/image.go:1115
+#: cmd/incus/image.go:1117
 msgid "UPLOAD DATE"
 msgstr ""
 
@@ -8522,7 +8543,7 @@ msgstr ""
 
 #: cmd/incus/cluster.go:219 cmd/incus/cluster.go:1165
 #: cmd/incus/cluster_group.go:483 cmd/incus/config_trust.go:438
-#: cmd/incus/config_trust.go:620 cmd/incus/image.go:1130
+#: cmd/incus/config_trust.go:620 cmd/incus/image.go:1148
 #: cmd/incus/image_alias.go:266 cmd/incus/list.go:616
 #: cmd/incus/low_level.go:734 cmd/incus/network.go:1107
 #: cmd/incus/network.go:1297 cmd/incus/network_allocations.go:107
@@ -8588,7 +8609,7 @@ msgstr ""
 msgid "Unset device configuration keys"
 msgstr ""
 
-#: cmd/incus/image.go:1659 cmd/incus/image.go:1660
+#: cmd/incus/image.go:1677 cmd/incus/image.go:1678
 msgid "Unset image properties"
 msgstr ""
 
@@ -9387,8 +9408,8 @@ msgid ""
 "incus create images:debian/12 u1 < config.yaml\n"
 "    Create the instance with configuration from config.yaml\n"
 "\n"
-"incus launch images:debian/12 v2 --vm -d root,size=50GiB -d root,io."
-"bus=nvme\n"
+"incus launch images:debian/12 v2 --vm -d root,size=50GiB -d "
+"root,io.bus=nvme\n"
 "    Create and start a virtual machine, overriding the disk size and bus"
 msgstr ""
 
@@ -9490,29 +9511,29 @@ msgid ""
 "    Create and start a container named \"c1\"\n"
 "\n"
 "incus launch images:debian/12 c2 < config.yaml\n"
-"    Create and start a container named \"c2\" with configuration from config."
-"yaml\n"
+"    Create and start a container named \"c2\" with configuration from "
+"config.yaml\n"
 "\n"
 "incus launch images:debian/12 c3 -t aws:t2.micro\n"
 "    Create and start a container named \"c3\" using the same size as an AWS "
 "t2.micro (1 vCPU, 1GiB of RAM)\n"
-"    Find the list of supported instance types here: https://images."
-"linuxcontainers.org/meta/instance-types/\n"
+"    Find the list of supported instance types here: https://"
+"images.linuxcontainers.org/meta/instance-types/\n"
 "\n"
 "incus launch images:debian/12 v1 --vm -c limits.cpu=4 -c limits.memory=4GiB\n"
 "    Create and start a virtual machine named \"v1\" with 4 vCPUs and 4GiB of "
 "RAM\n"
 "\n"
-"incus launch images:debian/12 v2 --vm -d root,size=50GiB -d root,io."
-"bus=nvme\n"
+"incus launch images:debian/12 v2 --vm -d root,size=50GiB -d "
+"root,io.bus=nvme\n"
 "    Create and start a virtual machine named \"v2\", overriding the disk "
 "size and bus"
 msgstr ""
 
 #: cmd/incus/list.go:143
 msgid ""
-"incus list -c nFs46,volatile.eth0.hwaddr:MAC,config:image.os,devices:eth0."
-"parent:ETHP\n"
+"incus list -c "
+"nFs46,volatile.eth0.hwaddr:MAC,config:image.os,devices:eth0.parent:ETHP\n"
 "  Show instances using the \"NAME\", \"BASE IMAGE\", \"STATE\", \"IPV4\", "
 "\"IPV6\" and \"MAC\" columns.\n"
 "  \"BASE IMAGE\", \"MAC\" and \"IMAGE OS\" are custom columns generated from "
@@ -9596,16 +9617,16 @@ msgid ""
 "   Create network integration o1 of type ovn\n"
 "\n"
 "incus network integration create o1 ovn < config.yaml\n"
-"    Create network integration o1 of type ovn with configuration from config."
-"yaml"
+"    Create network integration o1 of type ovn with configuration from "
+"config.yaml"
 msgstr ""
 
 #: cmd/incus/network_integration.go:226
 msgid ""
-"incus network integration edit <network integration> < network-integration."
-"yaml\n"
-"    Update a network integration using the content of network-integration."
-"yaml"
+"incus network integration edit <network integration> < network-"
+"integration.yaml\n"
+"    Update a network integration using the content of network-"
+"integration.yaml"
 msgstr ""
 
 #: cmd/incus/network_load_balancer.go:315
@@ -10024,7 +10045,7 @@ msgid "new %s name"
 msgstr ""
 
 #: cmd/incus/config_trust.go:481 cmd/incus/image.go:953 cmd/incus/image.go:958
-#: cmd/incus/image.go:1172
+#: cmd/incus/image.go:1190
 msgid "no"
 msgstr ""
 
@@ -10221,7 +10242,7 @@ msgstr "y"
 
 #: cmd/incus/cluster.go:727 cmd/incus/config_trust.go:478
 #: cmd/incus/delete.go:56 cmd/incus/image.go:955 cmd/incus/image.go:960
-#: cmd/incus/image.go:1169 cmd/incus/project.go:225 cmd/incus/snapshot.go:280
+#: cmd/incus/image.go:1187 cmd/incus/project.go:225 cmd/incus/snapshot.go:280
 msgid "yes"
 msgstr "ya"
 

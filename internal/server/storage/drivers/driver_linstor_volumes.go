@@ -280,6 +280,11 @@ func (d *linstor) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		return fmt.Errorf("Unable to parse volume size: %w", err)
 	}
 
+	requiredBytes, err = d.roundVolumeBlockSizeBytes(vol, requiredBytes)
+	if err != nil {
+		return err
+	}
+
 	requiredKiB := requiredBytes / 1024
 	resourceDefinitionName := d.generateUUIDWithPrefix()
 
@@ -294,15 +299,21 @@ func (d *linstor) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 			return fmt.Errorf("Unable to parse volume size: %w", err)
 		}
 
+		requiredBytes, err = d.roundVolumeBlockSizeBytes(fsVol, requiredBytes)
+		if err != nil {
+			return err
+		}
+
 		requiredKiB := requiredBytes / 1024
 
 		volumeSizes = append(volumeSizes, requiredKiB)
 	}
 
-	// Spawn resource.
+	// Spawn the resource definitions without deploying them so properties can still be set.
 	err = linstor.Client.ResourceGroups.Spawn(context.TODO(), d.config[LinstorResourceGroupNameConfigKey], linstorClient.ResourceGroupSpawn{
 		ResourceDefinitionName: resourceDefinitionName,
 		VolumeSizes:            volumeSizes,
+		DefinitionsOnly:        true,
 	})
 	if err != nil {
 		return fmt.Errorf("Unable to spawn from resource group: %w", err)
@@ -314,6 +325,17 @@ func (d *linstor) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 	err = d.setResourceDefinitionProperties(vol, resourceDefinitionName)
 	if err != nil {
 		return err
+	}
+
+	err = d.setResourceDefinitionExactSize(resourceDefinitionName)
+	if err != nil {
+		return err
+	}
+
+	// Deploy the resource.
+	err = linstor.Client.Resources.Autoplace(context.TODO(), resourceDefinitionName, linstorClient.AutoPlaceRequest{})
+	if err != nil {
+		return fmt.Errorf("Unable to deploy resource: %w", err)
 	}
 
 	// Setup the filesystem.
@@ -517,11 +539,6 @@ func (d *linstor) DeleteVolume(vol Volume, op *operations.Operation) error {
 	l := d.logger.AddContext(logger.Ctx{"volume": vol.Name()})
 	l.Debug("Deleting Linstor volume")
 
-	linstor, err := d.state.Linstor()
-	if err != nil {
-		return err
-	}
-
 	// Test if the volume exists.
 	volumeExists, err := d.HasVolume(vol)
 	if err != nil {
@@ -536,7 +553,7 @@ func (d *linstor) DeleteVolume(vol Volume, op *operations.Operation) error {
 			return err
 		}
 
-		err = linstor.Client.ResourceDefinitions.Delete(context.TODO(), resourceDefinition.Name)
+		err = d.deleteResourceDefinition(resourceDefinition.Name)
 		if err != nil {
 			return fmt.Errorf("Unable to delete the resource definition: %w", err)
 		}
@@ -1210,6 +1227,11 @@ func (d *linstor) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 	// Do nothing if size isn't specified.
 	if sizeBytes <= 0 {
 		return nil
+	}
+
+	sizeBytes, err = d.roundVolumeBlockSizeBytes(vol, sizeBytes)
+	if err != nil {
+		return err
 	}
 
 	// Get the device path.

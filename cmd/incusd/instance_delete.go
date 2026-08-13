@@ -37,7 +37,7 @@ import (
 //	    name: project
 //	    description: Project name
 //	    type: string
-//	    example: default
+//	    x-example: default
 //	  - in: query
 //	    name: rootfs-idmap-release-token
 //	    description: Rootfs materialization UUID used for a durable storage release receipt

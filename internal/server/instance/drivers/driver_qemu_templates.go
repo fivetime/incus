@@ -7,7 +7,6 @@ import (
 
 	"github.com/lxc/incus/v7/internal/server/instance/drivers/cfg"
 	"github.com/lxc/incus/v7/shared/osarch"
-	"github.com/lxc/incus/v7/shared/resources"
 )
 
 func writeHeader(sb *strings.Builder, comment string, name string) {
@@ -25,23 +24,6 @@ func writeEntry(sb *strings.Builder, key string, value string) {
 }
 
 func qemuStringifyCfg(conf ...cfg.Section) *strings.Builder {
-	sb := &strings.Builder{}
-
-	for _, section := range conf {
-		writeHeader(sb, section.Comment, section.Name)
-
-		for key, value := range section.Entries {
-			writeEntry(sb, key, value)
-		}
-
-		sb.WriteString("\n")
-	}
-
-	return sb
-}
-
-// qemuStringifyCfgPredictably is only there to ensure tests reproducibility.
-func qemuStringifyCfgPredictably(conf ...cfg.Section) *strings.Builder {
 	sb := &strings.Builder{}
 
 	for _, section := range conf {
@@ -559,7 +541,7 @@ type qemuNumaEntry struct {
 type qemuCPUOpts struct {
 	architecture     int
 	cpuCount         int
-	cpuRequested     int
+	cpuMaxCpus       int
 	cpuSockets       int
 	cpuCores         int
 	cpuThreads       int
@@ -605,23 +587,8 @@ func qemuCPU(opts *qemuCPUOpts, pinning bool) []cfg.Section {
 		entries["sockets"] = fmt.Sprintf("%d", opts.cpuSockets)
 		entries["cores"] = fmt.Sprintf("%d", opts.cpuCores)
 		entries["threads"] = fmt.Sprintf("%d", opts.cpuThreads)
-	} else {
-		cpu, err := resources.GetCPU()
-		if err != nil {
-			return nil
-		}
-
-		// Cap the max number of CPUs to 64 unless directly assigned more.
-		maxCpus := 64
-		if int(cpu.Total) < maxCpus {
-			maxCpus = int(cpu.Total)
-		} else if opts.cpuRequested > maxCpus {
-			maxCpus = opts.cpuRequested
-		} else if opts.cpuCount > maxCpus {
-			maxCpus = opts.cpuCount
-		}
-
-		entries["maxcpus"] = fmt.Sprintf("%d", maxCpus)
+	} else if opts.cpuMaxCpus > 0 {
+		entries["maxcpus"] = fmt.Sprintf("%d", opts.cpuMaxCpus)
 	}
 
 	sections := []cfg.Section{{

@@ -1800,6 +1800,15 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		bs.CPUType = cpuType
 	}
 
+	if bs.MaxCPUs == 0 {
+		maxCPUs, err := d.maxCPUs(bs.CPUTopology)
+		if err != nil {
+			return err
+		}
+
+		bs.MaxCPUs = maxCPUs
+	}
+
 	// Setup the memory.
 	if bs.MemoryTopology == nil {
 		// Get the memory topology.
@@ -3833,7 +3842,7 @@ func (d *qemu) templateApplyNow(trigger instance.TemplateTrigger, path string) e
 				return err
 			}
 
-			defer logger.WarnOnError(w.Close, "Failed to close file")
+			defer logger.WarnOnErrorExcept(w.Close, []error{os.ErrClosed}, "Failed to close file")
 
 			// Read the template.
 			tplString, err := os.ReadFile(filepath.Join(d.TemplatesPath(), tpl.Template))
@@ -4570,9 +4579,6 @@ func (d *qemu) getCPUOpts(cpuInfo *qemuCPUTopology, memSizeBytes int64) (*qemuCP
 			cpuOpts.cpuCores = 1
 			cpuOpts.cpuSockets = 1
 			cpuOpts.cpuThreads = 1
-
-			// Expose the total requested by the user already so the hotplug limit can be set higher if needed.
-			cpuOpts.cpuRequested = cpuInfo.Cores
 		} else {
 			cpuOpts.cpuCount = cpuInfo.Cores
 			cpuOpts.cpuCores = cpuInfo.Cores
@@ -4673,6 +4679,8 @@ func (d *qemu) addCPUMemoryConfig(conf *[]cfg.Section, bs *qemuBootState) error 
 	if err != nil {
 		return err
 	}
+
+	cpuOpts.cpuMaxCpus = bs.MaxCPUs
 
 	// A fixed topology is written verbatim, either due to CPU pinning or an explicit topology request.
 	cpuFixedTopology := bs.CPUTopology.VCPUs != nil || bs.CPUTopology.Explicit
@@ -8457,7 +8465,7 @@ func (d *qemu) prepareEphemeralSnapshot(monitor *qmp.Monitor, diskName string, d
 		return "", "", nil, fmt.Errorf("Failed opening file descriptor for migration storage snapshot %q: %w", snapshotFile, err)
 	}
 
-	defer logger.WarnOnError(snapFile.Close, "Failed to close snapshot file")
+	defer logger.WarnOnErrorExcept(snapFile.Close, []error{os.ErrClosed}, "Failed to close snapshot file")
 
 	// Remove the snapshot file as we don't want to sync this to the target.
 	err = os.Remove(snapshotFile)
