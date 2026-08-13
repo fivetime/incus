@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestEnsureClientPrefix(t *testing.T) {
+	tests := map[string]string{
+		"admin":                 "client.admin",
+		"csi-rbd-provisioner.1": "client.csi-rbd-provisioner.1",
+		"client.cinder":         "client.cinder",
+	}
+
+	for client, expected := range tests {
+		actual := EnsureClientPrefix(client)
+		if actual != expected {
+			t.Errorf("Expected Ceph client %q to normalize to %q, got %q", client, expected, actual)
+		}
+	}
+}
+
 func TestParseRBDVolumeIdentity(t *testing.T) {
 	identity, err := parseRBDVolumeIdentity(`{"block_name_prefix":"rbd_data.abcd","id":"abcd","ignored":true}`, 29)
 	if err != nil {
