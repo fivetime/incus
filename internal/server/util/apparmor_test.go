@@ -1,6 +1,8 @@
 package util
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestNormalizeAppArmorProfile(t *testing.T) {
 	tests := map[string]string{
