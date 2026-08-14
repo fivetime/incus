@@ -2118,16 +2118,6 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 				return err
 			}
 
-			// Take a shared image volume lock so that a concurrent DeleteImage (whether from image
-			// deletion, expiry or an EnsureImage regeneration) cannot remove the cached image volume
-			// while we are copying from it. Multiple copies from the same image can run concurrently.
-			unlockUse, err := locking.RLock(context.TODO(), drivers.OperationLockName("UseImage", b.name, drivers.VolumeTypeImage, "", fingerprint))
-			if err != nil {
-				return err
-			}
-
-			defer unlockUse()
-
 			// Try and load existing volume config on this storage pool so we can compare filesystems if needed.
 			imgDBVol, err := VolumeDBGet(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage)
 			if err != nil {
@@ -5441,15 +5431,6 @@ func (b *backend) DeleteImage(fingerprint string, op *operations.Operation) erro
 	}
 
 	defer unlock()
-
-	// Wait for any operation copying from the cached image volume to finish before deleting it,
-	// and hold off new ones until the deletion is done.
-	unlockUse, err := locking.RWLock(context.TODO(), drivers.OperationLockName("UseImage", b.name, drivers.VolumeTypeImage, "", fingerprint))
-	if err != nil {
-		return err
-	}
-
-	defer unlockUse()
 
 	// Load the storage volume in order to get the volume config which is needed for some drivers.
 	imgDBVol, err := VolumeDBGet(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage)
