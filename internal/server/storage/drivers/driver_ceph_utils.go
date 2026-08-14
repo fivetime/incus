@@ -1273,7 +1273,6 @@ func (d *ceph) getRBDMappedDevPath(vol Volume, mapIfMissing bool) (bool, string,
 		// Get the snapshot name for the RBD device (if exists).
 		devSnap, err := os.ReadFile(fmt.Sprintf("/sys/devices/rbd/%s/current_snap", fName))
 		if err != nil {
-			// Skip if the device disappeared (concurrent unmap); tolerate a missing snap file.
 			if errors.Is(err, unix.ENODEV) {
 				continue
 			}
