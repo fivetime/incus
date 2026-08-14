@@ -82,8 +82,10 @@ jobs:
             ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found"
             strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor"
             grep -qx "INCUS_REVISION=${{ github.sha }}" /usr/share/incus-runtime/components.env
-            grep -Eq "^LXC_REF=v[0-9]+[.][0-9]+[.][0-9]+$" /usr/share/incus-runtime/components.env
+            grep -Eq "^LXC_REF=[0-9a-f]{40}$" /usr/share/incus-runtime/components.env
             grep -Eq "^LXC_COMMIT=[0-9a-f]{40}$" /usr/share/incus-runtime/components.env
+            test "$(sed -n 's/^LXC_REF=//p' /usr/share/incus-runtime/components.env)" = \
+              "$(sed -n 's/^LXC_COMMIT=//p' /usr/share/incus-runtime/components.env)"
             grep -Eq "^LXCFS_PACKAGE=lxcfs-.+$" /usr/share/incus-runtime/components.env
             grep -Eq "^CRIU_COMMIT=[0-9a-f]{40}$" /usr/share/incus-runtime/components.env
             grep -Eq "^ALPINE_IMAGE=alpine:[^@]+@sha256:[0-9a-f]{64}$" /usr/share/incus-runtime/components.env

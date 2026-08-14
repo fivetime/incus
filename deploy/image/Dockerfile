@@ -92,7 +92,7 @@ RUN apk add --no-cache \
 FROM ${ALPINE_IMAGE} AS lxc-build
 
 ARG LXC_REPOSITORY=https://github.com/lxc/lxc.git
-ARG LXC_REF=v7.0.0
+ARG LXC_REF=f30cbb86fff27e72ae25780aa2b90cf24937864e
 
 RUN apk add --no-cache \
       build-base \
@@ -106,7 +106,8 @@ RUN apk add --no-cache \
       openssl-dev \
       samurai \
       util-linux-dev \
-    && git clone --depth=1 --branch "${LXC_REF}" "${LXC_REPOSITORY}" /build/lxc
+    && git clone --filter=blob:none "${LXC_REPOSITORY}" /build/lxc \
+    && git -C /build/lxc checkout --detach "${LXC_REF}"
 
 RUN meson setup /build/lxc/build /build/lxc \
       --prefix=/usr \
