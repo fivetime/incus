@@ -9480,6 +9480,7 @@ func (d *lxc) removeUnixDevices() error {
 
 		// Remove the entry
 		devicePath := filepath.Join(d.DevicesPath(), f.Name())
+		_ = unix.Unmount(devicePath, unix.MNT_DETACH)
 		err := os.Remove(devicePath)
 		if err != nil {
 			d.logger.Error("Failed removing unix device", logger.Ctx{"err": err, "path": devicePath})
