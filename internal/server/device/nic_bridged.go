@@ -156,6 +156,54 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 		//  shortdesc: I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)
 		"limits.max",
 
+		// gendoc:generate(entity=devices, group=nic_bridged, key=limits.ingress.burst)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: I/O limit in bit/s that incoming traffic may burst up to, requires `limits.ingress.bucket`
+		"limits.ingress.burst",
+
+		// gendoc:generate(entity=devices, group=nic_bridged, key=limits.egress.burst)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: I/O limit in bit/s that outgoing traffic may burst up to, requires `limits.egress.bucket`
+		"limits.egress.burst",
+
+		// gendoc:generate(entity=devices, group=nic_bridged, key=limits.max.burst)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: I/O limit in bit/s that both incoming and outgoing traffic may burst up to (same as setting both `limits.ingress.burst` and `limits.egress.burst`)
+		"limits.max.burst",
+
+		// gendoc:generate(entity=devices, group=nic_bridged, key=limits.ingress.bucket)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Amount of data in bit that incoming traffic may send in excess of `limits.ingress`, requires `limits.ingress.burst`
+		"limits.ingress.bucket",
+
+		// gendoc:generate(entity=devices, group=nic_bridged, key=limits.egress.bucket)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Amount of data in bit that outgoing traffic may send in excess of `limits.egress`, requires `limits.egress.burst`
+		"limits.egress.bucket",
+
+		// gendoc:generate(entity=devices, group=nic_bridged, key=limits.max.bucket)
+		//
+		// ---
+		//  type: string
+		//  managed: no
+		//  shortdesc: Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket`)
+		"limits.max.bucket",
+
 		// gendoc:generate(entity=devices, group=nic_bridged, key=limits.priority)
 		//
 		// ---
@@ -169,7 +217,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 		// ---
 		//  type: string
 		//  managed: no
-		//  shortdesc: An IPv4 address to assign to the instance through DHCP (can be `none` to restrict all IPv4 traffic when `security.ipv4_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)
+		//  shortdesc: An IPv4 address to assign to the instance through DHCP (can be `none` to disable DHCPv4 inside an OCI container and restrict all IPv4 traffic when `security.ipv4_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)
 		"ipv4.address",
 
 		// gendoc:generate(entity=devices, group=nic_bridged, key=ipv6.address)
@@ -177,7 +225,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 		// ---
 		//  type: string
 		//  managed: no
-		//  shortdesc: An IPv6 address to assign to the instance through DHCP (can be `none` to restrict all IPv6 traffic when `security.ipv6_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)
+		//  shortdesc: An IPv6 address to assign to the instance through DHCP (can be `none` to disable DHCPv6 and SLAAC inside an OCI container and restrict all IPv6 traffic when `security.ipv6_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)
 		"ipv6.address",
 
 		// gendoc:generate(entity=devices, group=nic_bridged, key=ipv4.gateway)
@@ -364,7 +412,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 
 		netConfig := n.Config()
 
-		if d.config["ipv4.address"] != "" && !strings.Contains(d.config["ipv4.address"], "/") {
+		if !util.IsNoneOrEmpty(d.config["ipv4.address"]) && !strings.Contains(d.config["ipv4.address"], "/") {
 			dhcpv4Subnet := n.DHCPv4Subnet()
 
 			// Check that DHCPv4 is enabled on parent network (needed to use static assigned IPs) when
@@ -375,7 +423,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 
 			// Check the static IP supplied is valid for the linked network. It should be part of the
 			// network's subnet, but not necessarily part of the dynamic allocation ranges.
-			if dhcpv4Subnet != nil && d.config["ipv4.address"] != "none" && !dhcpalloc.DHCPValidIP(dhcpv4Subnet, nil, net.ParseIP(d.config["ipv4.address"])) {
+			if dhcpv4Subnet != nil && !dhcpalloc.DHCPValidIP(dhcpv4Subnet, nil, net.ParseIP(d.config["ipv4.address"])) {
 				return fmt.Errorf("Device IP address %q not within network %q subnet", d.config["ipv4.address"], n.Name())
 			}
 
@@ -389,17 +437,13 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 				return fmt.Errorf("Invalid network ipv4.address: %w", err)
 			}
 
-			if d.config["ipv4.address"] == "none" && util.IsFalseOrEmpty(d.config["security.ipv4_filtering"]) {
-				return errors.New("Cannot have ipv4.address as none unless using security.ipv4_filtering")
-			}
-
 			// IP should not be the same as the parent managed network address.
 			if ipAddr.Equal(net.ParseIP(d.config["ipv4.address"])) {
 				return fmt.Errorf("IP address %q is assigned to parent managed network device %q", d.config["ipv4.address"], d.config["parent"])
 			}
 		}
 
-		if d.config["ipv6.address"] != "" && !strings.Contains(d.config["ipv6.address"], "/") {
+		if !util.IsNoneOrEmpty(d.config["ipv6.address"]) && !strings.Contains(d.config["ipv6.address"], "/") {
 			dhcpv6Subnet := n.DHCPv6Subnet()
 
 			// Check that DHCPv6 is enabled on parent network (needed to use static assigned IPs) when
@@ -410,7 +454,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 
 			// Check the static IP supplied is valid for the linked network. It should be part of the
 			// network's subnet, but not necessarily part of the dynamic allocation ranges.
-			if dhcpv6Subnet != nil && d.config["ipv6.address"] != "none" && !dhcpalloc.DHCPValidIP(dhcpv6Subnet, nil, net.ParseIP(d.config["ipv6.address"])) {
+			if dhcpv6Subnet != nil && !dhcpalloc.DHCPValidIP(dhcpv6Subnet, nil, net.ParseIP(d.config["ipv6.address"])) {
 				return fmt.Errorf("Device IP address %q not within network %q subnet", d.config["ipv6.address"], n.Name())
 			}
 
@@ -422,10 +466,6 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 			ipAddr, _, err := net.ParseCIDR(parentAddress)
 			if err != nil {
 				return fmt.Errorf("Invalid network ipv6.address: %w", err)
-			}
-
-			if d.config["ipv6.address"] == "none" && util.IsFalseOrEmpty(d.config["security.ipv6_filtering"]) {
-				return errors.New("Cannot have ipv6.address as none unless using security.ipv6_filtering")
 			}
 
 			// IP should not be the same as the parent managed network address.
@@ -512,7 +552,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 				if d.config["ipv4.address"] == "" {
 					return errors.New("IPv4 filtering requires a manually specified ipv4.address when using an unmanaged parent bridge")
 				}
-			} else if d.config["ipv4.address"] != "" && !strings.Contains(d.config["ipv4.address"], "/") {
+			} else if !util.IsNoneOrEmpty(d.config["ipv4.address"]) && !strings.Contains(d.config["ipv4.address"], "/") {
 				// Static IP cannot be used with unmanaged parent.
 				return errors.New("Cannot use manually specified ipv4.address when using unmanaged parent bridge")
 			}
@@ -521,7 +561,7 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 				if d.config["ipv6.address"] == "" {
 					return errors.New("IPv6 filtering requires a manually specified ipv6.address when using an unmanaged parent bridge")
 				}
-			} else if d.config["ipv6.address"] != "" && !strings.Contains(d.config["ipv6.address"], "/") {
+			} else if !util.IsNoneOrEmpty(d.config["ipv6.address"]) && !strings.Contains(d.config["ipv6.address"], "/") {
 				// Static IP cannot be used with unmanaged parent.
 				return errors.New("Cannot use manually specified ipv6.address when using unmanaged parent bridge")
 			}
@@ -635,6 +675,11 @@ func (d *nicBridged) validateConfig(instConf instance.ConfigReader, partialValid
 		return err
 	}
 
+	err = nicValidateBurstLimits(d.config, true)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -736,7 +781,7 @@ func (d *nicBridged) UpdatableFields(oldDevice Type) []string {
 		return []string{}
 	}
 
-	return []string{"limits.ingress", "limits.egress", "limits.max", "limits.priority", "ipv4.routes", "ipv6.routes", "ipv4.routes.external", "ipv6.routes.external", "ipv4.address", "ipv6.address", "security.mac_filtering", "security.ipv4_filtering", "security.ipv6_filtering", "security.acls", "security.acls.default.egress.action", "security.acls.default.egress.logged", "security.acls.default.ingress.action", "security.acls.default.ingress.logged", "connected"}
+	return []string{"limits.ingress", "limits.egress", "limits.max", "limits.ingress.burst", "limits.egress.burst", "limits.max.burst", "limits.ingress.bucket", "limits.egress.bucket", "limits.max.bucket", "limits.priority", "ipv4.routes", "ipv6.routes", "ipv4.routes.external", "ipv6.routes.external", "ipv4.address", "ipv6.address", "security.mac_filtering", "security.ipv4_filtering", "security.ipv6_filtering", "security.acls", "security.acls.default.egress.action", "security.acls.default.egress.logged", "security.acls.default.ingress.action", "security.acls.default.ingress.logged", "connected"}
 }
 
 // Add is run when a device is added to a non-snapshot instance whether or not the instance is running.
@@ -1546,7 +1591,7 @@ func (d *nicBridged) setFilters() (err error) {
 
 		// Ensure address sets for ACL, we state bridge because
 		// this is the table firewall driver will use for this kind of NIC.
-		err = addressSet.FirewallApplyAddressSetsForACLRules(d.state, "bridge", d.inst.Project().Name, aclNames)
+		err = addressSet.FirewallApplyAddressSetsForACLRules(d.state, "bridge", networkProjectName, aclNames)
 		if err != nil {
 			return err
 		}

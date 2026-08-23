@@ -132,6 +132,21 @@ var imagePublishLock sync.Mutex
 // stepping on each other's toes.
 var imageTaskMu sync.Mutex
 
+// errorRecordingWriter wraps an io.Writer and records the first write error.
+type errorRecordingWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *errorRecordingWriter) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
+	if err != nil && w.err == nil {
+		w.err = err
+	}
+
+	return n, err
+}
+
 func compressFile(compress string, infile io.Reader, outfile io.Writer) error {
 	// Compressors with reproducible output and the flags needed for it.
 	reproducible := map[string][]string{
@@ -202,11 +217,25 @@ func compressFile(compress string, infile io.Reader, outfile io.Writer) error {
 			args = append(args, flags...)
 		}
 
+		// Record output write errors as a failing write closes the pipe and kills
+		// the compressor with SIGPIPE, masking the actual error (e.g. ENOSPC).
+		writer := &errorRecordingWriter{w: outfile}
+		stderr := bytes.Buffer{}
+
 		cmd := exec.Command(fields[0], args...)
 		cmd.Stdin = infile
-		cmd.Stdout = outfile
+		cmd.Stdout = writer
+		cmd.Stderr = &stderr
 		err := cmd.Run()
 		if err != nil {
+			if writer.err != nil {
+				return writer.err
+			}
+
+			if stderr.Len() > 0 {
+				return fmt.Errorf("%s: %w (%s)", fields[0], err, strings.TrimSpace(stderr.String()))
+			}
+
 			return err
 		}
 	}
@@ -2154,6 +2183,11 @@ func distributeImage(ctx context.Context, s *state.State, nodes []string, oldFin
 		})
 		if err != nil {
 			return fmt.Errorf("Failed to retrieve information about cluster member with address %q: %w", nodeAddress, err)
+		}
+
+		// Skip offline members.
+		if nodeInfo.IsOffline(s.GlobalConfig.OfflineThreshold()) {
+			continue
 		}
 
 		client, err := cluster.Connect(nodeAddress, s.Endpoints.NetworkCert(), s.ServerCert(), nil, true)
@@ -5081,16 +5115,38 @@ func imageSyncBetweenNodes(ctx context.Context, s *state.State, r *http.Request,
 
 		err = s.DB.Cluster.Transaction(ctx, func(ctx context.Context, tx *db.ClusterTx) error {
 			// Get a list of nodes that do not have the image.
-			addresses, err = tx.GetNodesWithoutImage(ctx, fingerprint)
+			candidates, err := tx.GetNodesWithoutImage(ctx, fingerprint)
+			if err != nil {
+				return err
+			}
 
-			return err
+			// Skip offline members.
+			members, err := tx.GetNodes(ctx)
+			if err != nil {
+				return err
+			}
+
+			offlineThreshold := s.GlobalConfig.OfflineThreshold()
+
+			addresses = nil
+			for _, member := range members {
+				if member.IsOffline(offlineThreshold) {
+					continue
+				}
+
+				if slices.Contains(candidates, member.Address) {
+					addresses = append(addresses, member.Address)
+				}
+			}
+
+			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("Failed to get nodes for the image synchronization: %w", err)
 		}
 
-		if len(addresses) <= 0 {
-			logger.Info("All members have image", logger.Ctx{"fingerprint": fingerprint, "project": project})
+		if len(addresses) == 0 {
+			logger.Info("All online members have image", logger.Ctx{"fingerprint": fingerprint, "project": project})
 			return nil
 		}
 

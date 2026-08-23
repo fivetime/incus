@@ -473,6 +473,15 @@ func (n *bridge) Validate(config map[string]string, clientType request.ClientTyp
 		//  shortdesc: Comma-separated list of IPv6 ranges to use for DHCP (FIRST-LAST format)
 		"ipv6.dhcp.ranges": validate.Optional(validate.IsListOf(validate.IsNetworkRangeV6)),
 
+		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.ra)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv6 address
+		//  default: `true`
+		//  shortdesc: Whether to send IPv6 router advertisements
+		"ipv6.ra": validate.Optional(validate.IsBool),
+
 		// gendoc:generate(entity=network_bridge, group=common, key=ipv6.routes)
 		//
 		// ---
@@ -1624,7 +1633,11 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 		}
 
 		// Update the dnsmasq config.
-		dnsmasqCmd = append(dnsmasqCmd, []string{fmt.Sprintf("--listen-address=%s", ipAddress.String()), "--enable-ra"}...)
+		dnsmasqCmd = append(dnsmasqCmd, fmt.Sprintf("--listen-address=%s", ipAddress.String()))
+		if util.IsTrueOrEmpty(n.config["ipv6.ra"]) {
+			dnsmasqCmd = append(dnsmasqCmd, "--enable-ra")
+		}
+
 		if n.DHCPv6Subnet() != nil {
 			if n.hasIPv6Firewall() {
 				fwOpts.FeaturesV6.ICMPDHCPDNSAccess = true
@@ -1649,10 +1662,10 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 				} else {
 					dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("%s,%s,%d,%s", dhcpalloc.GetIP(subnet, 2), dhcpalloc.GetIP(subnet, -1), subnetSize, expiry)}...)
 				}
-			} else {
+			} else if util.IsTrueOrEmpty(n.config["ipv6.ra"]) {
 				dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("::,constructor:%s,ra-stateless,ra-names", n.name)}...)
 			}
-		} else {
+		} else if util.IsTrueOrEmpty(n.config["ipv6.ra"]) {
 			dnsmasqCmd = append(dnsmasqCmd, []string{"--dhcp-range", fmt.Sprintf("::,constructor:%s,ra-only", n.name)}...)
 		}
 
@@ -2534,10 +2547,6 @@ func (n *bridge) bridgedNICExternalRoutes(bridgeProjectNetworks map[string][]*ap
 			// Get the instance's effective network project name.
 			instNetworkProject := project.NetworkProjectFromRecord(&p)
 
-			if instNetworkProject != api.ProjectDefaultName {
-				return nil // Managed bridge networks can only exist in default project.
-			}
-
 			devices := db.ExpandInstanceDevices(inst.Devices, inst.Profiles)
 
 			// Iterate through each of the instance's devices, looking for bridged NICs that are linked to
@@ -2547,8 +2556,19 @@ func (n *bridge) bridgedNICExternalRoutes(bridgeProjectNetworks map[string][]*ap
 					continue
 				}
 
+				// Get the effective network project of the NIC (accounts for shared networks).
+				devNetworkProject := instNetworkProject
+				if devConfig["network"] != "" {
+					devNetworkProject = project.NetworkProjectForNameFromRecord(&p, devConfig["network"])
+				}
+
+				// Managed bridge networks can only exist in the default project.
+				if devNetworkProject != api.ProjectDefaultName {
+					continue
+				}
+
 				// Check whether the NIC device references one of the networks supplied.
-				if !NICUsesNetwork(devConfig, bridgeProjectNetworks[instNetworkProject]...) {
+				if !NICUsesNetwork(devConfig, bridgeProjectNetworks[devNetworkProject]...) {
 					continue
 				}
 
@@ -2564,7 +2584,7 @@ func (n *bridge) bridgedNICExternalRoutes(bridgeProjectNetworks map[string][]*ap
 
 						externalRoutes = append(externalRoutes, externalSubnetUsage{
 							subnet:          *ipNet,
-							networkProject:  instNetworkProject,
+							networkProject:  devNetworkProject,
 							networkName:     devConfig["network"],
 							instanceProject: inst.Project,
 							instanceName:    inst.Name,
@@ -2901,8 +2921,8 @@ func (n *bridge) ForwardCreate(forward api.NetworkForwardsPost, clientType reque
 
 				err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 					return tx.InstanceList(ctx, func(inst db.InstanceArgs, p api.Project) error {
-						// Get the instance's effective network project name.
-						instNetworkProject := project.NetworkProjectFromRecord(&p)
+						// Get the effective network project name for this network name.
+						instNetworkProject := project.NetworkProjectForNameFromRecord(&p, n.Name())
 
 						if instNetworkProject != api.ProjectDefaultName {
 							return nil // Managed bridge networks can only exist in default project.

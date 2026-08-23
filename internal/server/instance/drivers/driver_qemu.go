@@ -8194,6 +8194,18 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		}
 	}
 
+	// When moving between cluster members on shared storage, the target will mount the
+	// config volume while we still have it mounted. Sync it first so the target doesn't
+	// find a dirty journal.
+	if args.Live && remoteClusterMove && !storageMove {
+		err = linux.SyncFS(d.Path())
+		if err != nil {
+			err := fmt.Errorf("Failed syncing config volume: %w", err)
+			op.Done(err)
+			return err
+		}
+	}
+
 	// Send offer to target.
 	d.logger.Debug("Sending migration offer to target")
 	err = args.ControlSend(offerHeader)

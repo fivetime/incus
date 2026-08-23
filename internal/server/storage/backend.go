@@ -1333,7 +1333,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 		}
 
 		newDevices := inst.LocalDevices().CloneNative()
-		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, inst.Project().Name, snapshots, newDevices, false)
+		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, inst.Project().Name, snapshots, newDevices, nil, false)
 		if err != nil {
 			err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
 			return err
@@ -1567,7 +1567,7 @@ func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string,
 
 			// Generate source snapshot volumes list.
 			srcSnapVolumeName := drivers.GetSnapshotVolumeName(srcVolName, srcSnap.Name)
-			srcSnapVolStorageName := project.StorageVolume(projectName, srcSnapVolumeName)
+			srcSnapVolStorageName := project.StorageVolume(srcProjectName, srcSnapVolumeName)
 			srcSnapVol := srcPool.GetVolume(drivers.VolumeTypeCustom, contentType, srcSnapVolStorageName, srcSnap.Config)
 			srcSnapVols = append(srcSnapVols, srcSnapVol)
 		}
@@ -1891,7 +1891,7 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 		}
 
 		newDevices := inst.LocalDevices().CloneNative()
-		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, inst.Project().Name, snapshots, newDevices, false)
+		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, inst.Project().Name, snapshots, newDevices, nil, false)
 		if err != nil {
 			err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
 			return err
@@ -4592,7 +4592,7 @@ func (b *backend) RenameInstanceSnapshot(inst instance.Instance, newName string,
 }
 
 // DeleteInstanceSnapshot removes the snapshot volume for the supplied snapshot instance.
-func (b *backend) DeleteInstanceSnapshot(inst instance.Instance, op *operations.Operation) error {
+func (b *backend) DeleteInstanceSnapshot(inst instance.Instance, cleanupDependencies bool, op *operations.Operation) error {
 	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name()})
 	l.Debug("DeleteInstanceSnapshot started")
 	defer l.Debug("DeleteInstanceSnapshot finished")
@@ -4697,6 +4697,10 @@ func (b *backend) DeleteInstanceSnapshot(inst instance.Instance, op *operations.
 		if err != nil {
 			return err
 		}
+	}
+
+	if !cleanupDependencies {
+		return nil
 	}
 
 	err = src.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {

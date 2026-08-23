@@ -4,22 +4,26 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/lxc/incus/v7/shared/api"
 )
 
 type blockMapEntry struct {
-	Count uint32 `json:"count"`
-	Size  uint32 `json:"size"`
+	count uint32
+	size  uint32
 }
 
-// Store is a projection of the on-disk OVMF variable store format.
+// Store is a projection of the on-disk OVMF variable store format. The structure DOES NOT handle
+// concurrent access.
 type Store struct {
 	Vars     map[string]map[string]*api.InstanceNVRAMVariable
 	attrs    uint32
 	blockMap []blockMapEntry
 	length   uint64
 	varSize  uint32
+	rest     []byte
+	modified bool
 }
 
 // ParseNVRAM parses the contents of an OVMF NVRAM store.
@@ -49,7 +53,7 @@ func ParseNVRAM(data []byte) (*Store, error) {
 		return nil, err
 	}
 
-	if length > uint64(len(data)) {
+	if length != uint64(len(data)) {
 		return nil, fmt.Errorf("Invalid length: %d", length)
 	}
 
@@ -129,7 +133,7 @@ func ParseNVRAM(data []byte) (*Store, error) {
 			break
 		}
 
-		blockMap = append(blockMap, blockMapEntry{Count: blockCnt, Size: blockBytes})
+		blockMap = append(blockMap, blockMapEntry{count: blockCnt, size: blockBytes})
 		totalBytes += uint64(blockCnt) * uint64(blockBytes)
 	}
 
@@ -247,6 +251,22 @@ func ParseNVRAM(data []byte) (*Store, error) {
 		}
 	}
 
+	if length == 0x20000 {
+		err = r.seek(0x0e000)
+	} else {
+		err = r.seek(0x40000)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	rest, err := r.read(r.rem())
+	if err != nil {
+		return nil, err
+	}
+
+	s.rest = rest
 	return s, nil
 }
 
@@ -305,12 +325,12 @@ func (s *Store) Bytes() ([]byte, error) {
 	}
 
 	for _, b := range s.blockMap {
-		err = w.writeU32(b.Count)
+		err = w.writeU32(b.count)
 		if err != nil {
 			return nil, err
 		}
 
-		err = w.writeU32(b.Size)
+		err = w.writeU32(b.size)
 		if err != nil {
 			return nil, err
 		}
@@ -422,16 +442,97 @@ func (s *Store) Bytes() ([]byte, error) {
 		}
 	}
 
-	if uint64(w.size()) > s.length {
-		return nil, fmt.Errorf("Variables require %d bytes but store length is %d", w.size(), s.length)
+	var varStoreLength int
+	if s.length == 0x20000 {
+		varStoreLength = 0x0e000
+	} else {
+		varStoreLength = 0x40000
 	}
 
-	for uint64(w.size()) < s.length {
+	if w.size() > varStoreLength {
+		return nil, fmt.Errorf("Variables require %d bytes but store length is %d", w.size(), varStoreLength)
+	}
+
+	if uint64(varStoreLength+len(s.rest)) != s.length {
+		return nil, errors.New("Unexpected NVRAM length")
+	}
+
+	for w.size() < varStoreLength {
 		err = w.writeU8(0xff)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	err = w.write(s.rest)
+	if err != nil {
+		return nil, err
+	}
+
 	return w.data, nil
+}
+
+// Get gets a variable from the store.
+func (s *Store) Get(guid string, varName string) (*api.InstanceNVRAMVariable, bool) {
+	vars, ok := s.Vars[guid]
+	if !ok {
+		return nil, false
+	}
+
+	v, ok := vars[varName]
+	if !ok {
+		return nil, false
+	}
+
+	return v, true
+}
+
+// Has checks whether the store contains a variable.
+func (s *Store) Has(guid string, varName string) bool {
+	_, ok := s.Get(guid, varName)
+	return ok
+}
+
+// Set sets a variable in the store.
+func (s *Store) Set(guid string, varName string, v api.InstanceNVRAMVariable) error {
+	if !slices.Contains(v.Attributes, "NON_VOLATILE") {
+		return errors.New("Volatile UEFI variables cannot be stored in the NVRAM")
+	}
+
+	if v.Binary == nil {
+		err := Format(&v, guid, varName)
+		if err != nil {
+			return err
+		}
+	}
+
+	vars, ok := s.Vars[guid]
+	if !ok {
+		s.Vars[guid] = map[string]*api.InstanceNVRAMVariable{varName: &v}
+		s.modified = true
+		return nil
+	}
+
+	if s.Vars[guid][varName] == nil || !bytes.Equal(s.Vars[guid][varName].Binary, v.Binary) {
+		vars[varName] = &v
+		s.modified = true
+	}
+
+	return nil
+}
+
+// Unset removes a variable from the store.
+func (s *Store) Unset(guid string, varName string) bool {
+	if s.Has(guid, varName) {
+		delete(s.Vars[guid], varName)
+		s.modified = true
+		return true
+	}
+
+	return false
+}
+
+// Modified returns whether the store was modified.
+func (s *Store) Modified() bool {
+	return s.modified
 }

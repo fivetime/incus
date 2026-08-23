@@ -194,12 +194,13 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 
 		// Check that the new isn't already in use.
 		var id int
-		err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
+		_ = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
 			// Check that the name isn't already in use.
 			id, _ = tx.GetInstanceID(ctx, instProject, req.Name)
 
 			return nil
 		})
+
 		if id > 0 {
 			return response.Conflict(fmt.Errorf("Name %q already in use", req.Name))
 		}
@@ -518,7 +519,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Cross-server instance migration.
-	ws, err := newMigrationSource(inst, req.Live, req.InstanceOnly, req.AllowInconsistent, "", "", req.Devices, req.Target)
+	ws, err := newMigrationSource(inst, req.Live, req.InstanceOnly, req.AllowInconsistent, "", "", req.Devices, nil, req.Target)
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -916,6 +917,10 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		nearLiveReverter := revert.New()
 		defer nearLiveReverter.Fail()
 
+		// Copy of the instance's dependent volumes on local storage, only started for a
+		// near-live migration onto shared storage.
+		localDiskTransfer := dependentDiskTransfer{s: s, inst: inst, target: target, sourceMemberInfo: sourceMemberInfo, op: op}
+
 		if req.Refresh && !req.Live && inst.IsRunning() {
 			err := nearLiveMigrationSupported(s, inst, req, targetMemberInfo.Name)
 			if err != nil {
@@ -924,7 +929,13 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 
 			// On shared storage there is nothing to pre-copy.
 			if !sourcePool.Driver().Info().Remote {
-				return migrateInstanceNearLive(ctx, s, inst, target, targetInstInfo, progressHandler)
+				return migrateInstanceNearLive(ctx, s, inst, target, targetInstInfo, sourceMemberInfo, req.Devices, op, progressHandler)
+			}
+
+			// Copy the dependent volumes on local storage while the instance runs.
+			err = localDiskTransfer.start(ctx, nearLiveReverter)
+			if err != nil {
+				return err
 			}
 
 			err = instanceShutdownOrForceStop(inst)
@@ -941,12 +952,18 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 				}
 			})
 
+			// Final transfer of local disks, with the instance stopped.
+			err = localDiskTransfer.finalTransfer(ctx)
+			if err != nil {
+				return err
+			}
+
 			// Prevent target instance start at this moment.
 			delete(targetInstInfo.Config, "volatile.last_state.power")
 		}
 
 		// Setup a new migration source.
-		sourceMigration, err := newMigrationSource(inst, req.Live, false, req.AllowInconsistent, inst.Name(), req.Pool, req.Devices, nil)
+		sourceMigration, err := newMigrationSource(inst, req.Live, false, req.AllowInconsistent, inst.Name(), req.Pool, req.Devices, localDiskTransfer.diskNames(), nil)
 		if err != nil {
 			return fmt.Errorf("Failed setting up instance migration on source: %w", err)
 		}
@@ -1114,7 +1131,7 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 				// Delete the snapshots in reverse order.
 				k = snapshotCount - 1 - k
 
-				err = sourcePool.DeleteInstanceSnapshot(snapshots[k], nil)
+				err = sourcePool.DeleteInstanceSnapshot(snapshots[k], false, nil)
 				if err != nil {
 					return fmt.Errorf("Failed delete instance snapshot %q on source member: %w", snapshots[k].Name(), err)
 				}
@@ -1130,6 +1147,8 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 		if err != nil {
 			return fmt.Errorf("Failed deleting instance dependent volumes on source member: %w", err)
 		}
+
+		localDiskTransfer.deleteSnapshots()
 
 		// Start the target instance for a near-live migration onto shared storage.
 		if nearLiveRestart {

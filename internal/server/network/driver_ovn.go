@@ -616,6 +616,15 @@ func (n *ovn) Validate(config map[string]string, clientType request.ClientType) 
 		//  default: `false`
 		"ipv6.dhcp.stateful": validate.Optional(validate.IsBool),
 
+		// gendoc:generate(entity=network_ovn, group=common, key=ipv6.ra)
+		//
+		// ---
+		//  type: bool
+		//  condition: IPv6 address
+		//  default: `true`
+		//  shortdesc: Whether to send IPv6 router advertisements
+		"ipv6.ra": validate.Optional(validate.IsBool),
+
 		// gendoc:generate(entity=network_ovn, group=common, key=ipv4.nat)
 		//
 		// ---
@@ -3371,7 +3380,7 @@ func (n *ovn) setup(update bool) error {
 	}
 
 	// Set IPv6 router advertisement settings.
-	if routerIntPortIPv6Net != nil {
+	if routerIntPortIPv6Net != nil && util.IsTrueOrEmpty(n.config["ipv6.ra"]) {
 		adressMode := networkOVN.OVNIPv6AddressModeSLAAC
 		if dhcpV6Subnet != nil {
 			adressMode = networkOVN.OVNIPv6AddressModeDHCPStateless
@@ -5395,32 +5404,63 @@ func (n *ovn) InstanceDevicePortStart(opts *OVNInstanceNICSetupOpts, securityACL
 		egressRate = maxRate
 	}
 
+	egressBucket, err := units.ParseBitSizeString(opts.DeviceConfig["limits.egress.bucket"])
+	if err != nil {
+		return "", nil, fmt.Errorf("Failed converting limits.egress.bucket to int: %w", err)
+	}
+
+	ingressBucket, err := units.ParseBitSizeString(opts.DeviceConfig["limits.ingress.bucket"])
+	if err != nil {
+		return "", nil, fmt.Errorf("Failed converting limits.ingress.bucket to int: %w", err)
+	}
+
+	if opts.DeviceConfig["limits.max.bucket"] != "" {
+		maxBucket, err := units.ParseBitSizeString(opts.DeviceConfig["limits.max.bucket"])
+		if err != nil {
+			return "", nil, fmt.Errorf("Failed converting limits.max.bucket to int: %w", err)
+		}
+
+		// Overwrite the egress and ingress burst buckets if the max burst bucket is set.
+		ingressBucket = maxBucket
+		egressBucket = maxBucket
+	}
+
 	var rules []networkOVN.OVNQoSRule
 	if opts.DeviceConfig["limits.egress"] != "" || opts.DeviceConfig["limits.max"] != "" {
-		egressRate /= 1000
+		bandwidth := map[string]int{
+			"rate": int(egressRate / 1000),
+		}
+
+		if egressBucket > 0 {
+			bandwidth["burst"] = int(egressBucket / 1000)
+		}
+
 		egressRule := networkOVN.OVNQoSRule{
 			Direction: ovnNB.QoSDirectionFromLport,
 			Action:    map[string]int{},
-			Bandwidth: map[string]int{
-				"rate": int(egressRate),
-			},
-			Match:    fmt.Sprintf("inport == \"%s\"", instancePortName),
-			Priority: int(qosPriority),
+			Bandwidth: bandwidth,
+			Match:     fmt.Sprintf("inport == \"%s\"", instancePortName),
+			Priority:  int(qosPriority),
 		}
 
 		rules = append(rules, egressRule)
 	}
 
 	if opts.DeviceConfig["limits.ingress"] != "" || opts.DeviceConfig["limits.max"] != "" {
-		ingressRate /= 1000
+		bandwidth := map[string]int{
+			"rate": int(ingressRate / 1000),
+		}
+
+		if ingressBucket > 0 {
+			bandwidth["burst"] = int(ingressBucket / 1000)
+		}
+
 		ingressRule := networkOVN.OVNQoSRule{
 			Direction: ovnNB.QoSDirectionToLport,
 			Action:    map[string]int{},
-			Bandwidth: map[string]int{
-				"rate": int(ingressRate),
-			},
-			Match:    fmt.Sprintf("outport == \"%s\"", instancePortName),
-			Priority: int(qosPriority),
+			Bandwidth: bandwidth,
+			Match:     fmt.Sprintf("outport == \"%s\"", instancePortName),
+			Priority:  int(qosPriority),
 		}
 
 		rules = append(rules, ingressRule)
@@ -5542,6 +5582,12 @@ func (n *ovn) InstanceDevicePortStop(ovsExternalOVNPort networkOVN.OVNSwitchPort
 		// Delete any associated proxy ARP/NDP entries for the DNS IPs.
 		for _, dnsIP := range dnsIPs {
 			removeARPProxyIPNets = append(removeARPProxyIPNets, IPToNet(dnsIP))
+		}
+
+		// Delete any MAC bindings learned by the router for those IPs.
+		err = n.ovnsb.DeleteMACBindings(context.TODO(), n.getRouterIntPortName(), dnsIPs...)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -5810,8 +5856,14 @@ func (n *ovn) ovnNICExternalRoutes(ovnProjectNetworksWithOurUplink map[string][]
 					continue
 				}
 
+				// Get the effective network project of the NIC (accounts for shared networks).
+				devNetworkProject := instNetworkProject
+				if devConfig["network"] != "" {
+					devNetworkProject = project.NetworkProjectForNameFromRecord(&p, devConfig["network"])
+				}
+
 				// Check whether the NIC device references one of the OVN networks supplied.
-				if !NICUsesNetwork(devConfig, ovnProjectNetworksWithOurUplink[instNetworkProject]...) {
+				if !NICUsesNetwork(devConfig, ovnProjectNetworksWithOurUplink[devNetworkProject]...) {
 					continue
 				}
 
@@ -5827,7 +5879,7 @@ func (n *ovn) ovnNICExternalRoutes(ovnProjectNetworksWithOurUplink map[string][]
 
 						externalRoutes = append(externalRoutes, externalSubnetUsage{
 							subnet:          *ipNet,
-							networkProject:  instNetworkProject,
+							networkProject:  devNetworkProject,
 							networkName:     devConfig["network"],
 							instanceProject: inst.Project,
 							instanceName:    inst.Name,
@@ -5970,8 +6022,8 @@ func (n *ovn) handleDependencyChange(uplinkName string, uplinkConfig map[string]
 			// This will restore the l2proxy proxy ARP/NDP entries.
 			err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 				return tx.InstanceList(ctx, func(inst db.InstanceArgs, p api.Project) error {
-					// Get the instance's effective network project name.
-					instNetworkProject := project.NetworkProjectFromRecord(&p)
+					// Get the effective network project name for this network name.
+					instNetworkProject := project.NetworkProjectForNameFromRecord(&p, n.Name())
 
 					// Skip instances who's effective network project doesn't match this network's
 					// project.

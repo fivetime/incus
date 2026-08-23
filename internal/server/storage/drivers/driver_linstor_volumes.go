@@ -728,7 +728,14 @@ func (d *linstor) MountVolume(vol Volume, op *operations.Operation) error {
 		mountPath := vol.MountPath()
 		l.Debug("Content type FS", logger.Ctx{"mountPath": mountPath})
 		if !linux.IsMountPoint(mountPath) {
-			err := vol.EnsureMountPath(false)
+			// The DRBD device may have persisted on this node while another node was
+			// writing to the volume, leaving stale data in the kernel buffer cache.
+			err := flushBlockDeviceCache(volDevPath)
+			if err != nil {
+				return err
+			}
+
+			err = vol.EnsureMountPath(false)
 			if err != nil {
 				return err
 			}
@@ -755,6 +762,14 @@ func (d *linstor) MountVolume(vol Volume, op *operations.Operation) error {
 
 	case ContentTypeBlock:
 		l.Debug("Content type Block")
+		// Flush any stale buffer cache unless the volume is already in use locally.
+		if !vol.MountInUse() {
+			err := flushBlockDeviceCache(volDevPath)
+			if err != nil {
+				return err
+			}
+		}
+
 		// For VMs, mount the filesystem volume.
 		if vol.IsVMBlock() {
 			fsVol := vol.NewVMBlockFilesystemVolume()
@@ -795,7 +810,7 @@ func (d *linstor) UnmountVolume(vol Volume, keepBlockDev bool, op *operations.Op
 			return false, ErrInUse
 		}
 
-		err = TryUnmount(mountPath, unix.MNT_DETACH)
+		err = TryUnmount(mountPath, 0)
 		if err != nil {
 			return false, err
 		}
@@ -859,14 +874,12 @@ func (d *linstor) CreateVolumeSnapshot(snapVol Volume, op *operations.Operation)
 	sourcePath := GetVolumeMountPath(d.name, snapVol.volType, parentName)
 
 	if linux.IsMountPoint(sourcePath) {
-		// Attempt to sync and freeze filesystem, but do not error if not able to freeze (as filesystem
-		// could still be busy), as LINSTOR does not have any notion of the filesystem and therefore can't
-		// guarantee the consistently of the filesystem on a snapshot. This is costly but tries to ensure
-		// that all cached data has been committed to the underlying DRBD device. If we don't then the
-		// LINSTOR snapshot can be inconsistent or, in the worst case, empty.
-		unfreezeFS, err := d.filesystemFreeze(sourcePath)
-		if err == nil {
-			defer logger.WarnOnError(unfreezeFS, "Failed to unfreeze filesystem")
+		// The filesystem is deliberately not frozen. A userspace freeze held across a LINSTOR
+		// snapshot leaves the DRBD device frozen even once the filesystem has been thawed, so the
+		// volume can never be mounted again ("Can't mount, blockdev is frozen").
+		err := linux.SyncFS(sourcePath)
+		if err != nil {
+			d.logger.Warn("Failed syncing filesystem before snapshot", logger.Ctx{"path": sourcePath, "err": err})
 		}
 	}
 
@@ -1081,7 +1094,13 @@ func (d *linstor) MountVolumeSnapshot(snapVol Volume, op *operations.Operation) 
 		mountPath := snapVol.MountPath()
 		l.Debug("Content type FS", logger.Ctx{"mountPath": mountPath})
 		if !linux.IsMountPoint(mountPath) {
-			err := snapVol.EnsureMountPath(false)
+			// Flush any stale buffer cache in case the DRBD device got reused.
+			err := flushBlockDeviceCache(volDevPath)
+			if err != nil {
+				return err
+			}
+
+			err = snapVol.EnsureMountPath(false)
 			if err != nil {
 				return err
 			}

@@ -130,6 +130,23 @@
 						}
 					},
 					{
+						"limits.max.burst": {
+							"longdesc": "",
+							"required": "no",
+							"shortdesc": "I/O limit in byte/s and/or IOPS that both reads and writes may burst up to (same as setting both `limits.read.burst` and `limits.write.burst`)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.burst.length": {
+							"default": "`1s`",
+							"longdesc": "",
+							"required": "no",
+							"shortdesc": "How long the burst limits may be sustained for (same as setting both `limits.read.burst.length` and `limits.write.burst.length`)",
+							"type": "string"
+						}
+					},
+					{
 						"limits.read": {
 							"longdesc": "",
 							"required": "no",
@@ -138,10 +155,44 @@
 						}
 					},
 					{
+						"limits.read.burst": {
+							"longdesc": "",
+							"required": "no",
+							"shortdesc": "I/O limit in byte/s and/or IOPS that reads may burst up to for `limits.read.burst.length` (only for virtual machines) - see also {ref}`storage-configure-IO`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.read.burst.length": {
+							"default": "`1s`",
+							"longdesc": "",
+							"required": "no",
+							"shortdesc": "How long `limits.read.burst` may be sustained for before falling back to the sustained limit",
+							"type": "string"
+						}
+					},
+					{
 						"limits.write": {
 							"longdesc": "",
 							"required": "no",
 							"shortdesc": "I/O limit in byte/s (various suffixes supported, see {ref}`instances-limit-units`) and/or in IOPS (must be suffixed with `iops`), comma separated when specifying both - see also {ref}`storage-configure-IO`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.write.burst": {
+							"longdesc": "",
+							"required": "no",
+							"shortdesc": "I/O limit in byte/s and/or IOPS that writes may burst up to for `limits.write.burst.length` (only for virtual machines) - see also {ref}`storage-configure-IO`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.write.burst.length": {
+							"default": "`1s`",
+							"longdesc": "",
+							"required": "no",
+							"shortdesc": "How long `limits.write.burst` may be sustained for before falling back to the sustained limit",
 							"type": "string"
 						}
 					},
@@ -613,7 +664,7 @@
 						"ipv4.address": {
 							"longdesc": "",
 							"managed": "no",
-							"shortdesc": "An IPv4 address to assign to the instance through DHCP (can be `none` to restrict all IPv4 traffic when `security.ipv4_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)",
+							"shortdesc": "An IPv4 address to assign to the instance through DHCP (can be `none` to disable DHCPv4 inside an OCI container and restrict all IPv4 traffic when `security.ipv4_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)",
 							"type": "string"
 						}
 					},
@@ -645,7 +696,7 @@
 						"ipv6.address": {
 							"longdesc": "",
 							"managed": "no",
-							"shortdesc": "An IPv6 address to assign to the instance through DHCP (can be `none` to restrict all IPv6 traffic when `security.ipv6_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)",
+							"shortdesc": "An IPv6 address to assign to the instance through DHCP (can be `none` to disable DHCPv6 and SLAAC inside an OCI container and restrict all IPv6 traffic when `security.ipv6_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)",
 							"type": "string"
 						}
 					},
@@ -682,6 +733,22 @@
 						}
 					},
 					{
+						"limits.egress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that outgoing traffic may send in excess of `limits.egress`, requires `limits.egress.burst`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.egress.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that outgoing traffic may burst up to, requires `limits.egress.bucket`",
+							"type": "string"
+						}
+					},
+					{
 						"limits.ingress": {
 							"longdesc": "",
 							"managed": "no",
@@ -690,10 +757,42 @@
 						}
 					},
 					{
+						"limits.ingress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that incoming traffic may send in excess of `limits.ingress`, requires `limits.ingress.burst`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.ingress.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that incoming traffic may burst up to, requires `limits.ingress.bucket`",
+							"type": "string"
+						}
+					},
+					{
 						"limits.max": {
 							"longdesc": "",
 							"managed": "no",
 							"shortdesc": "I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket`)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that both incoming and outgoing traffic may burst up to (same as setting both `limits.ingress.burst` and `limits.egress.burst`)",
 							"type": "string"
 						}
 					},
@@ -1217,6 +1316,14 @@
 						}
 					},
 					{
+						"limits.egress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that outgoing traffic may send in excess of `limits.egress` (mutually exclusive with `limits.max.bucket`)",
+							"type": "string"
+						}
+					},
+					{
 						"limits.ingress": {
 							"longdesc": "",
 							"managed": "no",
@@ -1225,10 +1332,26 @@
 						}
 					},
 					{
+						"limits.ingress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that incoming traffic may send in excess of `limits.ingress` (mutually exclusive with `limits.max.bucket`)",
+							"type": "string"
+						}
+					},
+					{
 						"limits.max": {
 							"longdesc": "",
 							"managed": "no",
 							"shortdesc": "I/O limit in bit/s for both incoming and outgoing traffic. (same as setting both limits.ingress and limits.egress / mutually exclusive with limits.ingress and limits.egress)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket` / mutually exclusive with them)",
 							"type": "string"
 						}
 					},
@@ -1411,6 +1534,22 @@
 						}
 					},
 					{
+						"limits.egress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that outgoing traffic may send in excess of `limits.egress`, requires `limits.egress.burst`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.egress.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that outgoing traffic may burst up to, requires `limits.egress.bucket`",
+							"type": "string"
+						}
+					},
+					{
 						"limits.ingress": {
 							"longdesc": "",
 							"shortdesc": "I/O limit in bit/s for incoming traffic (various suffixes supported, see {ref}`instances-limit-units`)",
@@ -1418,9 +1557,41 @@
 						}
 					},
 					{
+						"limits.ingress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that incoming traffic may send in excess of `limits.ingress`, requires `limits.ingress.burst`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.ingress.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that incoming traffic may burst up to, requires `limits.ingress.bucket`",
+							"type": "string"
+						}
+					},
+					{
 						"limits.max": {
 							"longdesc": "",
 							"shortdesc": "I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket`)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that both incoming and outgoing traffic may burst up to (same as setting both `limits.ingress.burst` and `limits.egress.burst`)",
 							"type": "string"
 						}
 					},
@@ -1716,6 +1887,22 @@
 						}
 					},
 					{
+						"limits.egress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that outgoing traffic may send in excess of `limits.egress`, requires `limits.egress.burst`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.egress.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that outgoing traffic may burst up to, requires `limits.egress.bucket`",
+							"type": "string"
+						}
+					},
+					{
 						"limits.ingress": {
 							"longdesc": "",
 							"shortdesc": "I/O limit in bit/s for incoming traffic (various suffixes supported, see {ref}`instances-limit-units`)",
@@ -1723,9 +1910,41 @@
 						}
 					},
 					{
+						"limits.ingress.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that incoming traffic may send in excess of `limits.ingress`, requires `limits.ingress.burst`",
+							"type": "string"
+						}
+					},
+					{
+						"limits.ingress.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that incoming traffic may burst up to, requires `limits.ingress.bucket`",
+							"type": "string"
+						}
+					},
+					{
 						"limits.max": {
 							"longdesc": "",
 							"shortdesc": "I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.bucket": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket`)",
+							"type": "string"
+						}
+					},
+					{
+						"limits.max.burst": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "I/O limit in bit/s that both incoming and outgoing traffic may burst up to (same as setting both `limits.ingress.burst` and `limits.egress.burst`)",
 							"type": "string"
 						}
 					},
@@ -4275,6 +4494,15 @@
 						}
 					},
 					{
+						"ipv6.ra": {
+							"condition": "IPv6 address",
+							"default": "`true`",
+							"longdesc": "",
+							"shortdesc": "Whether to send IPv6 router advertisements",
+							"type": "bool"
+						}
+					},
+					{
 						"ipv6.routes": {
 							"condition": "IPv6 address",
 							"default": "-",
@@ -4840,6 +5068,15 @@
 							"longdesc": "",
 							"shortdesc": "The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)",
 							"type": "string"
+						}
+					},
+					{
+						"ipv6.ra": {
+							"condition": "IPv6 address",
+							"default": "`true`",
+							"longdesc": "",
+							"shortdesc": "Whether to send IPv6 router advertisements",
+							"type": "bool"
 						}
 					},
 					{
@@ -5579,7 +5816,7 @@
 					},
 					{
 						"restricted.networks.access": {
-							"longdesc": "Specify a comma-delimited list of network names that are allowed for use in this project.\nIf this option is not set, all networks are accessible.\n\nNote that this setting depends on the {config:option}`project-restricted:restricted.devices.nic` setting.",
+							"longdesc": "Specify a comma-delimited list of network names that are allowed for use in this project.\nIf this option is not set, all networks are accessible.\n\nIn restricted projects with {config:option}`project-features:features.networks` enabled,\nthe listed networks from the default project are shared into the project and their names\ncan't be used for the project's own networks.\n\nNote that this setting depends on the {config:option}`project-restricted:restricted.devices.nic` setting.",
 							"shortdesc": "Which network names are allowed for use in this project",
 							"type": "string"
 						}

@@ -573,6 +573,9 @@ var APIExtensions = []string{
 	"instance_refresh_migration",
 	"image_locations",
 	"network_ovn_multicast",
+	"device_burst_limits",
+	"network_ipv6_ra",
+	"qemu_scriptlet_nvram",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an

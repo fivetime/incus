@@ -144,6 +144,21 @@ For file systems (shared directories or custom volumes), this is one of:
 
 ```
 
+```{config:option} limits.max.burst devices-disk
+:required: "no"
+:shortdesc: "I/O limit in byte/s and/or IOPS that both reads and writes may burst up to (same as setting both `limits.read.burst` and `limits.write.burst`)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.burst.length devices-disk
+:default: "`1s`"
+:required: "no"
+:shortdesc: "How long the burst limits may be sustained for (same as setting both `limits.read.burst.length` and `limits.write.burst.length`)"
+:type: "string"
+
+```
+
 ```{config:option} limits.read devices-disk
 :required: "no"
 :shortdesc: "I/O limit in byte/s (various suffixes supported, see {ref}`instances-limit-units`) and/or in IOPS (must be suffixed with `iops`), comma separated when specifying both - see also {ref}`storage-configure-IO`"
@@ -151,9 +166,39 @@ For file systems (shared directories or custom volumes), this is one of:
 
 ```
 
+```{config:option} limits.read.burst devices-disk
+:required: "no"
+:shortdesc: "I/O limit in byte/s and/or IOPS that reads may burst up to for `limits.read.burst.length` (only for virtual machines) - see also {ref}`storage-configure-IO`"
+:type: "string"
+
+```
+
+```{config:option} limits.read.burst.length devices-disk
+:default: "`1s`"
+:required: "no"
+:shortdesc: "How long `limits.read.burst` may be sustained for before falling back to the sustained limit"
+:type: "string"
+
+```
+
 ```{config:option} limits.write devices-disk
 :required: "no"
 :shortdesc: "I/O limit in byte/s (various suffixes supported, see {ref}`instances-limit-units`) and/or in IOPS (must be suffixed with `iops`), comma separated when specifying both - see also {ref}`storage-configure-IO`"
+:type: "string"
+
+```
+
+```{config:option} limits.write.burst devices-disk
+:required: "no"
+:shortdesc: "I/O limit in byte/s and/or IOPS that writes may burst up to for `limits.write.burst.length` (only for virtual machines) - see also {ref}`storage-configure-IO`"
+:type: "string"
+
+```
+
+```{config:option} limits.write.burst.length devices-disk
+:default: "`1s`"
+:required: "no"
+:shortdesc: "How long `limits.write.burst` may be sustained for before falling back to the sustained limit"
 :type: "string"
 
 ```
@@ -562,7 +607,7 @@ With VMs, this option supports mounting file system disk devices and paths withi
 
 ```{config:option} ipv4.address devices-nic_bridged
 :managed: "no"
-:shortdesc: "An IPv4 address to assign to the instance through DHCP (can be `none` to restrict all IPv4 traffic when `security.ipv4_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)"
+:shortdesc: "An IPv4 address to assign to the instance through DHCP (can be `none` to disable DHCPv4 inside an OCI container and restrict all IPv4 traffic when `security.ipv4_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)"
 :type: "string"
 
 ```
@@ -590,7 +635,7 @@ With VMs, this option supports mounting file system disk devices and paths withi
 
 ```{config:option} ipv6.address devices-nic_bridged
 :managed: "no"
-:shortdesc: "An IPv6 address to assign to the instance through DHCP (can be `none` to restrict all IPv6 traffic when `security.ipv6_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)"
+:shortdesc: "An IPv6 address to assign to the instance through DHCP (can be `none` to disable DHCPv6 and SLAAC inside an OCI container and restrict all IPv6 traffic when `security.ipv6_filtering` is set, or a CIDR value to statically configure the address inside an OCI container)"
 :type: "string"
 
 ```
@@ -623,6 +668,20 @@ With VMs, this option supports mounting file system disk devices and paths withi
 
 ```
 
+```{config:option} limits.egress.bucket devices-nic_bridged
+:managed: "no"
+:shortdesc: "Amount of data in bit that outgoing traffic may send in excess of `limits.egress`, requires `limits.egress.burst`"
+:type: "string"
+
+```
+
+```{config:option} limits.egress.burst devices-nic_bridged
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that outgoing traffic may burst up to, requires `limits.egress.bucket`"
+:type: "string"
+
+```
+
 ```{config:option} limits.ingress devices-nic_bridged
 :managed: "no"
 :shortdesc: "I/O limit in bit/s for incoming traffic (various suffixes supported, see {ref}`instances-limit-units`)"
@@ -630,9 +689,37 @@ With VMs, this option supports mounting file system disk devices and paths withi
 
 ```
 
+```{config:option} limits.ingress.bucket devices-nic_bridged
+:managed: "no"
+:shortdesc: "Amount of data in bit that incoming traffic may send in excess of `limits.ingress`, requires `limits.ingress.burst`"
+:type: "string"
+
+```
+
+```{config:option} limits.ingress.burst devices-nic_bridged
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that incoming traffic may burst up to, requires `limits.ingress.bucket`"
+:type: "string"
+
+```
+
 ```{config:option} limits.max devices-nic_bridged
 :managed: "no"
 :shortdesc: "I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.bucket devices-nic_bridged
+:managed: "no"
+:shortdesc: "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket`)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.burst devices-nic_bridged
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that both incoming and outgoing traffic may burst up to (same as setting both `limits.ingress.burst` and `limits.egress.burst`)"
 :type: "string"
 
 ```
@@ -1089,6 +1176,13 @@ With VMs, this option supports mounting file system disk devices and paths withi
 
 ```
 
+```{config:option} limits.egress.bucket devices-nic_ovn
+:managed: "no"
+:shortdesc: "Amount of data in bit that outgoing traffic may send in excess of `limits.egress` (mutually exclusive with `limits.max.bucket`)"
+:type: "string"
+
+```
+
 ```{config:option} limits.ingress devices-nic_ovn
 :managed: "no"
 :shortdesc: "I/O limit in bit/s for incoming traffic (various suffixes supported, see {ref}`instances-limit-units`)"
@@ -1096,9 +1190,23 @@ With VMs, this option supports mounting file system disk devices and paths withi
 
 ```
 
+```{config:option} limits.ingress.bucket devices-nic_ovn
+:managed: "no"
+:shortdesc: "Amount of data in bit that incoming traffic may send in excess of `limits.ingress` (mutually exclusive with `limits.max.bucket`)"
+:type: "string"
+
+```
+
 ```{config:option} limits.max devices-nic_ovn
 :managed: "no"
 :shortdesc: "I/O limit in bit/s for both incoming and outgoing traffic. (same as setting both limits.ingress and limits.egress / mutually exclusive with limits.ingress and limits.egress)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.bucket devices-nic_ovn
+:managed: "no"
+:shortdesc: "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket` / mutually exclusive with them)"
 :type: "string"
 
 ```
@@ -1258,14 +1366,56 @@ With VMs, this option supports mounting file system disk devices and paths withi
 
 ```
 
+```{config:option} limits.egress.bucket devices-nic_p2p
+:managed: "no"
+:shortdesc: "Amount of data in bit that outgoing traffic may send in excess of `limits.egress`, requires `limits.egress.burst`"
+:type: "string"
+
+```
+
+```{config:option} limits.egress.burst devices-nic_p2p
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that outgoing traffic may burst up to, requires `limits.egress.bucket`"
+:type: "string"
+
+```
+
 ```{config:option} limits.ingress devices-nic_p2p
 :shortdesc: "I/O limit in bit/s for incoming traffic (various suffixes supported, see {ref}`instances-limit-units`)"
 :type: "string"
 
 ```
 
+```{config:option} limits.ingress.bucket devices-nic_p2p
+:managed: "no"
+:shortdesc: "Amount of data in bit that incoming traffic may send in excess of `limits.ingress`, requires `limits.ingress.burst`"
+:type: "string"
+
+```
+
+```{config:option} limits.ingress.burst devices-nic_p2p
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that incoming traffic may burst up to, requires `limits.ingress.bucket`"
+:type: "string"
+
+```
+
 ```{config:option} limits.max devices-nic_p2p
 :shortdesc: "I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.bucket devices-nic_p2p
+:managed: "no"
+:shortdesc: "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket`)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.burst devices-nic_p2p
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that both incoming and outgoing traffic may burst up to (same as setting both `limits.ingress.burst` and `limits.egress.burst`)"
 :type: "string"
 
 ```
@@ -1524,14 +1674,56 @@ The custom policy routing table ID to add IPv6 static routes to (in addition to 
 
 ```
 
+```{config:option} limits.egress.bucket devices-nic_routed
+:managed: "no"
+:shortdesc: "Amount of data in bit that outgoing traffic may send in excess of `limits.egress`, requires `limits.egress.burst`"
+:type: "string"
+
+```
+
+```{config:option} limits.egress.burst devices-nic_routed
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that outgoing traffic may burst up to, requires `limits.egress.bucket`"
+:type: "string"
+
+```
+
 ```{config:option} limits.ingress devices-nic_routed
 :shortdesc: "I/O limit in bit/s for incoming traffic (various suffixes supported, see {ref}`instances-limit-units`)"
 :type: "string"
 
 ```
 
+```{config:option} limits.ingress.bucket devices-nic_routed
+:managed: "no"
+:shortdesc: "Amount of data in bit that incoming traffic may send in excess of `limits.ingress`, requires `limits.ingress.burst`"
+:type: "string"
+
+```
+
+```{config:option} limits.ingress.burst devices-nic_routed
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that incoming traffic may burst up to, requires `limits.ingress.bucket`"
+:type: "string"
+
+```
+
 ```{config:option} limits.max devices-nic_routed
 :shortdesc: "I/O limit in bit/s for both incoming and outgoing traffic (same as setting both limits.ingress and limits.egress)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.bucket devices-nic_routed
+:managed: "no"
+:shortdesc: "Amount of data in bit that traffic may send in excess of the sustained limit (same as setting both `limits.ingress.bucket` and `limits.egress.bucket`)"
+:type: "string"
+
+```
+
+```{config:option} limits.max.burst devices-nic_routed
+:managed: "no"
+:shortdesc: "I/O limit in bit/s that both incoming and outgoing traffic may burst up to (same as setting both `limits.ingress.burst` and `limits.egress.burst`)"
 :type: "string"
 
 ```
@@ -3858,6 +4050,14 @@ User keys can be used in search.
 
 ```
 
+```{config:option} ipv6.ra network_bridge-common
+:condition: "IPv6 address"
+:default: "`true`"
+:shortdesc: "Whether to send IPv6 router advertisements"
+:type: "bool"
+
+```
+
 ```{config:option} ipv6.routes network_bridge-common
 :condition: "IPv6 address"
 :default: "-"
@@ -4341,6 +4541,14 @@ User keys can be used in search.
 :condition: "IPv6 address"
 :shortdesc: "The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)"
 :type: "string"
+
+```
+
+```{config:option} ipv6.ra network_ovn-common
+:condition: "IPv6 address"
+:default: "`true`"
+:shortdesc: "Whether to send IPv6 router advertisements"
+:type: "bool"
 
 ```
 
@@ -4993,6 +5201,10 @@ If this option is not set, all image servers are accessible.
 :type: "string"
 Specify a comma-delimited list of network names that are allowed for use in this project.
 If this option is not set, all networks are accessible.
+
+In restricted projects with {config:option}`project-features:features.networks` enabled,
+the listed networks from the default project are shared into the project and their names
+can't be used for the project's own networks.
 
 Note that this setting depends on the {config:option}`project-restricted:restricted.devices.nic` setting.
 ```
