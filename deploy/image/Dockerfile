@@ -124,6 +124,37 @@ RUN meson setup /build/lxc/build /build/lxc \
     && git -C /build/lxc rev-parse HEAD > /build/lxc.commit \
     && printf '%s\n' "${LXC_REF}" > /build/lxc.ref
 
+FROM ${ALPINE_IMAGE} AS lxcfs-build
+
+ARG LXCFS_REPOSITORY=https://github.com/fivetime/lxcfs.git
+ARG LXCFS_REF=3de94b58671c70da613ee751b92df676092ef49e
+
+RUN apk add --no-cache \
+      build-base \
+      fuse3-dev \
+      git \
+      linux-headers \
+      meson \
+      pkgconf \
+      py3-jinja2 \
+      samurai \
+    && git clone --filter=blob:none "${LXCFS_REPOSITORY}" /build/lxcfs \
+    && git -C /build/lxcfs checkout --detach "${LXCFS_REF}"
+
+# Match Alpine's release build flags.
+RUN meson setup /build/lxcfs/build /build/lxcfs \
+      --prefix=/usr \
+      --buildtype=release \
+      -Db_lto=true \
+      -Ddocs=false \
+      -Dtests=true \
+      -Dinit-script=openrc \
+    && ninja -C /build/lxcfs/build \
+    && DESTDIR=/out meson install -C /build/lxcfs/build \
+    && /out/usr/bin/lxcfs --version \
+    && git -C /build/lxcfs rev-parse HEAD > /build/lxcfs.commit \
+    && printf '%s\n' "${LXCFS_REF}" > /build/lxcfs.ref
+
 FROM ${ALPINE_IMAGE}
 
 ARG ALPINE_IMAGE
@@ -166,15 +197,16 @@ RUN apk add --no-cache \
       e2fsprogs \
       e2fsprogs-extra \
       eudev \
+      fuse3-libs \
       gnutls \
       iproute2 \
       iptables \
       iptables-legacy \
       libbsd \
+      libgcc \
       libnet \
       libnl3 \
       lxc-libs \
-      lxcfs \
       lz4-libs \
       lvm2 \
       nftables \
@@ -212,6 +244,14 @@ COPY --from=criu-build /build/criu.commit /usr/share/incus-runtime/criu-commit
 COPY --from=lxc-build /build/lxc/build/liblxc.so.1.9.0 /usr/lib/liblxc.so.1.9.0
 COPY --from=lxc-build /build/lxc.commit /usr/share/incus-runtime/lxc-commit
 COPY --from=lxc-build /build/lxc.ref /usr/share/incus-runtime/lxc-ref
+COPY --from=lxcfs-build /out/usr/bin/lxcfs /usr/bin/lxcfs
+COPY --from=lxcfs-build /out/usr/lib/lxcfs/liblxcfs.so /usr/lib/lxcfs/liblxcfs.so
+COPY --from=lxcfs-build /out/usr/share/lxc/config/common.conf.d/00-lxcfs.conf /usr/share/lxc/config/common.conf.d/00-lxcfs.conf
+COPY --from=lxcfs-build /out/usr/share/lxcfs/ /usr/share/lxcfs/
+COPY --from=lxcfs-build /build/lxcfs/COPYING /usr/share/licenses/lxcfs/COPYING
+COPY --from=lxcfs-build /build/lxcfs/LICENSE.LGPL2.1 /usr/share/licenses/lxcfs/LICENSE.LGPL2.1
+COPY --from=lxcfs-build /build/lxcfs.commit /usr/share/incus-runtime/lxcfs-commit
+COPY --from=lxcfs-build /build/lxcfs.ref /usr/share/incus-runtime/lxcfs-ref
 RUN incus_version="$(incusd --version)" \
     && printf '%s\n' "${incus_version}" | grep -Eq '^7\.[0-9]+(\.[0-9]+)?$' \
     && criu --version \
@@ -225,16 +265,18 @@ RUN incus_version="$(incusd --version)" \
     && tar --help 2>&1 | grep -q -- "--no-unquote" \
     && ! ldd /usr/sbin/incusd | grep -q "not found" \
     && ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found" \
+    && ! ldd /usr/bin/lxcfs | grep -q "not found" \
+    && ! ldd /usr/lib/lxcfs/liblxcfs.so | grep -q "not found" \
     && strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor" \
     && ! ldd /usr/local/sbin/criu | grep -q "not found" \
     && apk list --installed 2>/dev/null | awk '{print $1}' | sort > /usr/share/incus-runtime/apk-packages.txt \
     && packages_sha256="$(sha256sum /usr/share/incus-runtime/apk-packages.txt | awk '{print $1}')" \
-    && lxcfs_package="$(grep '^lxcfs-' /usr/share/incus-runtime/apk-packages.txt)" \
     && printf '%s\n' \
       "INCUS_REVISION=$(cat /usr/share/incus-runtime/incus-revision)" \
       "LXC_REF=$(cat /usr/share/incus-runtime/lxc-ref)" \
       "LXC_COMMIT=$(cat /usr/share/incus-runtime/lxc-commit)" \
-      "LXCFS_PACKAGE=${lxcfs_package}" \
+      "LXCFS_REF=$(cat /usr/share/incus-runtime/lxcfs-ref)" \
+      "LXCFS_COMMIT=$(cat /usr/share/incus-runtime/lxcfs-commit)" \
       "CRIU_COMMIT=$(cat /usr/share/incus-runtime/criu-commit)" \
       "ALPINE_IMAGE=${ALPINE_IMAGE}" \
       "ALPINE_RELEASE=$(cat /etc/alpine-release)" \
