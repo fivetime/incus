@@ -1398,10 +1398,21 @@ func (d *qemu) runStartupScriptlet(monitor *qmp.Monitor, stage string) error {
 			return errors.New("Unexpected instance type")
 		}
 
-		err := scriptlet.QEMURun(logger.Log, instanceData, &d.cmdArgs, &d.conf, monitor, stage)
+		nvram, err := d.getNVRAM()
 		if err != nil {
-			err = fmt.Errorf("Failed running QEMU scriptlet at %s stage: %w", stage, err)
-			return err
+			return fmt.Errorf("Failed reading the NVRAM at %s stage: %w", stage, err)
+		}
+
+		err = scriptlet.QEMURun(logger.Log, instanceData, &d.cmdArgs, &d.conf, monitor, nvram, stage)
+		if err != nil {
+			return fmt.Errorf("Failed running QEMU scriptlet at %s stage: %w", stage, err)
+		}
+
+		if stage == "config" {
+			err = d.setNVRAM(nvram)
+			if err != nil {
+				return fmt.Errorf("Failed writing the NVRAM at %s stage: %w", stage, err)
+			}
 		}
 	}
 
@@ -5054,6 +5065,24 @@ func (d *qemu) addDriveDirConfigVirtiofs(qemuDev map[string]any, agentMounts *[]
 	return monHook, nil
 }
 
+// qemuBlockThrottle converts device I/O limits into their QMP equivalent.
+func qemuBlockThrottle(limits *deviceConfig.DiskLimits) qmp.BlockThrottle {
+	return qmp.BlockThrottle{
+		BytesRead:  int(limits.ReadBytes),
+		BytesWrite: int(limits.WriteBytes),
+		IOPsRead:   int(limits.ReadIOps),
+		IOPsWrite:  int(limits.WriteIOps),
+
+		BytesReadBurst:  int(limits.ReadBytesBurst),
+		IOPsReadBurst:   int(limits.ReadIOpsBurst),
+		ReadBurstLength: int(limits.ReadBurstLength),
+
+		BytesWriteBurst:  int(limits.WriteBytesBurst),
+		IOPsWriteBurst:   int(limits.WriteIOpsBurst),
+		WriteBurstLength: int(limits.WriteBurstLength),
+	}
+}
+
 // addDriveConfig adds the qemu config required for adding a supplementary drive.
 func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int, driveConf deviceConfig.MountEntryItem) (monitorHook, error) {
 	aioMode := "native" // Use native kernel async IO and O_DIRECT by default.
@@ -5447,7 +5476,7 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 		}
 
 		if driveConf.Limits != nil {
-			err = m.SetBlockThrottle(qemuDev["id"].(string), int(driveConf.Limits.ReadBytes), int(driveConf.Limits.WriteBytes), int(driveConf.Limits.ReadIOps), int(driveConf.Limits.WriteIOps))
+			err = m.SetBlockThrottle(qemuDev["id"].(string), qemuBlockThrottle(driveConf.Limits))
 			if err != nil {
 				return fmt.Errorf("Failed applying limits for disk device %q: %w", driveConf.DevName, err)
 			}
@@ -7709,7 +7738,7 @@ func (d *qemu) delete(force bool, cleanupDependencies bool) error {
 	} else if pool != nil {
 		if d.IsSnapshot() {
 			// Remove snapshot volume and database record.
-			err = pool.DeleteInstanceSnapshot(d, nil)
+			err = pool.DeleteInstanceSnapshot(d, cleanupDependencies, nil)
 			if err != nil {
 				return err
 			}
@@ -8136,7 +8165,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		return err
 	}
 
-	dependentVolumesOffer, err := storagePools.GenerateDependentVolumesOffer(d.state, srcConfig, d.Project().Name, args.Snapshots, args.Devices, args.ClusterMoveSourceName != "")
+	dependentVolumesOffer, err := storagePools.GenerateDependentVolumesOffer(d.state, srcConfig, d.Project().Name, args.Snapshots, args.Devices, args.SkipDependentVolumes, clusterMove)
 	if err != nil {
 		err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
 		op.Done(err)
@@ -9473,7 +9502,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 				for k := range snapshots {
 					// Delete the snapshots in reverse order.
 					k = snapshotCount - 1 - k
-					_ = pool.DeleteInstanceSnapshot(snapshots[k], nil)
+					_ = pool.DeleteInstanceSnapshot(snapshots[k], true, nil)
 				}
 
 				_ = pool.DeleteInstance(d, nil)
@@ -10378,7 +10407,7 @@ func (d *qemu) DeviceEventHandler(runConf *deviceConfig.RunConfig) error {
 
 		if mount.Limits != nil {
 			// Apply the limits.
-			err = m.SetBlockThrottle(devID, int(mount.Limits.ReadBytes), int(mount.Limits.WriteBytes), int(mount.Limits.ReadIOps), int(mount.Limits.WriteIOps))
+			err = m.SetBlockThrottle(devID, qemuBlockThrottle(mount.Limits))
 			if err != nil {
 				return fmt.Errorf("Failed applying limits for disk device %q: %w", mount.DevName, err)
 			}
@@ -12624,6 +12653,15 @@ func buildDataFileInfo(nodeName string, m *qmp.Monitor, driveConf deviceConfig.M
 	return dataDev, nil
 }
 
+func (d *qemu) getNVRAM() (*uefi.Store, error) {
+	nvRAM, err := os.ReadFile(d.nvramPath())
+	if err != nil {
+		return nil, fmt.Errorf("Failed opening NVRAM file: %w", err)
+	}
+
+	return uefi.ParseNVRAM(nvRAM)
+}
+
 // GetNVRAM gets the NVRAM.
 func (d *qemu) GetNVRAM() (*uefi.Store, error) {
 	if !d.IsRunning() {
@@ -12645,16 +12683,35 @@ func (d *qemu) GetNVRAM() (*uefi.Store, error) {
 		}
 	}
 
-	nvRAM, err := os.ReadFile(d.nvramPath())
-	if err != nil {
-		return nil, fmt.Errorf("Failed opening NVRAM file: %w", err)
+	return d.getNVRAM()
+}
+
+// setNVRAM sets the NVRAM assuming the config volume is mounted.
+func (d *qemu) setNVRAM(store *uefi.Store) error {
+	if !store.Modified() {
+		return nil
 	}
 
-	return uefi.ParseNVRAM(nvRAM)
+	f, err := os.Create(d.nvramPath())
+	if err != nil {
+		return fmt.Errorf("Failed opening NVRAM file: %w", err)
+	}
+
+	b, err := store.Bytes()
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(b)
+	return err
 }
 
 // SetNVRAM sets the NVRAM.
 func (d *qemu) SetNVRAM(store *uefi.Store) error {
+	if !store.Modified() {
+		return nil
+	}
+
 	// Mount the instance's config volume.
 	_, err := d.mount()
 	if err != nil {
@@ -12672,18 +12729,7 @@ func (d *qemu) SetNVRAM(store *uefi.Store) error {
 		}
 	}
 
-	f, err := os.Create(d.nvramPath())
-	if err != nil {
-		return fmt.Errorf("Failed opening NVRAM file: %w", err)
-	}
-
-	b, err := store.Bytes()
-	if err != nil {
-		return err
-	}
-
-	_, err = f.Write(b)
-	return err
+	return d.setNVRAM(store)
 }
 
 // ResetNVRAM resets the NVRAM.
