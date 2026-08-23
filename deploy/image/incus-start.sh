@@ -129,7 +129,25 @@ if [ -n "${INCUS_SOCKET_GID:-}" ]; then
   DAEMON_ARGS="--group incus-admin"
 fi
 
-# --sticky keeps child LXC monitor processes in the stable host cgroup instead
-# of moving them back under the Kubernetes Pod cgroup.
+# Keep this shell in the outer runtime cgroup so its stop signal is delivered.
+# incusd and its LXC monitors remain in the stable host cgroup across restarts.
 # shellcheck disable=SC2086
-exec cgexec --sticky -g "${CGROUP_CONTROLLERS}:${CONTROL_CGROUP}" incusd ${DAEMON_ARGS}
+cgexec --sticky -g "${CGROUP_CONTROLLERS}:${CONTROL_CGROUP}" incusd ${DAEMON_ARGS} &
+INCUSD_PID=$!
+INCUSD_STATUS=0
+
+forward_signal() {
+  kill -TERM "${INCUSD_PID}" 2>/dev/null || true
+}
+
+trap forward_signal TERM INT
+
+while kill -0 "${INCUSD_PID}" 2>/dev/null; do
+  set +e
+  wait "${INCUSD_PID}"
+  INCUSD_STATUS=$?
+  set -e
+done
+
+wait "${INCUSD_PID}" 2>/dev/null || true
+exit "${INCUSD_STATUS}"
