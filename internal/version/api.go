@@ -577,6 +577,7 @@ var APIExtensions = []string{
 	"network_ipv6_ra",
 	"qemu_scriptlet_nvram",
 	"storage_ceph_rbd_backend",
+	"instance_nvram_config",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an
