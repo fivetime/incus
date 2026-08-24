@@ -1023,6 +1023,10 @@ func createFromCopy(ctx context.Context, s *state.State, r *http.Request, projec
 }
 
 func createFromBackup(s *state.State, r *http.Request, projectName string, data io.Reader, pool string, instanceName string, config string, device string) response.Response {
+	if s.ServerClustered && s.DB.Cluster.LocalNodeIsEvacuated() {
+		return response.Forbidden(errors.New("Cluster member is evacuated"))
+	}
+
 	reverter := revert.New()
 	defer reverter.Fail()
 

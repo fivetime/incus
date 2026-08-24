@@ -3522,6 +3522,14 @@ the NVRAM:
 * `set_raw_nvram_var`
 * `list_nvram_vars`
 
+## `storage_ceph_rbd_backend`
+
+Adds a new `ceph.rbd.backend` configuration key to the Ceph RBD storage driver.
+
+When set to `librbd`, volumes are accessed through `librbd` rather than the
+RBD kernel driver, with `qemu-nbd` being used whenever a block device is
+needed on the host.
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external
