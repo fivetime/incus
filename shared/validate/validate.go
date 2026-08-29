@@ -193,7 +193,7 @@ func IsAny(_ string) error {
 // IsListOf returns a validator for a comma separated list of values.
 func IsListOf(validator func(value string) error) func(value string) error {
 	return func(value string) error {
-		for _, v := range strings.Split(value, ",") {
+		for v := range strings.SplitSeq(value, ",") {
 			v = strings.TrimSpace(v)
 
 			err := validator(v)
@@ -719,8 +719,8 @@ func IsCron(aliases []string) func(value string) error {
 
 		// Can be comma+space separated (just commas are valid cron pattern).
 		value = strings.ToLower(value)
-		triggers := strings.Split(value, ", ")
-		for _, trigger := range triggers {
+		triggers := strings.SplitSeq(value, ", ")
+		for trigger := range triggers {
 			err := isValid(trigger)
 			if err != nil {
 				return err
@@ -917,9 +917,9 @@ func IsValidCPUSet(value string) error {
 
 	// Handle complex values.
 	cpus := make(map[int64]int)
-	chunks := strings.Split(value, ",")
+	chunks := strings.SplitSeq(value, ",")
 
-	for _, chunk := range chunks {
+	for chunk := range chunks {
 		if strings.Contains(chunk, "-") {
 			// Range
 			fields := strings.SplitN(chunk, "-", 2)
@@ -1089,11 +1089,12 @@ func IsRawNVRAMVariable(value string) error {
 // IsPEM validates whether the string is a valid PEM bundle. This doesn’t validate the content
 // of the individual blocks.
 func IsPEM(bundle bool, armors ...string) func(value string) error {
-	return func(value string) error {
-		if len(armors) == 0 {
-			armors = []string{"CERTIFICATE"}
-		}
+	if len(armors) == 0 {
+		armors = []string{"CERTIFICATE"}
+	}
 
+	armorRegex := regexp.MustCompile("^(?:" + strings.Join(armors, "|") + ")$")
+	return func(value string) error {
 		rest := []byte(value)
 		ok := false
 		var block *pem.Block
@@ -1103,7 +1104,7 @@ func IsPEM(bundle bool, armors ...string) func(value string) error {
 				break
 			}
 
-			if !slices.Contains(armors, block.Type) {
+			if !armorRegex.MatchString(block.Type) {
 				return fmt.Errorf("Unknown armor %s; expected one of %v", block.Type, armors)
 			}
 

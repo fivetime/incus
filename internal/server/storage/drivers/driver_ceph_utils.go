@@ -58,10 +58,10 @@ var cephVolTypePrefixes = map[VolumeType]string{
 
 // isRBDNotFoundExitError checks whether an rbd command failed with ENOENT.
 func isRBDNotFoundExitError(err error) bool {
-	var runError subprocess.RunError
-	if errors.As(err, &runError) {
-		var exitError *exec.ExitError
-		if errors.As(runError.Unwrap(), &exitError) {
+	runError, ok := errors.AsType[subprocess.RunError](err)
+	if ok {
+		exitError, ok := errors.AsType[*exec.ExitError](runError.Unwrap())
+		if ok {
 			if exitError.ExitCode() == 2 {
 				// ENOENT (no such image or snapshot).
 				return true
@@ -114,7 +114,7 @@ func (d *ceph) rbdListPoolVolumes() ([]string, error) {
 	}
 
 	images := []string{}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		name := strings.TrimSpace(line)
 		if name == "" {
 			continue
@@ -297,10 +297,10 @@ again:
 			return fmt.Errorf("Timed out unmapping RBD volume %q", rbdVol)
 		}
 
-		var runError subprocess.RunError
-		if errors.As(err, &runError) {
-			var exitError *exec.ExitError
-			if errors.As(runError.Unwrap(), &exitError) {
+		runError, ok := errors.AsType[subprocess.RunError](err)
+		if ok {
+			exitError, ok := errors.AsType[*exec.ExitError](runError.Unwrap())
+			if ok {
 				if exitError.ExitCode() == 22 {
 					// EINVAL (already unmapped).
 					if ourDeactivate {
@@ -368,10 +368,10 @@ again:
 		rbdVol,
 	)
 	if err != nil {
-		var runError subprocess.RunError
-		if errors.As(err, &runError) {
-			var exitError *exec.ExitError
-			if errors.As(runError.Unwrap(), &exitError) {
+		runError, ok := errors.AsType[subprocess.RunError](err)
+		if ok {
+			exitError, ok := errors.AsType[*exec.ExitError](runError.Unwrap())
+			if ok {
 				if exitError.ExitCode() == 22 {
 					// EINVAL (already unmapped).
 					return nil
@@ -422,10 +422,10 @@ func (d *ceph) rbdProtectVolumeSnapshot(vol Volume, snapshotName string) error {
 		d.getRBDVolumeName(vol, "", false),
 	)
 	if err != nil {
-		var runError subprocess.RunError
-		if errors.As(err, &runError) {
-			var exitError *exec.ExitError
-			if errors.As(runError.Unwrap(), &exitError) {
+		runError, ok := errors.AsType[subprocess.RunError](err)
+		if ok {
+			exitError, ok := errors.AsType[*exec.ExitError](runError.Unwrap())
+			if ok {
 				if exitError.ExitCode() == 16 {
 					// EBUSY (snapshot already protected).
 					return nil
@@ -454,10 +454,10 @@ func (d *ceph) rbdUnprotectVolumeSnapshot(vol Volume, snapshotName string) error
 		d.getRBDVolumeName(vol, "", false),
 	)
 	if err != nil {
-		var runError subprocess.RunError
-		if errors.As(err, &runError) {
-			var exitError *exec.ExitError
-			if errors.As(runError.Unwrap(), &exitError) {
+		runError, ok := errors.AsType[subprocess.RunError](err)
+		if ok {
+			exitError, ok := errors.AsType[*exec.ExitError](runError.Unwrap())
+			if ok {
 				if exitError.ExitCode() == 22 {
 					// EBUSY (snapshot already unprotected).
 					return nil
@@ -489,10 +489,10 @@ func (d *ceph) rbdSnapshotIsProtected(vol Volume, snapshotName string) (bool, er
 		d.getRBDVolumeName(vol, snapshotName, false),
 	)
 	if err != nil {
-		var runErr subprocess.RunError
-		if errors.As(err, &runErr) {
-			var exitError *exec.ExitError
-			if errors.As(runErr.Unwrap(), &exitError) {
+		runErr, ok := errors.AsType[subprocess.RunError](err)
+		if ok {
+			exitError, ok := errors.AsType[*exec.ExitError](runErr.Unwrap())
+			if ok {
 				if exitError.ExitCode() == 2 {
 					// ENOENT: the volume or the snapshot doesn't exist yet.
 					return false, nil

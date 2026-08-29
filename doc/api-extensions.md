@@ -3536,6 +3536,21 @@ This adds three categories of initial configuration options, `initial.nvram.*`,
 `initial.nvram-binary.*` and `initial.secureboot`, which allow defining default
 NVRAM variables and Secure Boot certificates and keys when rebuilding the NVRAM.
 
+## `storage_cephobject_endpoint_cert`
+
+Adds a new `cephobject.radosgw.endpoint_cert` configuration key to the Ceph
+Object storage driver, holding the TLS certificate (PEM bundle) to trust when
+communicating with the `radosgw` endpoint.
+
+This replaces `cephobject.radosgw.endpoint_cert_file`, existing values are
+converted automatically.
+
+## `device_queue_disc`
+
+Adds new `queue.discipline` and `queue.discipline.attach` configuration keys
+to `nic` devices of type `bridged`, `p2p` and `routed`, controlling the queuing
+discipline used on the host side of the NIC and where it gets attached.
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external

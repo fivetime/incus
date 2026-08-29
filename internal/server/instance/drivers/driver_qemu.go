@@ -42,7 +42,6 @@ import (
 	"go.yaml.in/yaml/v4"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/proto"
 
 	incus "github.com/lxc/incus/v7/client"
 	internalInstance "github.com/lxc/incus/v7/internal/instance"
@@ -761,12 +760,20 @@ func (d *qemu) onStop(target string, reason string) error {
 	// Wait up to 5 minutes to allow for flushing any pending data to disk.
 	d.logger.Debug("Waiting for VM process to finish")
 	waitTimeout := time.Minute * 5
-	if d.pidWait(waitTimeout) {
-		d.logger.Debug("VM process finished")
-	} else {
-		// Log a warning, but continue clean up as best we can.
+	if !d.pidWait(waitTimeout) {
+		// Leave the runtime state alone while the process is still alive.
+		err = fmt.Errorf("VM process failed to stop after %s", waitTimeout)
 		d.logger.Error("VM process failed to stop", logger.Ctx{"timeout": waitTimeout})
+
+		if monitor != nil {
+			monitor.Disconnect()
+		}
+
+		op.Done(err)
+		return err
 	}
+
+	d.logger.Debug("VM process finished")
 
 	// Fully cleanup the existing QEMU monitor.
 	if monitor != nil {
@@ -1400,9 +1407,18 @@ func (d *qemu) runStartupScriptlet(monitor *qmp.Monitor, stage string) error {
 			return errors.New("Unexpected instance type")
 		}
 
-		nvram, err := d.getNVRAM()
+		// Legacy BIOS firmwares (SeaBIOS) and unified images have no EDK2 variable store.
+		var nvram *uefi.Store
+		firmware, err := d.selectedFirmware()
 		if err != nil {
-			return fmt.Errorf("Failed reading the NVRAM at %s stage: %w", stage, err)
+			return err
+		}
+
+		if firmware.HasNVRAM() {
+			nvram, err = d.getNVRAM()
+			if err != nil {
+				return fmt.Errorf("Failed reading the NVRAM at %s stage: %w", stage, err)
+			}
 		}
 
 		err = scriptlet.QEMURun(logger.Log, instanceData, &d.cmdArgs, &d.conf, monitor, nvram, stage)
@@ -1410,7 +1426,7 @@ func (d *qemu) runStartupScriptlet(monitor *qmp.Monitor, stage string) error {
 			return fmt.Errorf("Failed running QEMU scriptlet at %s stage: %w", stage, err)
 		}
 
-		if stage == "config" {
+		if stage == "config" && nvram != nil {
 			err = d.setNVRAM(nvram)
 			if err != nil {
 				return fmt.Errorf("Failed writing the NVRAM at %s stage: %w", stage, err)
@@ -2616,6 +2632,27 @@ func (d *qemu) firmwarePairs() ([]edk2.FirmwarePair, error) {
 	}
 }
 
+// selectedFirmware returns the firmware pair matching the instance's current NVRAM file.
+func (d *qemu) selectedFirmware() (*edk2.FirmwarePair, error) {
+	firmwares, err := d.firmwarePairs()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, firmware := range firmwares {
+		if firmware.Vars == "" {
+			// Unified firmware image (e.g. AMD SEV) with no separate vars store.
+			if util.PathExists(firmware.Code) {
+				return &firmware, nil
+			}
+		} else if util.PathExists(filepath.Join(d.Path(), filepath.Base(firmware.Vars))) {
+			return &firmware, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Unable to locate matching firmware: %+v", firmwares)
+}
+
 func (d *qemu) setupNvram() error {
 	var err error
 
@@ -2659,7 +2696,7 @@ func (d *qemu) setupNvram() error {
 
 	if !needsNvram {
 		if len(nvramDefaults) > 0 {
-			return errors.New("The selected firmware doesn’t include a NVRAM but NVRAM modifications are required")
+			return errors.New("The selected firmware doesn’t include an NVRAM but NVRAM modifications are required")
 		}
 
 		return nil
@@ -2668,6 +2705,7 @@ func (d *qemu) setupNvram() error {
 	// Find the template file.
 	var efiVarsPath string
 	var efiVarsName string
+	var efiVarsStore bool
 	for _, firmware := range firmwares {
 		if firmware.Vars == "" {
 			continue
@@ -2681,12 +2719,17 @@ func (d *qemu) setupNvram() error {
 		if util.PathExists(varsPath) {
 			efiVarsPath = varsPath
 			efiVarsName = filepath.Base(firmware.Vars)
+			efiVarsStore = firmware.HasNVRAM()
 			break
 		}
 	}
 
 	if efiVarsPath == "" {
 		return fmt.Errorf("Couldn't find one of the required UEFI firmware files: %+v", firmwares)
+	}
+
+	if !efiVarsStore && len(nvramDefaults) > 0 {
+		return errors.New("The selected firmware doesn’t include an NVRAM but NVRAM modifications are required")
 	}
 
 	// Copy the template.
@@ -4196,36 +4239,16 @@ func (d *qemu) generateQemuConfig(bs *qemuBootState, mountInfo *storagePools.Mou
 		d.logger.Warn("Starting VM without default firmware (-bios or -kernel in raw.qemu)")
 	} else if d.architectureSupportsUEFI(d.architecture) {
 		// Determine expected firmware.
-		firmwares, err := d.firmwarePairs()
+		firmware, err := d.selectedFirmware()
 		if err != nil {
 			return nil, err
 		}
 
-		var efiCode string
-		unified := false
-		for _, firmware := range firmwares {
-			if firmware.Vars == "" {
-				// Unified firmware image (e.g. AMD SEV) with no separate vars store.
-				if util.PathExists(firmware.Code) {
-					efiCode = firmware.Code
-					unified = true
-					break
-				}
-			} else if util.PathExists(filepath.Join(d.Path(), filepath.Base(firmware.Vars))) {
-				efiCode = firmware.Code
-				break
-			}
-		}
-
-		if efiCode == "" {
-			return nil, fmt.Errorf("Unable to locate matching firmware: %+v", firmwares)
-		}
-
 		driveFirmwareOpts := qemuDriveFirmwareOpts{
-			roPath: efiCode,
+			roPath: firmware.Code,
 		}
 
-		if !unified {
+		if firmware.Vars != "" {
 			// Open the UEFI NVRAM file and pass it via file descriptor to QEMU.
 			// This is so the QEMU process can still read/write the file after it has dropped its user privs.
 			nvRAMFile, err := os.Open(d.nvramPath())
@@ -5562,6 +5585,16 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 					blockDevFile["driver"] = "host_device"
 				} else {
 					blockDevFile["driver"] = "file"
+				}
+
+				// Advertise the cluster size as discard granularity as qcow2 drops partial cluster discards.
+				imgInfo, err := storageDrivers.Qcow2Info(srcDevPath)
+				if err != nil {
+					return fmt.Errorf("Failed getting qcow2 info for disk device %q: %w", driveConf.DevName, err)
+				}
+
+				if imgInfo.ClusterSize > 0 {
+					qemuDev["discard_granularity"] = imgInfo.ClusterSize
 				}
 
 				blockDev = map[string]any{
@@ -8347,9 +8380,9 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	if !clusterMove && !storageMove && !args.Live && !d.IsRunning() {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid != "" {
-			offerHeader.CephFsid = proto.String(fsid)
-			offerHeader.CephPool = proto.String(osdPool)
-			offerHeader.CephDriver = proto.String(sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name))
+			offerHeader.CephFsid = new(fsid)
+			offerHeader.CephPool = new(osdPool)
+			offerHeader.CephDriver = new(sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name))
 		}
 	}
 
@@ -9385,7 +9418,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			osdPool == offerHeader.GetCephPool() &&
 			sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name) == offerHeader.GetCephDriver() {
 			sharedStorage = true
-			respHeader.SharedStorage = proto.Bool(true)
+			respHeader.SharedStorage = new(true)
 		}
 	}
 
@@ -9741,12 +9774,12 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 			// Send failure response to source.
 			msg := migration.MigrationControl{
-				Success:               proto.Bool(err == nil),
-				SharedStorageReleased: proto.Bool(sharedStorageReleased),
+				Success:               new(err == nil),
+				SharedStorageReleased: new(sharedStorageReleased),
 			}
 
 			if err != nil {
-				msg.Message = proto.String(err.Error())
+				msg.Message = new(err.Error())
 			}
 
 			d.logger.Debug("Sending migration failure response to source", logger.Ctx{"err": err})
@@ -9760,7 +9793,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 		// Send success response to source to control as nothing has gone wrong so far.
 		msg := migration.MigrationControl{
-			Success: proto.Bool(true),
+			Success: new(true),
 		}
 
 		d.logger.Debug("Sending migration success response to source", logger.Ctx{"success": msg.GetSuccess()})
@@ -12831,7 +12864,26 @@ func (d *qemu) GetNVRAM() (*uefi.Store, error) {
 		}
 	}
 
+	err := d.checkNVRAM()
+	if err != nil {
+		return nil, err
+	}
+
 	return d.getNVRAM()
+}
+
+// checkNVRAM returns an error if the selected firmware has no EDK2 variable store.
+func (d *qemu) checkNVRAM() error {
+	firmware, err := d.selectedFirmware()
+	if err != nil {
+		return err
+	}
+
+	if !firmware.HasNVRAM() {
+		return errors.New("The selected firmware doesn’t include an NVRAM")
+	}
+
+	return nil
 }
 
 // setNVRAM sets the NVRAM assuming the config volume is mounted.
@@ -12840,18 +12892,17 @@ func (d *qemu) setNVRAM(store *uefi.Store) error {
 		return nil
 	}
 
-	f, err := os.Create(d.nvramPath())
-	if err != nil {
-		return fmt.Errorf("Failed opening NVRAM file: %w", err)
-	}
-
 	b, err := store.Bytes()
 	if err != nil {
 		return err
 	}
 
-	_, err = f.Write(b)
-	return err
+	err = os.WriteFile(d.nvramPath(), b, 0o600)
+	if err != nil {
+		return fmt.Errorf("Failed writing NVRAM file: %w", err)
+	}
+
+	return nil
 }
 
 // SetNVRAM sets the NVRAM.
@@ -12875,6 +12926,11 @@ func (d *qemu) SetNVRAM(store *uefi.Store) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	err = d.checkNVRAM()
+	if err != nil {
+		return err
 	}
 
 	return d.setNVRAM(store)

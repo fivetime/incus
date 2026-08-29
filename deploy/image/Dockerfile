@@ -38,6 +38,7 @@ RUN apk add --no-cache \
 
 # musl ships gettext as a separate library, hence the explicit -lintl.
 ENV CGO_ENABLED=1 \
+    GOTOOLCHAIN=auto \
     CGO_LDFLAGS="-lintl" \
     CGO_LDFLAGS_ALLOW="(-Wl,-wrap,pthread_create)|(-Wl,-z,now)"
 

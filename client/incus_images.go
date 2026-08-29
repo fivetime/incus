@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -208,7 +209,12 @@ func (r *ProtocolIncus) GetPrivateImageFile(fingerprint string, secret string, r
 	// Use relatively short response header timeout so as not to hold the image lock open too long.
 	// Deference client and transport in order to clone them so as to not modify timeout of base client.
 	httpClient := *r.http
-	httpTransport := httpClient.Transport.(*http.Transport).Clone()
+	baseTransport, err := r.getUnderlyingHTTPTransport()
+	if err != nil {
+		return nil, err
+	}
+
+	httpTransport := baseTransport.Clone()
 	httpTransport.ResponseHeaderTimeout = 30 * time.Second
 	httpClient.Transport = httpTransport
 
@@ -353,7 +359,8 @@ func incusDownloadImage(fingerprint string, uri string, userAgent string, do fun
 	}
 
 	resp.MetaSize = size
-	resp.MetaName = filename
+	// Basename the server-provided name to prevent path traversal.
+	resp.MetaName = filepath.Base(filename)
 
 	// Check the hash
 	hash := fmt.Sprintf("%x", hash256.Sum(nil))

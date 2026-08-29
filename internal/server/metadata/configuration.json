@@ -839,6 +839,23 @@
 						}
 					},
 					{
+						"queue.discipline": {
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "The queuing discipline to set on the NIC, applied to the rate limit's class when a limit is set",
+							"type": "string"
+						}
+					},
+					{
+						"queue.discipline.attach": {
+							"default": "`queue`",
+							"longdesc": "",
+							"managed": "no",
+							"shortdesc": "Only for VMs: Whether to attach the queuing discipline to each transmit queue (`queue`) or to the interface root (`root`)",
+							"type": "string"
+						}
+					},
+					{
 						"queue.tx.length": {
 							"longdesc": "",
 							"managed": "no",
@@ -1619,6 +1636,21 @@
 						}
 					},
 					{
+						"queue.discipline": {
+							"longdesc": "",
+							"shortdesc": "The queuing discipline to set on the NIC, applied to the rate limit's class when a limit is set",
+							"type": "string"
+						}
+					},
+					{
+						"queue.discipline.attach": {
+							"default": "`queue`",
+							"longdesc": "",
+							"shortdesc": "Only for VMs: Whether to attach the queuing discipline to each transmit queue (`queue`) or to the interface root (`root`)",
+							"type": "string"
+						}
+					},
+					{
 						"queue.tx.length": {
 							"longdesc": "",
 							"shortdesc": "The transmit queue length for the NIC",
@@ -1975,6 +2007,21 @@
 						"parent": {
 							"longdesc": "",
 							"shortdesc": "The name of the parent host device to join the instance to",
+							"type": "string"
+						}
+					},
+					{
+						"queue.discipline": {
+							"longdesc": "",
+							"shortdesc": "The queuing discipline to set on the NIC, applied to the rate limit's class when a limit is set",
+							"type": "string"
+						}
+					},
+					{
+						"queue.discipline.attach": {
+							"default": "`queue`",
+							"longdesc": "",
+							"shortdesc": "Only for VMs: Whether to attach the queuing discipline to each transmit queue (`queue`) or to the interface root (`root`)",
 							"type": "string"
 						}
 					},
@@ -4768,7 +4815,7 @@
 						"ovn.ca_cert": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "OVN SSL certificate authority for the inter-connection database",
+							"shortdesc": "OVN SSL certificate authorities for the inter-connection database (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -4776,7 +4823,7 @@
 						"ovn.client_cert": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "OVN SSL client certificate",
+							"shortdesc": "OVN SSL client certificate (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -4784,7 +4831,7 @@
 						"ovn.client_key": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "OVN SSL client key",
+							"shortdesc": "OVN SSL client key (PEM private key)",
 							"type": "string"
 						}
 					},
@@ -6586,7 +6633,7 @@
 						"logging.NAME.target.ca_cert": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "CA certificate for the server",
+							"shortdesc": "CA certificates for the server (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -6664,7 +6711,7 @@
 						"loki.api.ca_cert": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "CA certificate for the Loki server",
+							"shortdesc": "CA certificates for the Loki server (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -6770,7 +6817,7 @@
 						"instances.tpm.platform_cert": {
 							"longdesc": "PEM encoded platform CA certificate used to sign the Endorsement\nKey and platform certificate of newly created TPM devices.\nMust be set together with `instances.tpm.platform_key`.",
 							"scope": "global",
-							"shortdesc": "Platform CA certificate used to provision TPM Endorsement Keys",
+							"shortdesc": "Platform CA certificate used to provision TPM Endorsement Keys (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -6778,7 +6825,7 @@
 						"instances.tpm.platform_key": {
 							"longdesc": "PEM encoded private key matching `instances.tpm.platform_cert`.\nUsed to sign the Endorsement Key and platform certificate of newly\ncreated TPM devices.",
 							"scope": "global",
-							"shortdesc": "Private key for the TPM platform CA certificate",
+							"shortdesc": "Private key for the TPM platform CA certificate (PEM private key)",
 							"type": "string"
 						}
 					},
@@ -6787,7 +6834,7 @@
 							"defaultdesc": "Content of `/etc/ovn/ovn-central.crt` if present",
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "OVN SSL certificate authority",
+							"shortdesc": "OVN SSL certificate authorities (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -6796,7 +6843,7 @@
 							"defaultdesc": "Content of `/etc/ovn/cert_host` if present",
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "OVN SSL client certificate",
+							"shortdesc": "OVN SSL client certificate (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -6805,7 +6852,7 @@
 							"defaultdesc": "Content of `/etc/ovn/key_host` if present",
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "OVN SSL client key",
+							"shortdesc": "OVN SSL client key (PEM private key)",
 							"type": "string"
 						}
 					},
@@ -6856,7 +6903,7 @@
 						"storage.linstor.ca_cert": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "LINSTOR SSL certificate authority",
+							"shortdesc": "LINSTOR SSL certificate authorities (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -6864,7 +6911,7 @@
 						"storage.linstor.client_cert": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "LINSTOR SSL client certificate",
+							"shortdesc": "LINSTOR SSL client certificate (PEM bundle)",
 							"type": "string"
 						}
 					},
@@ -6872,7 +6919,7 @@
 						"storage.linstor.client_key": {
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "LINSTOR SSL client key",
+							"shortdesc": "LINSTOR SSL client key (PEM private key)",
 							"type": "string"
 						}
 					},
@@ -7320,11 +7367,11 @@
 						}
 					},
 					{
-						"cephobject.radosgw.endpoint_cert_file": {
+						"cephobject.radosgw.endpoint_cert": {
 							"default": "-",
 							"longdesc": "",
 							"scope": "global",
-							"shortdesc": "Path to the file containing the TLS client certificate to use for endpoint communication",
+							"shortdesc": "TLS certificate (PEM bundle) to trust for endpoint communication",
 							"type": "string"
 						}
 					},

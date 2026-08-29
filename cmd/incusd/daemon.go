@@ -516,13 +516,10 @@ func (d *Daemon) getTrustedCertificates() (map[certificate.Type]map[string]x509.
 	}
 
 	// If in PKI mode, filter certificates that aren't trusted by the CA.
-	ca, err := localtls.ReadCert(internalUtil.VarPath("server.ca"))
+	certPool, err := localtls.ReadCerts(internalUtil.VarPath("server.ca"))
 	if err != nil {
 		return nil, err
 	}
-
-	certPool := x509.NewCertPool()
-	certPool.AddCert(ca)
 
 	for certType, certEntries := range certs {
 		if certType == certificate.TypeServer {
@@ -739,8 +736,8 @@ func (d *Daemon) createCmd(restAPI *http.ServeMux, apiVersion string, c APIEndpo
 		// Authentication
 		trusted, username, protocol, err := d.Authenticate(w, r)
 		if err != nil {
-			var authError *oidc.AuthError
-			if errors.As(err, &authError) {
+			_, ok := errors.AsType[*oidc.AuthError](err)
+			if ok {
 				// Ensure the OIDC headers are set if needed.
 				if d.oidcVerifier != nil {
 					_ = d.oidcVerifier.WriteHeaders(w)
@@ -1526,6 +1523,12 @@ func (d *Daemon) init() error {
 		}
 
 		logger.Info("Started DNS server")
+	}
+
+	// Watch for DHCP lease and static host changes to send DNS NOTIFY messages.
+	err = networkZone.StartLeasesWatcher(d.shutdownCtx, d.State())
+	if err != nil {
+		logger.Warn("Failed to start network zones watcher", logger.Ctx{"err": err})
 	}
 
 	// Setup the networks.

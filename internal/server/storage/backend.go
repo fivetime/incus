@@ -4787,8 +4787,8 @@ func (b *backend) CanRestoreInstanceSnapshot(inst instance.Instance, src instanc
 		snapVol := b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, src.Name()), srcDBVol.Config)
 		err = b.qcow2CanRestoreSnapshot(vol, snapVol, inst.Project().Name)
 		if err != nil {
-			var snapErr drivers.ErrDeleteSnapshots
-			if errors.As(err, &snapErr) {
+			_, ok := errors.AsType[drivers.ErrDeleteSnapshots](err)
+			if ok {
 				return nil
 			}
 
@@ -4800,8 +4800,8 @@ func (b *backend) CanRestoreInstanceSnapshot(inst instance.Instance, src instanc
 
 	err = b.driver.CanRestoreVolume(vol, snapshotName)
 	if err != nil {
-		var snapErr drivers.ErrDeleteSnapshots
-		if errors.As(err, &snapErr) {
+		_, ok := errors.AsType[drivers.ErrDeleteSnapshots](err)
+		if ok {
 			return nil
 		}
 
@@ -4955,8 +4955,8 @@ func (b *backend) RestoreInstanceSnapshot(inst instance.Instance, src instance.I
 		snapVol := b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, src.Name()), srcDBVol.Config)
 		err = b.qcow2RestoreSnapshot(vol, snapVol, inst.Project().Name, op)
 		if err != nil {
-			var snapErr drivers.ErrDeleteSnapshots
-			if errors.As(err, &snapErr) {
+			snapErr, ok := errors.AsType[drivers.ErrDeleteSnapshots](err)
+			if ok {
 				err = deleteSnapshots(snapErr.Snapshots, inst)
 				if err != nil {
 					return err
@@ -4979,8 +4979,8 @@ func (b *backend) RestoreInstanceSnapshot(inst instance.Instance, src instance.I
 
 	err = b.driver.RestoreVolume(vol, snapshotName, op)
 	if err != nil {
-		var snapErr drivers.ErrDeleteSnapshots
-		if errors.As(err, &snapErr) {
+		snapErr, ok := errors.AsType[drivers.ErrDeleteSnapshots](err)
+		if ok {
 			err = deleteSnapshots(snapErr.Snapshots, inst)
 			if err != nil {
 				return err
@@ -5089,6 +5089,44 @@ func (b *backend) UnmountInstanceSnapshot(inst instance.Instance, op *operations
 	return err
 }
 
+// errImageCloneSourceAborted indicates that the cluster member creating the image volume gave up
+// before its clone source became ready.
+var errImageCloneSourceAborted = errors.New("Image volume creation was aborted on another cluster member")
+
+// waitImageVolumeOnStorage blocks until the image volume being created by another cluster member
+// appears on storage. It also returns successfully if the volume DB record disappears, indicating
+// that the creating member gave up.
+func (b *backend) waitImageVolumeOnStorage(imgVol drivers.Volume) error {
+	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Minute)
+	defer cancel()
+
+	for {
+		exists, err := b.driver.HasVolume(imgVol)
+		if err != nil {
+			return err
+		}
+
+		if exists {
+			return nil
+		}
+
+		dbVol, err := VolumeDBGet(b, api.ProjectDefaultName, imgVol.Name(), drivers.VolumeTypeImage)
+		if err != nil && !response.IsNotFoundError(err) {
+			return err
+		}
+
+		if dbVol == nil {
+			return nil
+		}
+
+		select {
+		case <-time.After(1 * time.Second):
+		case <-ctx.Done():
+			return fmt.Errorf("Timed out waiting for image %q volume to appear on storage: %w", imgVol.Name(), ctx.Err())
+		}
+	}
+}
+
 // waitImageCloneSourceReady blocks until the optimized image volume's clone source is ready to be cloned from.
 func (b *backend) waitImageCloneSourceReady(imgVol drivers.Volume) error {
 	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Minute)
@@ -5120,7 +5158,7 @@ func (b *backend) waitImageCloneSourceReady(imgVol drivers.Volume) error {
 		}
 
 		if !exists || dbVol == nil {
-			return fmt.Errorf("Image %q clone source is unavailable because its creation was aborted on another cluster member; please retry", imgVol.Name())
+			return fmt.Errorf("Image %q clone source is unavailable: %w", imgVol.Name(), errImageCloneSourceAborted)
 		}
 
 		select {
@@ -5159,16 +5197,37 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 
 	defer unlock()
 
+	// Retry when a concurrent creation on another cluster member was detected and waited out.
+	for range 5 {
+		retry, err := b.ensureImage(l, fingerprint, op)
+		if err != nil {
+			return err
+		}
+
+		if !retry {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("Timed out waiting for image %q volume creation on another cluster member", fingerprint)
+}
+
+// ensureImage performs a single EnsureImage attempt. It returns true when a concurrent image
+// volume creation by another cluster member was detected and waited out, meaning the attempt
+// should be retried.
+func (b *backend) ensureImage(l logger.Logger, fingerprint string, op *operations.Operation) (bool, error) {
 	var image *api.Image
 
-	err = b.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
+	err := b.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
+		var err error
+
 		// Load image info from database.
 		_, image, err = tx.GetImageFromAnyProject(ctx, fingerprint)
 
 		return err
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Derive content type from image type. Image types are not the same as instance types, so don't use
@@ -5182,7 +5241,7 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 	// Try and load any existing volume config on this storage pool so we can compare filesystems if needed.
 	imgDBVol, err := VolumeDBGet(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage)
 	if err != nil && !response.IsNotFoundError(err) {
-		return err
+		return false, err
 	}
 
 	// Create the new image volume. No config for an image volume so set to nil.
@@ -5198,7 +5257,7 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 		tmpImgVol := imgVol.Clone()
 		err := b.Driver().FillVolumeConfig(tmpImgVol)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		// Add existing image volume's config to imgVol.
@@ -5222,7 +5281,7 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 
 			err = b.DeleteImage(fingerprint, op)
 			if err != nil {
-				return err
+				return false, err
 			}
 
 			// Reset img volume variables as we just deleted the old one.
@@ -5234,7 +5293,7 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 	// Check if we already have a suitable volume on storage device.
 	volExists, err := b.driver.HasVolume(imgVol)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if volExists {
@@ -5247,7 +5306,12 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 			if b.driver.Info().Remote {
 				err = b.waitImageCloneSourceReady(imgVol)
 				if err != nil {
-					return err
+					// If the creating member gave up, retry from scratch.
+					if errors.Is(err, errImageCloneSourceAborted) {
+						return true, nil
+					}
+
+					return false, err
 				}
 			}
 
@@ -5258,7 +5322,7 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 			l.Debug("Checking image volume size")
 			newVolSize, err := imgVol.ConfigSizeFromSource(imgVol)
 			if err != nil {
-				return err
+				return false, err
 			}
 
 			imgVol.SetConfigSize(newVolSize)
@@ -5273,26 +5337,37 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 				l.Debug("Volume size of pool has changed since cached image volume created and cached volume cannot be resized, regenerating image volume")
 				err = b.DeleteImage(fingerprint, op)
 				if err != nil {
-					return err
+					return false, err
 				}
 
 				// Reset img volume variables as we just deleted the old one.
 				imgDBVol = nil
 				imgVol = b.GetVolume(drivers.VolumeTypeImage, contentType, fingerprint, nil)
 			} else if err != nil {
-				return err
+				return false, err
 			} else {
 				// We already have a valid volume at the correct size, just return.
-				return nil
+				return false, nil
 			}
 		} else {
+			// The DB record is committed before the volume is created on storage, so re-check
+			// the record in case another cluster member just started creating this volume.
+			imgDBVol, err = VolumeDBGet(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage)
+			if err != nil && !response.IsNotFoundError(err) {
+				return false, err
+			}
+
+			if imgDBVol != nil {
+				return true, nil
+			}
+
 			// We have an unrecorded on-disk volume, assume it's a partial unpack and delete it.
 			// This can occur if Incus process exits unexpectedly during an image unpack or if the
 			// storage pool has been recovered (which would not recreate the image volume DB records).
 			l.Warn("Deleting leftover/partially unpacked image volume")
 			err = b.driver.DeleteVolume(imgVol, op)
 			if err != nil {
-				return fmt.Errorf("Failed deleting leftover/partially unpacked image volume: %w", err)
+				return false, fmt.Errorf("Failed deleting leftover/partially unpacked image volume: %w", err)
 			}
 		}
 	}
@@ -5308,7 +5383,19 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 	// Validate config and create database entry for new storage volume.
 	err = VolumeDBCreate(b, api.ProjectDefaultName, fingerprint, "", drivers.VolumeTypeImage, false, imgVol.Config(), time.Now().UTC(), time.Time{}, contentType, false, false)
 	if err != nil {
-		return err
+		// Another cluster member is creating the same image volume. Wait for its volume to
+		// show up on storage (or for it to give up) and retry.
+		if b.driver.Info().Remote && api.StatusErrorCheck(err, http.StatusConflict) {
+			l.Debug("Image volume record created by another cluster member, waiting for the volume")
+			err = b.waitImageVolumeOnStorage(imgVol)
+			if err != nil {
+				return false, err
+			}
+
+			return true, nil
+		}
+
+		return false, err
 	}
 
 	reverter.Add(func() { _ = VolumeDBDelete(b, api.ProjectDefaultName, fingerprint, drivers.VolumeTypeImage) })
@@ -5331,7 +5418,7 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 
 	err = b.driver.CreateVolume(imgVol, &volFiller, op)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	reverter.Add(func() { _ = b.driver.DeleteVolume(imgVol, op) })
@@ -5344,12 +5431,12 @@ func (b *backend) EnsureImage(fingerprint string, op *operations.Operation) erro
 			return tx.UpdateStoragePoolVolume(ctx, api.ProjectDefaultName, fingerprint, db.StoragePoolVolumeTypeImage, b.id, "", imgVol.Config())
 		})
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	reverter.Success()
-	return nil
+	return false, nil
 }
 
 // shouldUseOptimizedImage determines if an optimized image should be used based on the provided volume config.
@@ -7947,8 +8034,8 @@ func (b *backend) RestoreCustomVolume(projectName, volName string, snapshotName 
 		snapVol := b.GetVolume(drivers.VolumeTypeCustom, contentType, project.StorageVolume(projectName, fullSnapName), curVol.Config)
 		err = b.qcow2RestoreSnapshot(vol, snapVol, projectName, op)
 		if err != nil {
-			var snapErr drivers.ErrDeleteSnapshots
-			if errors.As(err, &snapErr) {
+			snapErr, ok := errors.AsType[drivers.ErrDeleteSnapshots](err)
+			if ok {
 				err = deleteSnapshots(snapErr.Snapshots)
 				if err != nil {
 					return err
@@ -7969,8 +8056,8 @@ func (b *backend) RestoreCustomVolume(projectName, volName string, snapshotName 
 
 	err = b.driver.RestoreVolume(vol, snapshotName, op)
 	if err != nil {
-		var snapErr drivers.ErrDeleteSnapshots
-		if errors.As(err, &snapErr) {
+		snapErr, ok := errors.AsType[drivers.ErrDeleteSnapshots](err)
+		if ok {
 			err = deleteSnapshots(snapErr.Snapshots)
 			if err != nil {
 				return err

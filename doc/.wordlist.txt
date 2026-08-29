@@ -290,6 +290,7 @@ SATA
 scalable
 scriptlet
 SDN
+SeaBIOS
 Seccomp
 SELinux
 SEV
@@ -304,6 +305,7 @@ SMTP
 Snapcraft
 snapshotted
 SNAT
+SOA
 Solaris
 SPAs
 SPL

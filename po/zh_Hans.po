@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: lxd\n"
 "Report-Msgid-Bugs-To: lxc-devel@lists.linuxcontainers.org\n"
-"POT-Creation-Date: 2026-08-24 00:06+0000\n"
+"POT-Creation-Date: 2026-08-28 22:13-0400\n"
 "PO-Revision-Date: 2026-08-22 19:10+0000\n"
 "Last-Translator: meipeter <meipeter114514@outlook.com>\n"
 "Language-Team: Chinese (Simplified Han script) <https://hosted.weblate.org/"
@@ -107,7 +107,7 @@ msgstr ""
 "### config:\n"
 "###   size: \"61203283968\""
 
-#: cmd/incus/low_level.go:498
+#: cmd/incus/low_level.go:499
 #, fuzzy
 msgid ""
 "### This is a YAML representation of the UEFI variable.\n"
@@ -664,8 +664,8 @@ msgstr "%s（%s）（%d个可用）"
 msgid "%s (backend=%q, source=%q)"
 msgstr "%s（后端=%q，来源=%q）"
 
-#: cmd/incus/file.go:729 cmd/incus/storage_volume_file.go:773
-#: cmd/incus/utils_copy.go:96 cmd/incus/utils_sftp.go:410
+#: cmd/incus/file.go:721 cmd/incus/storage_volume_file.go:769
+#: cmd/incus/utils_copy.go:102 cmd/incus/utils_sftp.go:525
 #, c-format
 msgid "%s is not a directory"
 msgstr "%s 不是目录"
@@ -675,26 +675,26 @@ msgstr "%s 不是目录"
 msgid "%s the %s syntax is deprecated; %s\n"
 msgstr ""
 
-#: cmd/incus/utils_sftp.go:284
+#: cmd/incus/utils_sftp.go:379
 #, c-format
 msgid "'%s' isn't a supported file type"
 msgstr "“%s”不是受支持的文件类型"
 
-#: cmd/incus/low_level.go:798
+#: cmd/incus/low_level.go:799
 msgid "(binary data)"
 msgstr ""
 
-#: cmd/incus/low_level.go:803
+#: cmd/incus/low_level.go:804
 #, c-format
 msgid "(error: %w)"
 msgstr ""
 
-#: cmd/incus/low_level.go:790
+#: cmd/incus/low_level.go:791
 msgid "(no timestamp)"
 msgstr ""
 
-#: cmd/incus/low_level.go:1436 cmd/incus/low_level.go:1444
-#: cmd/incus/low_level.go:1464 cmd/incus/low_level.go:1472
+#: cmd/incus/low_level.go:1724 cmd/incus/low_level.go:1732
+#: cmd/incus/low_level.go:1752 cmd/incus/low_level.go:1760
 #, fuzzy
 msgid "(not a certificate)"
 msgstr "无效的证书"
@@ -732,10 +732,15 @@ msgstr "- 端口 %d（%s）"
 msgid "--all cannot be used together with other arguments"
 msgstr "--target 不能与实例一起使用"
 
-#: cmd/incus/low_level.go:948 cmd/incus/low_level.go:972
+#: cmd/incus/low_level.go:949 cmd/incus/low_level.go:973
 #, fuzzy, c-format
 msgid "--attributes cannot be used with --format=%s"
 msgstr "--no-profiles 不能与 --refresh 一起使用"
+
+#: cmd/incus/low_level.go:1284
+#, fuzzy
+msgid "--bundle cannot be used with --type"
+msgstr "--target 不能与实例一起使用"
 
 #: cmd/incus/action.go:253
 msgid "--console can't be used while forcing instance shutdown"
@@ -749,7 +754,7 @@ msgstr "--console 不能与 --all 一起使用"
 msgid "--console only works with a single instance"
 msgstr "--console 只适用于单个实例"
 
-#: cmd/incus/query.go:87
+#: cmd/incus/query.go:125
 #, fuzzy
 msgid "--data cannot be used with --data-file"
 msgstr "--target 不能与实例一起使用"
@@ -766,12 +771,12 @@ msgstr "当来源是快照时，无法传递 --instance-only"
 msgid "--network-port can't be used without --network-address"
 msgstr "--network-port 必须和 --network-address 一起使用"
 
-#: cmd/incus/utils_copy.go:65
+#: cmd/incus/utils_copy.go:71
 #, fuzzy
 msgid "--no-dereference/-P cannot be used together with stdout as a target"
 msgstr "--no-profiles 不能与 --refresh 一起使用"
 
-#: cmd/incus/utils_copy.go:40
+#: cmd/incus/utils_copy.go:46
 msgid ""
 "--no-dereference/-P, --follow/-H, and --dereference/-L are mutually exclusive"
 msgstr ""
@@ -795,19 +800,19 @@ msgstr "--target 不能与实例一起使用"
 msgid "--override-boot only works with a single instance"
 msgstr "--console 只适用于单个实例"
 
-#: cmd/incus/low_level.go:1595
+#: cmd/incus/low_level.go:1883
 msgid "--owner and --type require --all to be set"
 msgstr ""
 
-#: cmd/incus/query.go:83
+#: cmd/incus/query.go:121
 msgid "--project cannot be used with the query command"
 msgstr "--project 不能与 query 命令一起使用"
 
-#: cmd/incus/utils_copy.go:101
+#: cmd/incus/utils_copy.go:107
 msgid "--recursive/-r is required when pulling directories"
 msgstr ""
 
-#: cmd/incus/utils_copy.go:146
+#: cmd/incus/utils_copy.go:152
 msgid "--recursive/-r is required when pushing directories"
 msgstr ""
 
@@ -833,7 +838,7 @@ msgstr "--target 只能与集群一起使用"
 msgid "--target cannot be used with instances"
 msgstr "--target 不能与实例一起使用"
 
-#: cmd/incus/low_level.go:976
+#: cmd/incus/low_level.go:977
 #, fuzzy, c-format
 msgid "--timestamp cannot be used with --format=%s"
 msgstr "--no-profiles 不能与 --refresh 一起使用"
@@ -853,7 +858,7 @@ msgstr "--no-profiles 不能与 --refresh 一起使用"
 msgid "=> Query %d:"
 msgstr "=> 查询 %d："
 
-#: cmd/incus/low_level.go:1304
+#: cmd/incus/low_level.go:1391
 msgid ""
 "A PK certificate is already enrolled; remove it first to enroll a new one"
 msgstr ""
@@ -862,7 +867,7 @@ msgstr ""
 msgid "A client certificate is already present"
 msgstr "客户端证书已存在"
 
-#: cmd/incus/file.go:771 cmd/incus/storage_volume_file.go:804
+#: cmd/incus/file.go:764 cmd/incus/storage_volume_file.go:801
 msgid ""
 "A target file name must be specified when pushing from stdin; the target is "
 "a directory"
@@ -889,7 +894,7 @@ msgstr "别名"
 msgid "ALIASES"
 msgstr "别名"
 
-#: cmd/incus/query.go:35
+#: cmd/incus/query.go:36
 msgid "API path"
 msgstr ""
 
@@ -901,7 +906,7 @@ msgstr "应用"
 msgid "ARCHITECTURE"
 msgstr "架构"
 
-#: cmd/incus/low_level.go:738
+#: cmd/incus/low_level.go:739
 msgid "ATTRIBUTES"
 msgstr ""
 
@@ -930,17 +935,17 @@ msgstr "访问扩展配置"
 msgid "Acknowledge warning"
 msgstr "确认警告"
 
-#: cmd/incus/query.go:53
+#: cmd/incus/query.go:57
 #, fuzzy
 msgid "Action"
 msgstr "描述"
 
-#: cmd/incus/query.go:91
+#: cmd/incus/query.go:134
 #, c-format
 msgid "Action %q isn't supported by this tool"
 msgstr "此工具不支持操作 %q"
 
-#: cmd/incus/low_level.go:1147 cmd/incus/low_level.go:1148
+#: cmd/incus/low_level.go:1232 cmd/incus/low_level.go:1233
 msgid "Add Secure Boot signatures"
 msgstr ""
 
@@ -1150,12 +1155,12 @@ msgstr "所有服务器地址都不可用"
 msgid "Alternative certificate name"
 msgstr "备选证书名称"
 
-#: cmd/incus/file.go:454 cmd/incus/file.go:686
-#: cmd/incus/storage_volume_file.go:535 cmd/incus/storage_volume_file.go:734
+#: cmd/incus/file.go:448 cmd/incus/file.go:678
+#: cmd/incus/storage_volume_file.go:528 cmd/incus/storage_volume_file.go:725
 msgid "Always follow symbolic links in source path"
 msgstr ""
 
-#: cmd/incus/file.go:978
+#: cmd/incus/file.go:964
 #, c-format
 msgid "An instance path is required for %s"
 msgstr ""
@@ -1319,6 +1324,16 @@ msgstr "备份："
 msgid "Bad device override syntax, expecting <device>,<key>=<value>: %s"
 msgstr "设备覆盖语法错误，应为“<设备>,<键>=<值>”：%s"
 
+#: cmd/incus/query.go:92
+#, c-format
+msgid "Bad header, empty name: %q"
+msgstr ""
+
+#: cmd/incus/query.go:87
+#, c-format
+msgid "Bad header, expecting \"name: value\": %q"
+msgstr ""
+
 #: cmd/incus/copy.go:180 cmd/incus/create.go:209 cmd/incus/move.go:273
 #: cmd/incus/network_integration.go:139 cmd/incus/project.go:168
 #, c-format
@@ -1355,7 +1370,7 @@ msgstr "网络桥接："
 msgid "Bucket description"
 msgstr "桶描述"
 
-#: cmd/incus/low_level.go:917
+#: cmd/incus/low_level.go:918
 msgid "Bulk NVRAM variable update is only supported for non-binary formats"
 msgstr ""
 
@@ -1510,6 +1525,10 @@ msgstr "不能同时使用 --minimal 和 --preseed"
 msgid "Can't use both --no-expiry and --expiry"
 msgstr "不能同时使用 --no-expiry 和 --expiry"
 
+#: cmd/incus/low_level.go:1168
+msgid "Cannot add signature without --bundle"
+msgstr ""
+
 #: cmd/incus/remote.go:598
 msgid "Cannot mix HTTPS and Unix URLs"
 msgstr ""
@@ -1547,7 +1566,7 @@ msgstr "复制快照时无法设置 --volume-only"
 msgid "Cannot set key: %s"
 msgstr "无法设置键：%s"
 
-#: cmd/incus/low_level.go:1199
+#: cmd/incus/low_level.go:1164 cmd/incus/low_level.go:1291
 msgid "Cannot store a signature in PK, KEK or dbt"
 msgstr ""
 
@@ -1722,7 +1741,7 @@ msgstr "已启用集群"
 #: cmd/incus/cluster_group.go:443 cmd/incus/config_trust.go:403
 #: cmd/incus/config_trust.go:595 cmd/incus/image.go:1083
 #: cmd/incus/image_alias.go:211 cmd/incus/list.go:154
-#: cmd/incus/low_level.go:720 cmd/incus/low_level.go:1358
+#: cmd/incus/low_level.go:721 cmd/incus/low_level.go:1646
 #: cmd/incus/network.go:1054 cmd/incus/network.go:1253
 #: cmd/incus/network_allocations.go:73 cmd/incus/network_forward.go:122
 #: cmd/incus/network_integration.go:417 cmd/incus/network_load_balancer.go:129
@@ -1838,6 +1857,12 @@ msgstr "正在连接到守护进程（第 %d 次尝试）"
 #, fuzzy, c-format
 msgid "Connection to the instance failed: %v"
 msgstr "正在复制储存卷：%s"
+
+#: cmd/incus/low_level.go:1236
+msgid ""
+"Consider the input as a certificate and signature bundle instead of a "
+"certificate chain"
+msgstr ""
 
 #: cmd/incus/storage_volume.go:608
 msgid "Content type, block or filesystem"
@@ -2017,12 +2042,12 @@ msgstr "创建集群组"
 msgid "Create a dirty bitmap on a storage volume"
 msgstr "创建新的自定义存储卷"
 
-#: cmd/incus/low_level.go:105
+#: cmd/incus/low_level.go:106
 #, fuzzy
 msgid "Create a dirty bitmap on a virtual machine"
 msgstr "创建虚拟机"
 
-#: cmd/incus/low_level.go:106
+#: cmd/incus/low_level.go:107
 msgid "Create a dirty bitmap on all the disks of a running virtual machine"
 msgstr ""
 
@@ -2047,9 +2072,9 @@ msgstr "创建空实例"
 msgid "Create and start instances from images"
 msgstr "从镜像创建和启动实例"
 
-#: cmd/incus/file.go:111 cmd/incus/file.go:450 cmd/incus/file.go:679
-#: cmd/incus/storage_volume_file.go:107 cmd/incus/storage_volume_file.go:531
-#: cmd/incus/storage_volume_file.go:727
+#: cmd/incus/file.go:111 cmd/incus/file.go:443 cmd/incus/file.go:670
+#: cmd/incus/storage_volume_file.go:107 cmd/incus/storage_volume_file.go:523
+#: cmd/incus/storage_volume_file.go:717
 msgid "Create any directories necessary"
 msgstr "创建任何必要的目录"
 
@@ -2157,7 +2182,7 @@ msgstr "创建项目"
 msgid "Create storage pools"
 msgstr "创建存储池"
 
-#: cmd/incus/low_level.go:113 cmd/incus/storage_volume_bitmap.go:78
+#: cmd/incus/low_level.go:114 cmd/incus/storage_volume_bitmap.go:78
 #, fuzzy
 msgid "Create the bitmap in the disabled state"
 msgstr "创建新的实例文件模板"
@@ -2195,6 +2220,11 @@ msgstr "正在创建实例"
 #, c-format
 msgid "Current number of VFs: %d"
 msgstr "目前 VF 的数目：%d"
+
+#: cmd/incus/utils_sftp.go:477
+#, c-format
+msgid "Cyclic symbolic link %q"
+msgstr ""
 
 #: cmd/incus/network_forward.go:145
 msgid "DEFAULT TARGET ADDRESS"
@@ -2514,7 +2544,7 @@ msgstr "目录导入在此平台上不可用"
 msgid "Directory to run the command in (default /root)"
 msgstr "运行命令的目录（默认/根目录）"
 
-#: cmd/incus/file.go:926 cmd/incus/storage_volume_file.go:350
+#: cmd/incus/file.go:912 cmd/incus/storage_volume_file.go:350
 msgid "Disable authentication when using SSH SFTP listener"
 msgstr "使用 SSH SFTP 监听器时禁用身份验证"
 
@@ -2639,7 +2669,7 @@ msgstr "使用 --force 不需要用户确认"
 msgid "Don't show progress information"
 msgstr "不显示进度信息"
 
-#: cmd/incus/low_level.go:1152
+#: cmd/incus/low_level.go:1239
 msgid ""
 "Don’t import the file as a certificate but rather compute and import its "
 "digest (sha256|sha384|sha512)"
@@ -2716,7 +2746,7 @@ msgstr "编辑存储卷中的文件"
 msgid "Edit image properties"
 msgstr "编辑镜像属性"
 
-#: cmd/incus/low_level.go:480 cmd/incus/low_level.go:481
+#: cmd/incus/low_level.go:481 cmd/incus/low_level.go:482
 #, fuzzy
 msgid "Edit instance UEFI variables"
 msgstr "转储实例内存失败：%w"
@@ -2816,7 +2846,7 @@ msgstr "将信任配置编辑为 YAML"
 #: cmd/incus/cluster_group.go:477 cmd/incus/config_trust.go:434
 #: cmd/incus/config_trust.go:620 cmd/incus/image.go:1130
 #: cmd/incus/image_alias.go:260 cmd/incus/list.go:598
-#: cmd/incus/low_level.go:752 cmd/incus/low_level.go:1396
+#: cmd/incus/low_level.go:753 cmd/incus/low_level.go:1684
 #: cmd/incus/network.go:1101 cmd/incus/network.go:1291
 #: cmd/incus/network_allocations.go:99 cmd/incus/network_forward.go:158
 #: cmd/incus/network_integration.go:443 cmd/incus/network_load_balancer.go:164
@@ -3091,7 +3121,11 @@ msgid ""
 "`2006/01/02 15:04 MST` format)"
 msgstr ""
 
-#: cmd/incus/low_level.go:215
+#: cmd/incus/low_level.go:1413 cmd/incus/low_level.go:1414
+msgid "Export Secure Boot signatures"
+msgstr ""
+
+#: cmd/incus/low_level.go:216
 msgid "Export a virtual machine's memory state"
 msgstr "导出虚拟机内存状态"
 
@@ -3134,7 +3168,7 @@ msgstr "导出存储桶"
 msgid "Export storage buckets as tarball."
 msgstr "将存储桶导出为 tar 包。"
 
-#: cmd/incus/low_level.go:216
+#: cmd/incus/low_level.go:217
 msgid ""
 "Export the current memory state of a running virtual machine into a dump "
 "file.\n"
@@ -3174,7 +3208,7 @@ msgstr "文件名"
 
 #: cmd/incus/config_trust.go:420 cmd/incus/config_trust.go:421
 #: cmd/incus/image.go:1114 cmd/incus/image.go:1115 cmd/incus/image_alias.go:249
-#: cmd/incus/low_level.go:1379 cmd/incus/low_level.go:1380
+#: cmd/incus/low_level.go:1667 cmd/incus/low_level.go:1668
 msgid "FINGERPRINT"
 msgstr "指纹"
 
@@ -3186,12 +3220,12 @@ msgstr "首次发现"
 msgid "FQDN"
 msgstr "FQDN"
 
-#: cmd/incus/utils.go:652
+#: cmd/incus/utils.go:651
 #, c-format
 msgid "Failed SSH handshake with client %q: %v"
 msgstr "与客户端 %q 的 SSH 握手失败：%v"
 
-#: cmd/incus/utils.go:675
+#: cmd/incus/utils.go:674
 #, c-format
 msgid "Failed accepting channel client %q: %v"
 msgstr "接受通道客户端 %q 失败：%v"
@@ -3201,13 +3235,13 @@ msgstr "接受通道客户端 %q 失败：%v"
 msgid "Failed checking instance %s exists: %w"
 msgstr "检查实例是否存在“%s:%s”失败：%w"
 
-#: cmd/incus/utils.go:702
+#: cmd/incus/utils.go:701
 #, c-format
 msgid "Failed connecting to instance SFTP for client %q: %v"
 msgstr "连接到客户端 %q 的实例 SFTP 失败：%v"
 
-#: cmd/incus/file.go:996 cmd/incus/storage_volume_file.go:407
-#: cmd/incus/storage_volume_file.go:596 cmd/incus/storage_volume_file.go:760
+#: cmd/incus/file.go:982 cmd/incus/storage_volume_file.go:407
+#: cmd/incus/storage_volume_file.go:589 cmd/incus/storage_volume_file.go:756
 #, c-format
 msgid "Failed connecting to instance SFTP: %w"
 msgstr "连接到实例 SFTP 失败：%w"
@@ -3237,7 +3271,7 @@ msgstr "在项目 %q 中删除实例 %q 失败：%w"
 msgid "Failed deleting source volume after copy: %w"
 msgstr "复制后删除源卷失败：%w"
 
-#: cmd/incus/utils.go:609
+#: cmd/incus/utils.go:608
 #, c-format
 msgid "Failed generating SSH host key: %w"
 msgstr "生成 SSH 主机密钥失败：%w"
@@ -3277,7 +3311,7 @@ msgstr "加载覆盖设备的配置文件 %q 失败：%w"
 msgid "Failed loading storage pool %q: %w"
 msgstr "加载存储池 %q 失败：%w"
 
-#: cmd/incus/utils.go:614
+#: cmd/incus/utils.go:613
 #, c-format
 msgid "Failed parsing SSH host key: %w"
 msgstr "解析 SSH 主机密钥失败：%w"
@@ -3287,7 +3321,7 @@ msgstr "解析 SSH 主机密钥失败：%w"
 msgid "Failed parsing validation response: %w"
 msgstr "解析验证响应失败：%w"
 
-#: cmd/incus/low_level.go:1187
+#: cmd/incus/low_level.go:1274 cmd/incus/low_level.go:1568
 #, fuzzy, c-format
 msgid "Failed reading input file: %w"
 msgstr "无法从标准输入读取：%w"
@@ -3302,13 +3336,13 @@ msgstr "启动命令失败：%w"
 msgid "Failed starting command: %w"
 msgstr "启动命令失败：%w"
 
-#: cmd/incus/utils.go:522
+#: cmd/incus/utils.go:521
 #, c-format
 msgid "Failed starting sshfs: %w"
 msgstr "启动 sshfs 失败：%w"
 
-#: cmd/incus/low_level.go:335 cmd/incus/port_forward.go:128
-#: cmd/incus/storage_volume.go:2673 cmd/incus/utils.go:640
+#: cmd/incus/low_level.go:336 cmd/incus/port_forward.go:128
+#: cmd/incus/storage_volume.go:2673 cmd/incus/utils.go:639
 #, c-format
 msgid "Failed to accept incoming connection: %w"
 msgstr "接受传入连接失败：%w"
@@ -3378,7 +3412,7 @@ msgstr "创建别名 %s 失败：%w"
 msgid "Failed to create backup: %v"
 msgstr "创建备份失败：%v"
 
-#: cmd/incus/low_level.go:145 cmd/incus/storage_volume_bitmap.go:121
+#: cmd/incus/low_level.go:146 cmd/incus/storage_volume_bitmap.go:121
 #, fuzzy, c-format
 msgid "Failed to create bitmap: %w"
 msgstr "创建备份失败：%v"
@@ -3418,12 +3452,12 @@ msgstr "复制后删除原始实例失败：%w"
 msgid "Failed to delete pre-copy snapshot %q of instance %q: %s"
 msgstr "刷新目标实例“%s”失败：%v"
 
-#: cmd/incus/low_level.go:986 cmd/incus/low_level.go:1069
+#: cmd/incus/low_level.go:987 cmd/incus/low_level.go:1070
 #, fuzzy, c-format
 msgid "Failed to delete variable %s:%s: %w"
 msgstr "解析服务器失败：%w"
 
-#: cmd/incus/low_level.go:248
+#: cmd/incus/low_level.go:249
 #, c-format
 msgid "Failed to dump instance memory: %w"
 msgstr "转储实例内存失败：%w"
@@ -3448,12 +3482,12 @@ msgstr "找不到项目：%w"
 msgid "Failed to get bitmap: %w"
 msgstr "请求转储失败：%w"
 
-#: cmd/incus/low_level.go:642 cmd/incus/low_level.go:667
+#: cmd/incus/low_level.go:643 cmd/incus/low_level.go:668
 #, fuzzy, c-format
 msgid "Failed to get instance UEFI variable: %w"
 msgstr "转储实例内存失败：%w"
 
-#: cmd/incus/low_level.go:822
+#: cmd/incus/low_level.go:823
 #, fuzzy, c-format
 msgid "Failed to get instance UEFI variables: %w"
 msgstr "转储实例内存失败：%w"
@@ -3468,8 +3502,8 @@ msgstr "加入集群失败：%w"
 msgid "Failed to list bitmaps: %w"
 msgstr "请求转储失败：%w"
 
-#: cmd/incus/low_level.go:320 cmd/incus/port_forward.go:114
-#: cmd/incus/storage_volume.go:2665 cmd/incus/utils.go:625
+#: cmd/incus/low_level.go:321 cmd/incus/port_forward.go:114
+#: cmd/incus/storage_volume.go:2665 cmd/incus/utils.go:624
 #, c-format
 msgid "Failed to listen for connection: %w"
 msgstr "监听连接失败：%w"
@@ -3479,23 +3513,23 @@ msgstr "监听连接失败：%w"
 msgid "Failed to load configuration: %s"
 msgstr "加载配置失败：%s"
 
-#: cmd/incus/query.go:113
+#: cmd/incus/query.go:156
 #, fuzzy, c-format
 msgid "Failed to open input file %q: %w"
 msgstr "关闭服务器证书文件 %q 失败：%w"
 
-#: cmd/incus/file.go:796 cmd/incus/storage_volume_file.go:828
-#: cmd/incus/utils_sftp.go:330
+#: cmd/incus/file.go:790 cmd/incus/storage_volume_file.go:826
+#: cmd/incus/utils_sftp.go:413
 #, fuzzy, c-format
 msgid "Failed to open source file %q: %v"
 msgstr "关闭服务器证书文件 %q 失败：%w"
 
-#: cmd/incus/utils_sftp.go:75
+#: cmd/incus/utils_sftp.go:139
 #, fuzzy, c-format
 msgid "Failed to open target file %q: %w"
 msgstr "关闭服务器证书文件 %q 失败：%w"
 
-#: cmd/incus/low_level.go:1232
+#: cmd/incus/low_level.go:1158
 #, fuzzy, c-format
 msgid "Failed to parse PEM certificate: %w"
 msgstr "创建证书失败：%w"
@@ -3505,7 +3539,7 @@ msgstr "创建证书失败：%w"
 msgid "Failed to parse dump response: %w"
 msgstr "解析转储响应失败：%w"
 
-#: cmd/incus/low_level.go:1244
+#: cmd/incus/low_level.go:1199
 msgid "Failed to parse input file as either PEM or DER certificate"
 msgstr ""
 
@@ -3514,7 +3548,7 @@ msgstr ""
 msgid "Failed to parse the preseed: %w"
 msgstr "解析 preseed 失败：%w"
 
-#: cmd/incus/low_level.go:999
+#: cmd/incus/low_level.go:1000
 #, fuzzy, c-format
 msgid "Failed to parse variable %s:%s: %w"
 msgstr "解析服务器失败：%w"
@@ -3550,7 +3584,7 @@ msgstr "重命名导出文件失败：%w"
 msgid "Failed to render the config: %w"
 msgstr "呈现配置失败：%w"
 
-#: cmd/incus/low_level.go:197
+#: cmd/incus/low_level.go:198
 #, fuzzy, c-format
 msgid "Failed to repair instance: %w"
 msgstr "转储实例内存失败：%w"
@@ -3598,12 +3632,12 @@ msgstr "检索网络列表失败：%w"
 msgid "Failed to retrieve list of storage pools: %w"
 msgstr "检索存储池列表失败：%w"
 
-#: cmd/incus/low_level.go:573
+#: cmd/incus/low_level.go:574
 #, fuzzy, c-format
 msgid "Failed to set UEFI variable %s:%s: %s"
 msgstr "转储实例内存失败：%w"
 
-#: cmd/incus/low_level.go:967
+#: cmd/incus/low_level.go:968
 #, fuzzy, c-format
 msgid "Failed to set UEFI variable %s:%s: %w"
 msgstr "转储实例内存失败：%w"
@@ -3628,7 +3662,7 @@ msgstr "转储实例内存失败：%w"
 msgid "Failed to update cluster member state: %w"
 msgstr "更新群集成员状态失败：%w"
 
-#: cmd/incus/utils_sftp.go:279
+#: cmd/incus/utils_sftp.go:366 cmd/incus/utils_sftp.go:486
 #, c-format
 msgid "Failed to walk path for %s: %s"
 msgstr "为 %s 遍历路径失败：%s"
@@ -3666,8 +3700,8 @@ msgstr "指纹：%s"
 msgid "Flags:"
 msgstr ""
 
-#: cmd/incus/file.go:453 cmd/incus/file.go:685
-#: cmd/incus/storage_volume_file.go:534 cmd/incus/storage_volume_file.go:733
+#: cmd/incus/file.go:447 cmd/incus/file.go:677
+#: cmd/incus/storage_volume_file.go:527 cmd/incus/storage_volume_file.go:724
 msgid "Follow command-line symbolic links in source path"
 msgstr ""
 
@@ -3695,6 +3729,14 @@ msgstr "强制删除文件、目录和子目录"
 #: cmd/incus/cluster.go:1515
 msgid "Force evacuation without user confirmation"
 msgstr "未经用户确认的强制解散"
+
+#: cmd/incus/low_level.go:1531
+msgid "Force overwriting existing ESL"
+msgstr ""
+
+#: cmd/incus/low_level.go:1416
+msgid "Force overwriting existing PEM file"
+msgstr ""
 
 #: cmd/incus/export.go:56 cmd/incus/storage_bucket.go:1310
 #: cmd/incus/storage_volume.go:2273
@@ -3762,7 +3804,7 @@ msgid ""
 "session"
 msgstr "强制连接到控制台，即使已存在活动会话"
 
-#: cmd/incus/low_level.go:611 cmd/incus/low_level.go:887
+#: cmd/incus/low_level.go:612 cmd/incus/low_level.go:888
 msgid "Format (base64|binary|efivarfs|hex|json|yaml)"
 msgstr ""
 
@@ -3784,7 +3826,7 @@ msgstr ""
 #: cmd/incus/cluster_group.go:444 cmd/incus/config_template.go:272
 #: cmd/incus/config_trust.go:404 cmd/incus/config_trust.go:594
 #: cmd/incus/image.go:1084 cmd/incus/image_alias.go:210 cmd/incus/list.go:155
-#: cmd/incus/low_level.go:719 cmd/incus/low_level.go:1357
+#: cmd/incus/low_level.go:720 cmd/incus/low_level.go:1645
 #: cmd/incus/network.go:1055 cmd/incus/network.go:1252
 #: cmd/incus/network_acl.go:104 cmd/incus/network_allocations.go:71
 #: cmd/incus/network_forward.go:121 cmd/incus/network_integration.go:416
@@ -3821,7 +3863,7 @@ msgstr "格式化（table|compact）"
 msgid "Format (table|compact)"
 msgstr "格式化（table|compact）"
 
-#: cmd/incus/low_level.go:226
+#: cmd/incus/low_level.go:227
 msgid ""
 "Format of memory dump (e.g. elf, win-dmp, kdump-zlib, kdump-raw-zlib, ...)"
 msgstr "内存转储格式（如 elf、win-dmp、kdump-zlib、kdump-raw-zlib 等）"
@@ -3888,11 +3930,11 @@ msgstr "GPU："
 msgid "GRANULARITY"
 msgstr ""
 
-#: cmd/incus/low_level.go:694 cmd/incus/low_level.go:739
+#: cmd/incus/low_level.go:695 cmd/incus/low_level.go:740
 msgid "GUID"
 msgstr ""
 
-#: cmd/incus/low_level.go:740
+#: cmd/incus/low_level.go:741
 msgid "GUID NAME"
 msgstr ""
 
@@ -3913,11 +3955,11 @@ msgstr ""
 "\n"
 "这对于需要将令牌传递给另一台 Incus 服务器的远程身份验证工作流程非常有用。"
 
-#: cmd/incus/image.go:1759
+#: cmd/incus/image.go:1764
 msgid "Generate a metadata tarball"
 msgstr ""
 
-#: cmd/incus/image.go:1761
+#: cmd/incus/image.go:1766
 msgid ""
 "Generate a metadata tarball\n"
 "\n"
@@ -3958,7 +4000,7 @@ msgstr "获取当前负载均衡器状态"
 msgid "Get current load-balancer status"
 msgstr "获取当前负载均衡器状态"
 
-#: cmd/incus/image.go:1554 cmd/incus/image.go:1555
+#: cmd/incus/image.go:1559 cmd/incus/image.go:1560
 msgid "Get image properties"
 msgstr "获取镜像属性"
 
@@ -4030,7 +4072,7 @@ msgstr "获取作为存储卷属性的密钥"
 msgid "Get the key as an instance property"
 msgstr "获取作为实例属性的密钥"
 
-#: cmd/incus/low_level.go:607 cmd/incus/low_level.go:608
+#: cmd/incus/low_level.go:608 cmd/incus/low_level.go:609
 msgid "Get values for UEFI variables"
 msgstr ""
 
@@ -4134,7 +4176,7 @@ msgstr "给定的目标 %q 与源卷位置 %q 不匹配"
 msgid "Global Flags:"
 msgstr ""
 
-#: cmd/incus/low_level.go:111 cmd/incus/storage_volume_bitmap.go:76
+#: cmd/incus/low_level.go:112 cmd/incus/storage_volume_bitmap.go:76
 msgid "Granularity of the dirty bitmap in bytes"
 msgstr ""
 
@@ -4145,6 +4187,13 @@ msgstr "运行命令的组 ID（默认为 0）"
 #: cmd/incus/network.go:1276
 msgid "HOSTNAME"
 msgstr "主机名"
+
+#: cmd/incus/query.go:60
+#, fuzzy
+msgid ""
+"Header to set, an empty value removes it (e.g. \"X-Incus-mode: 0644\") (may "
+"be passed multiple times)"
+msgstr "要设置的环境变量（例如 HOME=/HOME/foo）"
 
 #: cmd/incus/info.go:793
 msgid "Host interface"
@@ -4158,22 +4207,22 @@ msgstr "主机名"
 msgid "Hugepages:\n"
 msgstr "大页内存：\n"
 
-#: cmd/incus/utils.go:725
+#: cmd/incus/utils.go:724
 #, c-format
 msgid "I/O copy from SSH to instance failed: %v"
 msgstr "从 SSH 到实例的 I/O 复制操作失败：%v"
 
-#: cmd/incus/utils.go:714
+#: cmd/incus/utils.go:713
 #, c-format
 msgid "I/O copy from instance to SSH failed: %v"
 msgstr "从实例到 SSH 的 I/O 复制操作失败：%v"
 
-#: cmd/incus/utils.go:546
+#: cmd/incus/utils.go:545
 #, c-format
 msgid "I/O copy from instance to sshfs failed: %v"
 msgstr "从实例到 sshfs 的 I/O 复制操作失败：%v"
 
-#: cmd/incus/utils.go:556
+#: cmd/incus/utils.go:555
 #, c-format
 msgid "I/O copy from sshfs to instance failed: %v"
 msgstr "从 sshfs 到实例的 I/O 复制操作失败：%v"
@@ -4204,7 +4253,7 @@ msgstr ""
 msgid "INSTANCE NAME"
 msgstr "实例名称"
 
-#: cmd/incus/low_level.go:744
+#: cmd/incus/low_level.go:745
 msgid "INTERPRETED VALUE"
 msgstr ""
 
@@ -4250,7 +4299,7 @@ msgstr "IPv6上行地址"
 msgid "ISSUE DATE"
 msgstr "发行日期"
 
-#: cmd/incus/low_level.go:1381 cmd/incus/low_level.go:1382
+#: cmd/incus/low_level.go:1669 cmd/incus/low_level.go:1670
 #, fuzzy
 msgid "ISSUER"
 msgstr "发行日期"
@@ -4304,11 +4353,16 @@ msgstr "忽略易失性文件的复制错误"
 msgid "Ignore the instance state"
 msgstr "忽略实例状态"
 
+#: cmd/incus/low_level.go:1186
+#, c-format
+msgid "Ignored %s block"
+msgstr ""
+
 #: cmd/incus/image_alias.go:77
 msgid "Image alias description"
 msgstr "镜像别名描述"
 
-#: cmd/incus/image.go:1470
+#: cmd/incus/image.go:1475
 msgid "Image already up to date."
 msgstr "镜像已经是最新的。"
 
@@ -4333,13 +4387,18 @@ msgstr "镜像格式"
 msgid "Image imported with fingerprint: %s"
 msgstr "镜像已导入，指纹：%s"
 
-#: cmd/incus/image.go:1468
+#: cmd/incus/image.go:1473
 msgid "Image refreshed successfully!"
 msgstr "镜像刷新成功！"
 
 #: cmd/incus/action.go:168 cmd/incus/launch.go:49
 msgid "Immediately attach to the console"
 msgstr "立即连接到控制台"
+
+#: cmd/incus/low_level.go:1528 cmd/incus/low_level.go:1529
+#, fuzzy
+msgid "Import Secure Boot signatures"
+msgstr "移除别名"
 
 #: cmd/incus/import.go:33
 msgid "Import backups of instances including their snapshots."
@@ -4415,7 +4474,7 @@ msgstr "包含不常用的命令"
 msgid "Incus - Command line client"
 msgstr "Incus - 命令行客户端"
 
-#: cmd/incus/low_level.go:546
+#: cmd/incus/low_level.go:547
 #, c-format
 msgid "Incus does not know how to dissect %s:%s"
 msgstr ""
@@ -4424,15 +4483,15 @@ msgstr ""
 msgid "Infiniband:"
 msgstr "Infiniband："
 
-#: cmd/incus/query.go:54
+#: cmd/incus/query.go:58
 msgid "Input data"
 msgstr "输入数据"
 
-#: cmd/incus/query.go:55
+#: cmd/incus/query.go:59
 msgid "Input data file (\"-\" for stdin)"
 msgstr ""
 
-#: cmd/incus/low_level.go:1248
+#: cmd/incus/low_level.go:1203
 #, fuzzy
 msgid "Input file contains no certificate"
 msgstr "生成客户端证书"
@@ -4445,11 +4504,11 @@ msgstr "仅实例"
 msgid "Instance description"
 msgstr "实例描述"
 
-#: cmd/incus/utils.go:548
+#: cmd/incus/utils.go:547
 msgid "Instance disconnected"
 msgstr "实例已断开连接"
 
-#: cmd/incus/utils.go:716
+#: cmd/incus/utils.go:715
 #, c-format
 msgid "Instance disconnected for client %q"
 msgstr "客户端 %q 的实例已断开连接"
@@ -4459,7 +4518,7 @@ msgstr "客户端 %q 的实例已断开连接"
 msgid "Instance name is: %s"
 msgstr "实例名称是：%s"
 
-#: cmd/incus/file.go:983
+#: cmd/incus/file.go:969
 msgid "Instance path cannot be used in SSH SFTP listener mode"
 msgstr "实例路径不能在 SSH SFTP 监听模式下使用"
 
@@ -4477,7 +4536,7 @@ msgstr "实例名称是：%s"
 msgid "Instance type"
 msgstr "实例类型"
 
-#: cmd/incus/low_level.go:828
+#: cmd/incus/low_level.go:829
 #, fuzzy, c-format
 msgid "Invalid GUID: %s"
 msgstr "无效的路径 %s"
@@ -4562,7 +4621,7 @@ msgstr "无效的过期日期：%w"
 msgid "Invalid format %q"
 msgstr "无效的格式 %q"
 
-#: cmd/incus/low_level.go:662 cmd/incus/low_level.go:1014
+#: cmd/incus/low_level.go:663 cmd/incus/low_level.go:1015
 #: cmd/incus/monitor.go:73
 #, c-format
 msgid "Invalid format: %s"
@@ -4768,11 +4827,11 @@ msgstr ""
 "  t - 类型\n"
 "  L - DHCP 租约位置（例如其集群成员）"
 
-#: cmd/incus/low_level.go:1335
+#: cmd/incus/low_level.go:1623
 msgid "List Secure Boot signatures"
 msgstr ""
 
-#: cmd/incus/low_level.go:1336
+#: cmd/incus/low_level.go:1624
 msgid ""
 "List Secure Boot signatures\n"
 "\n"
@@ -4795,11 +4854,11 @@ msgid ""
 "\tt - Signature type"
 msgstr ""
 
-#: cmd/incus/low_level.go:700
+#: cmd/incus/low_level.go:701
 msgid "List UEFI GUIDs and variables"
 msgstr ""
 
-#: cmd/incus/low_level.go:701
+#: cmd/incus/low_level.go:702
 msgid ""
 "List UEFI GUIDs and variables\n"
 "\n"
@@ -6007,12 +6066,12 @@ msgstr ""
 msgid "Logical switch"
 msgstr ""
 
-#: cmd/incus/utils.go:631
+#: cmd/incus/utils.go:630
 #, c-format
 msgid "Login with username %q and password %q"
 msgstr ""
 
-#: cmd/incus/utils.go:633
+#: cmd/incus/utils.go:632
 msgid "Login without username and password"
 msgstr ""
 
@@ -6024,12 +6083,12 @@ msgstr ""
 msgid "Low-level cluster administration commands"
 msgstr ""
 
-#: cmd/incus/low_level.go:46
+#: cmd/incus/low_level.go:47
 #, fuzzy
 msgid "Low-level commands"
 msgstr "调试命令"
 
-#: cmd/incus/low_level.go:47
+#: cmd/incus/low_level.go:48
 #, fuzzy
 msgid "Low-level commands for instances"
 msgstr "实例的调试命令"
@@ -6114,12 +6173,12 @@ msgstr ""
 msgid "Make the image public"
 msgstr ""
 
-#: cmd/incus/low_level.go:401 cmd/incus/low_level.go:402
+#: cmd/incus/low_level.go:402 cmd/incus/low_level.go:403
 #, fuzzy
 msgid "Manage NVRAM on virtual machines"
 msgstr "创建虚拟机"
 
-#: cmd/incus/low_level.go:1113 cmd/incus/low_level.go:1114
+#: cmd/incus/low_level.go:1114 cmd/incus/low_level.go:1115
 #, fuzzy
 msgid "Manage Secure Boot on virtual machines"
 msgstr "创建虚拟机"
@@ -6152,7 +6211,7 @@ msgstr ""
 msgid "Manage devices"
 msgstr ""
 
-#: cmd/incus/low_level.go:78 cmd/incus/low_level.go:79
+#: cmd/incus/low_level.go:79 cmd/incus/low_level.go:80
 #, fuzzy
 msgid "Manage dirty bitmaps on virtual machines"
 msgstr "创建虚拟机"
@@ -6412,7 +6471,7 @@ msgstr ""
 msgid "Minimum size is 1GiB"
 msgstr ""
 
-#: cmd/incus/file.go:732
+#: cmd/incus/file.go:724
 msgid "Missing target directory"
 msgstr ""
 
@@ -6445,12 +6504,12 @@ msgstr ""
 msgid "More than one device matches, specify the device name"
 msgstr ""
 
-#: cmd/incus/file.go:498
+#: cmd/incus/file.go:492
 #, fuzzy
 msgid "More than one file to download, but target is not a directory"
 msgstr "将下载多个文件, 但目标不是目录"
 
-#: cmd/incus/low_level.go:913 cmd/incus/low_level.go:1056
+#: cmd/incus/low_level.go:914 cmd/incus/low_level.go:1057
 msgid ""
 "More than one variable was passed but the server is missing the required "
 "\"instance_nvram_bulk_update\" API extension"
@@ -6467,11 +6526,11 @@ msgid ""
 "If no target path is provided, start an SSH SFTP listener instead."
 msgstr ""
 
-#: cmd/incus/file.go:912
+#: cmd/incus/file.go:898
 msgid "Mount files from instances"
 msgstr ""
 
-#: cmd/incus/file.go:913
+#: cmd/incus/file.go:899
 msgid ""
 "Mount files from instances.\n"
 "If no target path is provided, start an SSH SFTP listener instead."
@@ -6550,12 +6609,12 @@ msgstr ""
 msgid "NBD access to a block storage volume"
 msgstr "删除自定义存储卷"
 
-#: cmd/incus/low_level.go:271
+#: cmd/incus/low_level.go:272
 #, fuzzy
 msgid "NBD access to all of a virtual machine's disks"
 msgstr "删除自定义存储卷"
 
-#: cmd/incus/low_level.go:272
+#: cmd/incus/low_level.go:273
 msgid ""
 "NBD access to all of a virtual machine's disks\n"
 "\n"
@@ -6564,22 +6623,22 @@ msgid ""
 "device name."
 msgstr ""
 
-#: cmd/incus/low_level.go:341 cmd/incus/storage_volume.go:2678
+#: cmd/incus/low_level.go:342 cmd/incus/storage_volume.go:2678
 #, c-format
 msgid "NBD client connected %q"
 msgstr ""
 
-#: cmd/incus/low_level.go:342 cmd/incus/storage_volume.go:2679
+#: cmd/incus/low_level.go:343 cmd/incus/storage_volume.go:2679
 #, fuzzy, c-format
 msgid "NBD client disconnected %q"
 msgstr "实例已断开连接"
 
-#: cmd/incus/low_level.go:358 cmd/incus/storage_volume.go:2684
+#: cmd/incus/low_level.go:359 cmd/incus/storage_volume.go:2684
 #, c-format
 msgid "NBD connection failed: %v"
 msgstr ""
 
-#: cmd/incus/low_level.go:323 cmd/incus/storage_volume.go:2668
+#: cmd/incus/low_level.go:324 cmd/incus/storage_volume.go:2668
 #, c-format
 msgid "NBD listening on %v"
 msgstr ""
@@ -6863,8 +6922,8 @@ msgstr ""
 msgid "Network zone record %s deleted"
 msgstr ""
 
-#: cmd/incus/file.go:452 cmd/incus/file.go:684
-#: cmd/incus/storage_volume_file.go:533 cmd/incus/storage_volume_file.go:732
+#: cmd/incus/file.go:446 cmd/incus/file.go:676
+#: cmd/incus/storage_volume_file.go:526 cmd/incus/storage_volume_file.go:723
 msgid "Never follow symbolic links in source path"
 msgstr ""
 
@@ -6921,7 +6980,7 @@ msgstr ""
 msgid "No matching rule(s) found"
 msgstr ""
 
-#: cmd/incus/low_level.go:1661
+#: cmd/incus/low_level.go:1949
 msgid "No signature matches"
 msgstr ""
 
@@ -6960,11 +7019,11 @@ msgstr ""
 msgid "OVN:"
 msgstr ""
 
-#: cmd/incus/low_level.go:1383
+#: cmd/incus/low_level.go:1671
 msgid "OWNER GUID"
 msgstr ""
 
-#: cmd/incus/low_level.go:1384
+#: cmd/incus/low_level.go:1672
 msgid "OWNER GUID NAME"
 msgstr ""
 
@@ -6988,16 +7047,21 @@ msgstr ""
 msgid "Only managed networks can be modified"
 msgstr ""
 
+#: cmd/incus/low_level.go:1318 cmd/incus/low_level.go:1582
+#, c-format
+msgid "Only one PK certificate can be enrolled; got %d"
+msgstr ""
+
 #: cmd/incus/admin_init_auto.go:35
 msgid ""
 "Only one of --storage-create-device or --storage-create-loop can be specified"
 msgstr ""
 
-#: cmd/incus/low_level.go:1563
+#: cmd/incus/low_level.go:1851
 msgid "Only remove signatures of the given type"
 msgstr ""
 
-#: cmd/incus/low_level.go:1562
+#: cmd/incus/low_level.go:1850
 msgid "Only remove signatures owned by the given owner"
 msgstr ""
 
@@ -7109,7 +7173,7 @@ msgstr ""
 msgid "Password for %s: "
 msgstr ""
 
-#: cmd/incus/utils.go:602
+#: cmd/incus/utils.go:601
 #, c-format
 msgid "Password rejected for %q"
 msgstr ""
@@ -7193,6 +7257,11 @@ msgstr "正在刷新实例: %s"
 msgid "Pre-seed mode, expects YAML config from stdin"
 msgstr ""
 
+#: cmd/incus/file.go:444 cmd/incus/file.go:674
+#: cmd/incus/storage_volume_file.go:524 cmd/incus/storage_volume_file.go:721
+msgid "Preserve ownership, timestamps and mode (implies --recursive)"
+msgstr ""
+
 #: cmd/incus/top.go:435
 msgid "Press 'd' + ENTER to change delay"
 msgstr ""
@@ -7205,7 +7274,7 @@ msgstr ""
 msgid "Press CTRL-C to exit"
 msgstr ""
 
-#: cmd/incus/utils.go:526
+#: cmd/incus/utils.go:525
 msgid "Press ctrl+c to finish"
 msgstr ""
 
@@ -7213,7 +7282,7 @@ msgstr ""
 #: cmd/incus/config.go:270 cmd/incus/config.go:345
 #: cmd/incus/config_metadata.go:149 cmd/incus/config_template.go:234
 #: cmd/incus/config_trust.go:333 cmd/incus/image.go:492
-#: cmd/incus/low_level.go:574 cmd/incus/network.go:767
+#: cmd/incus/low_level.go:575 cmd/incus/network.go:767
 #: cmd/incus/network_acl.go:672 cmd/incus/network_address_set.go:526
 #: cmd/incus/network_forward.go:730 cmd/incus/network_integration.go:298
 #: cmd/incus/network_load_balancer.go:710 cmd/incus/network_peer.go:733
@@ -7237,7 +7306,7 @@ msgstr ""
 msgid "Print or retrieve the client certificate used by this Incus client"
 msgstr "客户端证书已存在"
 
-#: cmd/incus/query.go:52
+#: cmd/incus/query.go:56
 msgid "Print the raw response"
 msgstr ""
 
@@ -7364,7 +7433,7 @@ msgstr ""
 msgid "Properties:"
 msgstr ""
 
-#: cmd/incus/image.go:1599
+#: cmd/incus/image.go:1604
 msgid "Property not found"
 msgstr ""
 
@@ -7400,45 +7469,45 @@ msgstr "发布实例为镜像"
 msgid "Publishing instance: %s"
 msgstr "正在发布实例: %s"
 
-#: cmd/incus/storage_volume_file.go:521 cmd/incus/storage_volume_file.go:522
+#: cmd/incus/storage_volume_file.go:513 cmd/incus/storage_volume_file.go:514
 #, fuzzy
 msgid "Pull files from custom volumes"
 msgstr "复制自定义存储卷"
 
-#: cmd/incus/file.go:440 cmd/incus/file.go:441
+#: cmd/incus/file.go:433 cmd/incus/file.go:434
 msgid "Pull files from instances"
 msgstr "从实例拉取文件"
 
-#: cmd/incus/file.go:586 cmd/incus/storage_volume_file.go:645
-#: cmd/incus/utils_sftp.go:212
+#: cmd/incus/file.go:576 cmd/incus/storage_volume_file.go:634
+#: cmd/incus/utils_sftp.go:287
 #, fuzzy, c-format
 msgid "Pulling %s from %s: %%s"
 msgstr "正在从 %[2]s 拉取 %[1]s: %%s"
 
-#: cmd/incus/storage_volume_file.go:717 cmd/incus/storage_volume_file.go:718
+#: cmd/incus/storage_volume_file.go:707 cmd/incus/storage_volume_file.go:708
 #, fuzzy
 msgid "Push files into custom volumes"
 msgstr "删除自定义存储卷"
 
-#: cmd/incus/file.go:669 cmd/incus/file.go:670
+#: cmd/incus/file.go:660 cmd/incus/file.go:661
 msgid "Push files into instances"
 msgstr "向实例推送文件"
 
-#: cmd/incus/file.go:845 cmd/incus/storage_volume_file.go:877
-#: cmd/incus/utils_sftp.go:341
+#: cmd/incus/file.go:823 cmd/incus/storage_volume_file.go:859
+#: cmd/incus/utils_sftp.go:424
 #, fuzzy, c-format
 msgid "Pushing %s to %s: %%s"
 msgstr "正在向 %[2]s 推送 %[1]s: %%s"
 
-#: cmd/incus/query.go:96
+#: cmd/incus/query.go:139
 msgid "Query path must start with /"
 msgstr "查询路径必须以 / 开头"
 
-#: cmd/incus/image.go:533 cmd/incus/image.go:917 cmd/incus/image.go:1493
+#: cmd/incus/image.go:533 cmd/incus/image.go:917 cmd/incus/image.go:1498
 msgid "Query virtual machine images"
 msgstr "查询虚拟机镜像"
 
-#: cmd/incus/low_level.go:742 cmd/incus/low_level.go:1385
+#: cmd/incus/low_level.go:743 cmd/incus/low_level.go:1673
 msgid "RAW VALUE"
 msgstr ""
 
@@ -7508,8 +7577,8 @@ msgid ""
 "database records."
 msgstr ""
 
-#: cmd/incus/file.go:451 cmd/incus/file.go:683
-#: cmd/incus/storage_volume_file.go:532 cmd/incus/storage_volume_file.go:731
+#: cmd/incus/file.go:445 cmd/incus/file.go:675
+#: cmd/incus/storage_volume_file.go:525 cmd/incus/storage_volume_file.go:722
 #, fuzzy
 msgid "Recursively transfer files"
 msgstr "递归传输文件"
@@ -7518,7 +7587,7 @@ msgstr "递归传输文件"
 msgid "Refresh and update the existing storage volume copies"
 msgstr ""
 
-#: cmd/incus/image.go:1413 cmd/incus/image.go:1414
+#: cmd/incus/image.go:1418 cmd/incus/image.go:1419
 msgid "Refresh images"
 msgstr "刷新镜像列表"
 
@@ -7527,7 +7596,7 @@ msgstr "刷新镜像列表"
 msgid "Refreshing instance: %s"
 msgstr "正在刷新实例: %s"
 
-#: cmd/incus/image.go:1437
+#: cmd/incus/image.go:1442
 #, c-format
 msgid "Refreshing the image: %s"
 msgstr "正在刷新镜像: %s"
@@ -7598,7 +7667,7 @@ msgid ""
 "networks, ...) (yes/no): "
 msgstr "移除项目 %s 及其所有内容 (实例, 镜像, 存储卷, 网络, ...) (yes/no): "
 
-#: cmd/incus/low_level.go:1557 cmd/incus/low_level.go:1558
+#: cmd/incus/low_level.go:1845 cmd/incus/low_level.go:1846
 msgid "Remove Secure Boot signatures"
 msgstr ""
 
@@ -7638,7 +7707,7 @@ msgstr "从实例拉取文件"
 msgid "Remove all rules that match"
 msgstr "移除所有匹配的规则"
 
-#: cmd/incus/low_level.go:1561
+#: cmd/incus/low_level.go:1849
 #, fuzzy
 msgid "Remove all signatures"
 msgstr "移除别名"
@@ -7870,7 +7939,7 @@ msgstr ""
 msgid "Run a local API proxy for the remote"
 msgstr ""
 
-#: cmd/incus/low_level.go:161
+#: cmd/incus/low_level.go:162
 msgid ""
 "Run a low-level repair action on an instance.\n"
 "\n"
@@ -7880,7 +7949,7 @@ msgid ""
 "  rebuild-nvram            Rebuild the virtual machine's UEFI NVRAM"
 msgstr ""
 
-#: cmd/incus/low_level.go:160
+#: cmd/incus/low_level.go:161
 msgid "Run a repair action on an instance"
 msgstr ""
 
@@ -7917,17 +7986,17 @@ msgstr ""
 msgid "SR-IOV information:"
 msgstr ""
 
-#: cmd/incus/utils.go:628
+#: cmd/incus/utils.go:627
 #, c-format
 msgid "SSH SFTP listening on %v"
 msgstr ""
 
-#: cmd/incus/utils.go:645
+#: cmd/incus/utils.go:644
 #, c-format
 msgid "SSH client connected %q"
 msgstr ""
 
-#: cmd/incus/utils.go:646
+#: cmd/incus/utils.go:645
 #, c-format
 msgid "SSH client disconnected %q"
 msgstr ""
@@ -7970,7 +8039,7 @@ msgstr ""
 msgid "STP"
 msgstr ""
 
-#: cmd/incus/low_level.go:1386 cmd/incus/low_level.go:1387
+#: cmd/incus/low_level.go:1674 cmd/incus/low_level.go:1675
 msgid "SUBJECT"
 msgstr ""
 
@@ -7995,7 +8064,7 @@ msgstr ""
 msgid "Select next boot entry: "
 msgstr ""
 
-#: cmd/incus/query.go:40 cmd/incus/query.go:41
+#: cmd/incus/query.go:41 cmd/incus/query.go:42
 msgid "Send a raw query to the server"
 msgstr ""
 
@@ -8065,7 +8134,7 @@ msgstr ""
 msgid "Set a keepalive timeout for a remote"
 msgstr ""
 
-#: cmd/incus/file.go:927 cmd/incus/storage_volume_file.go:351
+#: cmd/incus/file.go:913 cmd/incus/storage_volume_file.go:351
 msgid "Set authentication user when using SSH SFTP listener"
 msgstr ""
 
@@ -8095,7 +8164,7 @@ msgid ""
 "    incus profile device set [<remote>:]<profile> <device> <key> <value>"
 msgstr ""
 
-#: cmd/incus/image.go:1617 cmd/incus/image.go:1618
+#: cmd/incus/image.go:1622 cmd/incus/image.go:1623
 msgid "Set image properties"
 msgstr ""
 
@@ -8291,7 +8360,7 @@ msgstr ""
 msgid "Set the file's gid on create"
 msgstr ""
 
-#: cmd/incus/storage_volume_file.go:729
+#: cmd/incus/storage_volume_file.go:719
 msgid "Set the file's gid on push"
 msgstr ""
 
@@ -8299,11 +8368,11 @@ msgstr ""
 msgid "Set the file's perms on create"
 msgstr ""
 
-#: cmd/incus/storage_volume_file.go:730
+#: cmd/incus/storage_volume_file.go:720
 msgid "Set the file's perms on push"
 msgstr ""
 
-#: cmd/incus/file.go:682
+#: cmd/incus/file.go:673
 msgid ""
 "Set the file's perms on push (in recursive mode, only sets the target "
 "directory's permissions)"
@@ -8313,15 +8382,15 @@ msgstr ""
 msgid "Set the file's uid on create"
 msgstr ""
 
-#: cmd/incus/storage_volume_file.go:728
+#: cmd/incus/storage_volume_file.go:718
 msgid "Set the file's uid on push"
 msgstr ""
 
-#: cmd/incus/file.go:681
+#: cmd/incus/file.go:672
 msgid "Set the files' GIDs on push"
 msgstr ""
 
-#: cmd/incus/file.go:680
+#: cmd/incus/file.go:671
 msgid "Set the files' UIDs on push"
 msgstr ""
 
@@ -8394,28 +8463,28 @@ msgstr ""
 msgid "Set the key as an instance property"
 msgstr ""
 
-#: cmd/incus/low_level.go:1151
+#: cmd/incus/low_level.go:1237 cmd/incus/low_level.go:1532
 msgid "Set the signature owner"
 msgstr ""
 
-#: cmd/incus/low_level.go:886
+#: cmd/incus/low_level.go:887
 msgid "Set the variable attributes (requires `--format=base64|binary|hex`)"
 msgstr ""
 
-#: cmd/incus/low_level.go:888
+#: cmd/incus/low_level.go:889
 msgid ""
 "Set the variable timestamp (requires `--format=base64|binary|efivarfs|hex`)"
 msgstr ""
 
-#: cmd/incus/low_level.go:882
+#: cmd/incus/low_level.go:883
 msgid "Set values for UEFI variables"
 msgstr ""
 
-#: cmd/incus/low_level.go:883
+#: cmd/incus/low_level.go:884
 msgid "Set values for UEFI variables."
 msgstr ""
 
-#: cmd/incus/file.go:925 cmd/incus/storage_volume_file.go:349
+#: cmd/incus/file.go:911 cmd/incus/storage_volume_file.go:349
 msgid "Setup SSH SFTP listener on address:port instead of mounting"
 msgstr ""
 
@@ -8427,7 +8496,7 @@ msgstr ""
 msgid "Setup loop based storage with SIZE in GiB"
 msgstr ""
 
-#: cmd/incus/low_level.go:1665
+#: cmd/incus/low_level.go:1953
 msgid "Several signatures match the given fingerprint"
 msgstr ""
 
@@ -8471,7 +8540,7 @@ msgstr ""
 msgid "Show full device configuration"
 msgstr ""
 
-#: cmd/incus/image.go:1490 cmd/incus/image.go:1491
+#: cmd/incus/image.go:1495 cmd/incus/image.go:1496
 msgid "Show image properties"
 msgstr ""
 
@@ -8679,6 +8748,10 @@ msgstr ""
 msgid "Size: %s"
 msgstr ""
 
+#: cmd/incus/low_level.go:1238
+msgid "Skip duplicate signatures"
+msgstr ""
+
 #: cmd/incus/list.go:472 cmd/incus/list.go:492
 #, c-format
 msgid "Skipping remote %q: %v"
@@ -8725,7 +8798,7 @@ msgstr ""
 msgid "Source:"
 msgstr ""
 
-#: cmd/incus/low_level.go:280 cmd/incus/storage_volume.go:2617
+#: cmd/incus/low_level.go:281 cmd/incus/storage_volume.go:2617
 msgid "Specific address to listen on"
 msgstr ""
 
@@ -8876,7 +8949,7 @@ msgstr ""
 msgid "Storage volume snapshot %s deleted from %s"
 msgstr ""
 
-#: cmd/incus/low_level.go:112 cmd/incus/storage_volume_bitmap.go:77
+#: cmd/incus/low_level.go:113 cmd/incus/storage_volume_bitmap.go:77
 #, fuzzy
 msgid "Store the bitmap on disk"
 msgstr "强制实例停止"
@@ -8935,7 +9008,7 @@ msgstr ""
 msgid "TARGET"
 msgstr ""
 
-#: cmd/incus/low_level.go:743
+#: cmd/incus/low_level.go:744
 msgid "TIMESTAMP"
 msgstr ""
 
@@ -8950,7 +9023,7 @@ msgstr ""
 
 #: cmd/incus/config_trust.go:418 cmd/incus/image.go:1120
 #: cmd/incus/image_alias.go:250 cmd/incus/list.go:555
-#: cmd/incus/low_level.go:1388 cmd/incus/network.go:1082
+#: cmd/incus/low_level.go:1676 cmd/incus/network.go:1082
 #: cmd/incus/network.go:1279 cmd/incus/network_allocations.go:89
 #: cmd/incus/network_integration.go:434 cmd/incus/network_peer.go:142
 #: cmd/incus/operation.go:168 cmd/incus/storage_volume.go:1629
@@ -8966,18 +9039,18 @@ msgstr ""
 msgid "Target isn't a cluster"
 msgstr ""
 
-#: cmd/incus/export.go:77 cmd/incus/storage_bucket.go:1339
-#: cmd/incus/storage_volume.go:2326
+#: cmd/incus/export.go:77 cmd/incus/low_level.go:1448
+#: cmd/incus/storage_bucket.go:1339 cmd/incus/storage_volume.go:2326
 #, c-format
 msgid "Target path %q already exists"
 msgstr "目标路径 %q 已存在"
 
-#: cmd/incus/file.go:973 cmd/incus/storage_volume_file.go:401
+#: cmd/incus/file.go:959 cmd/incus/storage_volume_file.go:401
 #, fuzzy
 msgid "Target path and --listen flag cannot be used together"
 msgstr "目标路径和 --listen 标记不能一起使用"
 
-#: cmd/incus/file.go:967 cmd/incus/storage_volume_file.go:396
+#: cmd/incus/file.go:953 cmd/incus/storage_volume_file.go:396
 msgid "Target path must be a directory"
 msgstr ""
 
@@ -9060,12 +9133,16 @@ msgstr ""
 msgid "The following unknown volumes have been found:"
 msgstr ""
 
-#: cmd/incus/low_level.go:1298
+#: cmd/incus/low_level.go:1599
+msgid "The given ESL already exists; use --force to override"
+msgstr ""
+
+#: cmd/incus/low_level.go:1375
 #, fuzzy
 msgid "The given certificate is already present in this ESL"
 msgstr "客户端证书已存在"
 
-#: cmd/incus/low_level.go:1295
+#: cmd/incus/low_level.go:1372
 #, fuzzy
 msgid "The given signature is already present in this ESL"
 msgstr "客户端证书已存在"
@@ -9438,12 +9515,12 @@ msgstr ""
 msgid "Type: %s"
 msgstr ""
 
-#: cmd/incus/low_level.go:1073
+#: cmd/incus/low_level.go:1074
 #, c-format
 msgid "UEFI variable %s:%s deleted on %s"
 msgstr ""
 
-#: cmd/incus/low_level.go:1093
+#: cmd/incus/low_level.go:1094
 #, c-format
 msgid "UEFI variables %s deleted on %s\n"
 msgstr ""
@@ -9498,7 +9575,7 @@ msgstr ""
 msgid "Unable to connect to any of the cluster members specified in join token"
 msgstr ""
 
-#: cmd/incus/file.go:393 cmd/incus/storage_volume_file.go:472
+#: cmd/incus/file.go:392 cmd/incus/storage_volume_file.go:470
 #, c-format
 msgid "Unable to create a temporary file: %v"
 msgstr ""
@@ -9513,19 +9590,20 @@ msgstr "解析 preseed 失败：%w"
 msgid "Unable to parse %s as valid JSON"
 msgstr "解析 preseed 失败：%w"
 
-#: cmd/incus/low_level.go:1284 cmd/incus/low_level.go:1509
-#: cmd/incus/low_level.go:1621
+#: cmd/incus/low_level.go:1347 cmd/incus/low_level.go:1468
+#: cmd/incus/low_level.go:1797 cmd/incus/low_level.go:1909
 #, c-format
 msgid "Unable to parse %s:%s as an EFI Signature List"
 msgstr ""
 
-#: cmd/incus/low_level.go:1277 cmd/incus/low_level.go:1502
-#: cmd/incus/low_level.go:1614
+#: cmd/incus/low_level.go:1341 cmd/incus/low_level.go:1461
+#: cmd/incus/low_level.go:1790 cmd/incus/low_level.go:1902
 #, c-format
 msgid "Unable to parse %s:%s as valid JSON"
 msgstr ""
 
-#: cmd/incus/low_level.go:1192 cmd/incus/low_level.go:1628
+#: cmd/incus/low_level.go:1279 cmd/incus/low_level.go:1573
+#: cmd/incus/low_level.go:1916
 #, fuzzy, c-format
 msgid "Unable to parse owner %s: %w"
 msgstr "解析 preseed 失败：%w"
@@ -9534,8 +9612,13 @@ msgstr "解析 preseed 失败：%w"
 msgid "Unavailable remote server"
 msgstr ""
 
-#: cmd/incus/low_level.go:952
+#: cmd/incus/low_level.go:953
 msgid "Unexpected input size"
+msgstr ""
+
+#: cmd/incus/low_level.go:1180
+#, c-format
+msgid "Unexpected signature length %d"
 msgstr ""
 
 #: cmd/incus/action.go:340 cmd/incus/action.go:348
@@ -9548,7 +9631,7 @@ msgstr ""
 msgid "Unknown certificate type %q"
 msgstr ""
 
-#: cmd/incus/utils.go:668
+#: cmd/incus/utils.go:667
 #, c-format
 msgid "Unknown channel type for client %q: %s"
 msgstr ""
@@ -9557,7 +9640,7 @@ msgstr ""
 #: cmd/incus/cluster_group.go:483 cmd/incus/config_trust.go:440
 #: cmd/incus/config_trust.go:626 cmd/incus/image.go:1152
 #: cmd/incus/image_alias.go:266 cmd/incus/list.go:616
-#: cmd/incus/low_level.go:758 cmd/incus/low_level.go:1402
+#: cmd/incus/low_level.go:759 cmd/incus/low_level.go:1690
 #: cmd/incus/network.go:1107 cmd/incus/network.go:1297
 #: cmd/incus/network_allocations.go:105 cmd/incus/network_forward.go:164
 #: cmd/incus/network_integration.go:449 cmd/incus/network_load_balancer.go:170
@@ -9577,7 +9660,7 @@ msgstr ""
 msgid "Unknown console type %q"
 msgstr ""
 
-#: cmd/incus/utils_sftp.go:260
+#: cmd/incus/utils_sftp.go:343
 #, c-format
 msgid "Unknown file type '%s'"
 msgstr ""
@@ -9597,12 +9680,12 @@ msgstr ""
 msgid "Unknown output type %q"
 msgstr ""
 
-#: cmd/incus/low_level.go:1213
+#: cmd/incus/low_level.go:1306 cmd/incus/low_level.go:1508
 #, c-format
 msgid "Unknown signature type %s"
 msgstr ""
 
-#: cmd/incus/low_level.go:1031 cmd/incus/low_level.go:1032
+#: cmd/incus/low_level.go:1032 cmd/incus/low_level.go:1033
 msgid "Unset UEFI variables"
 msgstr ""
 
@@ -9626,7 +9709,7 @@ msgstr ""
 msgid "Unset device configuration keys"
 msgstr ""
 
-#: cmd/incus/image.go:1681 cmd/incus/image.go:1682
+#: cmd/incus/image.go:1686 cmd/incus/image.go:1687
 msgid "Unset image properties"
 msgstr ""
 
@@ -9905,7 +9988,7 @@ msgstr ""
 msgid "User aborted delete operation"
 msgstr ""
 
-#: cmd/incus/low_level.go:741
+#: cmd/incus/low_level.go:742
 #, fuzzy
 msgid "VARIABLE NAME"
 msgstr "文件名"
@@ -10012,7 +10095,7 @@ msgid ""
 "  containers."
 msgstr ""
 
-#: cmd/incus/query.go:51
+#: cmd/incus/query.go:55
 msgid "Wait for the operation to complete"
 msgstr ""
 
@@ -10188,7 +10271,7 @@ msgstr ""
 msgid "Zone description"
 msgstr ""
 
-#: cmd/incus/low_level.go:155
+#: cmd/incus/low_level.go:156
 #, fuzzy
 msgid "action"
 msgstr "描述"
@@ -10220,7 +10303,7 @@ msgstr ""
 msgid "backup file"
 msgstr ""
 
-#: cmd/incus/low_level.go:100 cmd/incus/storage_volume_bitmap.go:66
+#: cmd/incus/low_level.go:101 cmd/incus/storage_volume_bitmap.go:66
 #: cmd/incus/storage_volume_bitmap.go:135
 #: cmd/incus/storage_volume_bitmap.go:357
 msgid "bitmap"
@@ -10445,7 +10528,7 @@ msgid ""
 "    Create and start a virtual machine, overriding the disk size and bus"
 msgstr ""
 
-#: cmd/incus/storage_volume_file.go:523
+#: cmd/incus/storage_volume_file.go:515
 msgid ""
 "incus custom volume file pull local v1/foo/etc/hosts .\n"
 "   To pull /etc/hosts from the custom volume and write it to the current "
@@ -10483,7 +10566,7 @@ msgid ""
 "   To create a symlink /bar in instance foo whose target is baz."
 msgstr ""
 
-#: cmd/incus/file.go:917
+#: cmd/incus/file.go:903
 msgid ""
 "incus file mount foo/root fooroot\n"
 "   To mount /root from the instance foo onto the local fooroot directory.\n"
@@ -10492,7 +10575,7 @@ msgid ""
 "   To start an SSH SFTP listener for the root filesystem of instance foo."
 msgstr ""
 
-#: cmd/incus/file.go:442
+#: cmd/incus/file.go:435
 msgid ""
 "incus file pull foo/etc/hosts .\n"
 "   To pull /etc/hosts from the instance and write it to the current "
@@ -10503,7 +10586,7 @@ msgid ""
 "output."
 msgstr ""
 
-#: cmd/incus/file.go:671
+#: cmd/incus/file.go:662
 msgid ""
 "incus file push /etc/hosts foo/etc/hosts\n"
 "   To push /etc/hosts into the instance \"foo\".\n"
@@ -10576,7 +10659,7 @@ msgid ""
 "  List instances with their running state and user comment."
 msgstr ""
 
-#: cmd/incus/low_level.go:220
+#: cmd/incus/low_level.go:221
 msgid ""
 "incus low-level dump-memory vm1 memory-dump.elf --format=elf\n"
 "    Creates an ELF format memory dump of the vm1 instance."
@@ -10774,10 +10857,14 @@ msgid ""
 "    Update a project using the content of project.yaml"
 msgstr ""
 
-#: cmd/incus/query.go:44
+#: cmd/incus/query.go:45
 msgid ""
 "incus query -X DELETE --wait /1.0/instances/c1\n"
-"    Delete local instance \"c1\"."
+"    Delete local instance \"c1\".\n"
+"\n"
+"incus query -X POST --data-file ./f.txt -H \"X-Incus-type: file\" -H \"X-"
+"Incus-mode: 0600\" /1.0/instances/c1/files?path=/root/f.txt\n"
+"    Upload a file to local instance \"c1\"."
 msgstr ""
 
 #: cmd/incus/remote.go:1628
@@ -10920,7 +11007,7 @@ msgid ""
 "mypool."
 msgstr ""
 
-#: cmd/incus/storage_volume_file.go:719
+#: cmd/incus/storage_volume_file.go:709
 msgid ""
 "incus storage volume file push /etc/hosts local v1/etc/hosts\n"
 "   To push /etc/hosts into the custom volume \"v1\".\n"
@@ -11183,16 +11270,16 @@ msgstr ""
 msgid "space used"
 msgstr "使用空间"
 
-#: cmd/incus/utils.go:566
+#: cmd/incus/utils.go:565
 msgid "sshfs has stopped"
 msgstr "sshfs 已停止"
 
-#: cmd/incus/utils.go:525
+#: cmd/incus/utils.go:524
 #, c-format
 msgid "sshfs mounting %q on %q"
 msgstr "sshfs 挂载 %q 在 %q"
 
-#: cmd/incus/file.go:767
+#: cmd/incus/file.go:760
 #, fuzzy
 msgid "stdin can only be used once, with no other source arguments"
 msgstr "--target 不能与实例一起使用"
