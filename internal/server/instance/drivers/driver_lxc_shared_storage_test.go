@@ -8,6 +8,7 @@ import (
 
 	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	serverInstance "github.com/lxc/incus/v7/internal/server/instance"
+	storageDrivers "github.com/lxc/incus/v7/internal/server/storage/drivers"
 )
 
 func TestSharedStorageHandoverDriverIdentityIsVersioned(t *testing.T) {
@@ -626,6 +627,86 @@ func TestReleaseSharedStorageMigrationTargetClaimCephext(t *testing.T) {
 
 	if config[internalInstance.ConfigVolatileMigrationStorageHandoverRole] != internalInstance.StorageHandoverRoleTarget {
 		t.Fatal("External RBD claim did not retain its target role")
+	}
+}
+
+func TestReleaseSharedStorageMigrationTargetClaimDrainsMountReferences(t *testing.T) {
+	unmountCalls := 0
+	deleted := false
+
+	err := releaseSharedStorageMigrationTargetClaim(
+		"ceph",
+		func() bool { return false },
+		func() error {
+			t.Fatal("Stopped an already stopped migration target")
+			return nil
+		},
+		func() error {
+			unmountCalls++
+			if unmountCalls < 3 {
+				return storageDrivers.ErrInUse
+			}
+
+			return nil
+		},
+		func(changes map[string]string) error { return nil },
+		func() error {
+			deleted = true
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("releaseSharedStorageMigrationTargetClaim returned error: %v", err)
+	}
+
+	if unmountCalls != 3 {
+		t.Fatalf("Unmount calls = %d, want 3", unmountCalls)
+	}
+
+	if !deleted {
+		t.Fatal("Target claim was not deleted after draining mount references")
+	}
+}
+
+func TestReleaseSharedStorageMigrationTargetClaimUnmountBound(t *testing.T) {
+	unmountCalls := 0
+	protected := false
+	deleted := false
+
+	err := releaseSharedStorageMigrationTargetClaim(
+		"ceph",
+		func() bool { return false },
+		func() error {
+			t.Fatal("Stopped an already stopped migration target")
+			return nil
+		},
+		func() error {
+			unmountCalls++
+			return storageDrivers.ErrInUse
+		},
+		func(changes map[string]string) error {
+			protected = true
+			return nil
+		},
+		func() error {
+			deleted = true
+			return nil
+		},
+	)
+	if !errors.Is(err, storageDrivers.ErrInUse) {
+		t.Fatalf("Cleanup error = %v, want ErrInUse", err)
+	}
+
+	if !errors.Is(err, serverInstance.ErrMigrationTargetCleanupIncomplete) {
+		t.Fatalf("Cleanup error = %v, want durable incomplete-cleanup sentinel", err)
+	}
+
+	if unmountCalls != maxSharedStorageUnmountAttempts {
+		t.Fatalf("Unmount calls = %d, want %d", unmountCalls, maxSharedStorageUnmountAttempts)
+	}
+
+	if protected || deleted {
+		t.Fatalf("Cleanup continued after mount references failed to drain: protected=%t deleted=%t", protected, deleted)
 	}
 }
 

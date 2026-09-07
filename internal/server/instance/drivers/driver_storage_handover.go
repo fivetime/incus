@@ -7,9 +7,12 @@ import (
 
 	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	"github.com/lxc/incus/v7/internal/server/instance"
+	storageDrivers "github.com/lxc/incus/v7/internal/server/storage/drivers"
 )
 
 const sharedStorageHandoverReadyMarker = "incus-shared-storage-handover-ready-v1"
+
+const maxSharedStorageUnmountAttempts = 64
 
 func sharedStorageHandoverDriverIdentity(driverName string) string {
 	if !isCephSharedStorageDriver(driverName) {
@@ -132,9 +135,20 @@ func releaseSharedStorageMigrationTargetClaim(driverName string, isRunning func(
 		}
 	}
 
-	err := unmount()
+	var err error
+	for range maxSharedStorageUnmountAttempts {
+		err = unmount()
+		if err == nil {
+			break
+		}
+
+		if !errors.Is(err, storageDrivers.ErrInUse) {
+			return cleanupError("Unmount migration target storage", err)
+		}
+	}
+
 	if err != nil {
-		return cleanupError("Unmount migration target storage", err)
+		return cleanupError("Unmount migration target storage", fmt.Errorf("Mount references did not drain after %d attempts: %w", maxSharedStorageUnmountAttempts, err))
 	}
 
 	changes := map[string]string{

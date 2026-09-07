@@ -6946,16 +6946,29 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				!d.IsRunning() &&
 				(!liveSharedHandoverStarted.Load() || targetSharedStorageReleased.Load())
 			if canRestoreLiveShared {
-				recoveryArgs := instance.CriuMigrationArgs{
-					Cmd:          liblxc.MIGRATE_RESTORE,
-					StateDir:     liveSharedCheckpointDir,
-					Function:     "migration",
-					Stop:         false,
-					ActionScript: false,
-					DumpDir:      "final",
+				// The source released its root before the target claimed it. Once
+				// the target confirms that claim is gone, mount the root again so
+				// liblxc can resolve the checkpoint's rootfs during local restore.
+				_, recoveryErr := pool.MountInstance(d, d.op)
+				if recoveryErr != nil {
+					err = errors.Join(err, fmt.Errorf("Failed remounting source storage after live shared storage migration failure: %w", recoveryErr))
+				} else {
+					recoveryArgs := instance.CriuMigrationArgs{
+						Cmd:          liblxc.MIGRATE_RESTORE,
+						StateDir:     liveSharedCheckpointDir,
+						Function:     "migration",
+						Stop:         false,
+						ActionScript: false,
+						DumpDir:      "final",
+					}
+
+					recoveryErr = d.migrate(&recoveryArgs)
+					releaseErr := pool.UnmountInstance(d, nil)
+					if releaseErr != nil && !errors.Is(releaseErr, storageDrivers.ErrInUse) {
+						recoveryErr = errors.Join(recoveryErr, fmt.Errorf("Failed releasing temporary source storage pre-mount: %w", releaseErr))
+					}
 				}
 
-				recoveryErr := d.migrate(&recoveryArgs)
 				if recoveryErr != nil {
 					err = errors.Join(err, fmt.Errorf("Failed restoring source after live shared storage migration failure: %w", recoveryErr))
 				} else {
@@ -6973,7 +6986,11 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					}
 				}
 			} else if liveSharedCheckpointDir != "" && !d.IsRunning() {
-				d.logger.Error("Not restoring source after failed live shared storage migration because the target did not confirm releasing its claim")
+				recoveryRefusalErr := fmt.Errorf(
+					"Not restoring source after failed live shared storage migration: handover started=%t, target claim released=%t, source running=%t",
+					liveSharedHandoverStarted.Load(), targetSharedStorageReleased.Load(), d.IsRunning())
+				d.logger.Error("Refusing unsafe live shared storage source recovery", logger.Ctx{"err": recoveryRefusalErr})
+				err = errors.Join(err, recoveryRefusalErr)
 			}
 
 			if volSourceArgs.SharedStorage {
