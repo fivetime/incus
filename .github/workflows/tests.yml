@@ -44,7 +44,7 @@ jobs:
           SHELLCHECK_OPTS: --shell sh
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          exclude-path: internal/server/instance/drivers/agent-loader/rc.d/incus-agent
+          exclude-path: internal/server/instance/drivers/agent-loader/rc.d-*/incus-agent
         if: github.event_name == 'pull_request' && matrix.go == 'stable'
 
       - name: Upload artifact with ShellCheck defects in SARIF format
@@ -406,7 +406,7 @@ jobs:
 
           sudo apt-get install --no-install-recommends -y snapd
           sudo snap install microceph --channel=quincy/stable
-          sudo apt-get install --no-install-recommends -y ceph-common
+          sudo apt-get install --no-install-recommends -y ceph-common qemu-block-extra qemu-utils
           sudo microceph cluster bootstrap
           sudo microceph.ceph config set global osd_pool_default_size 1
           sudo microceph.ceph config set global mon_allow_pool_delete true
@@ -828,6 +828,8 @@ jobs:
           - test: storage_vm
             driver: ceph
           - test: storage_vm
+            driver: ceph-librbd
+          - test: storage_vm
             driver: linstor
           - test: storage_volumes_vm
             driver: dir
@@ -841,6 +843,8 @@ jobs:
             driver: zfs
           - test: storage_volumes_vm
             driver: ceph
+          - test: storage_volumes_vm
+            driver: ceph-librbd
           - test: storage_volumes_vm
             driver: linstor
     # Runs on ephemeral Debian VMs with nested virtualization (amd64 only).
@@ -874,6 +878,7 @@ jobs:
             curl \
             dnsmasq-base \
             dosfstools \
+            gdisk \
             genisoimage \
             gettext \
             git \
@@ -914,7 +919,7 @@ jobs:
           curl -sL https://pkgs.zabbly.com/get/zfs-stable | sudo DEBIAN_FRONTEND=noninteractive sh
 
       - name: Setup MicroCeph
-        if: matrix.driver == 'ceph'
+        if: matrix.driver == 'ceph' || matrix.driver == 'ceph-librbd'
         run: |
           set -x
 

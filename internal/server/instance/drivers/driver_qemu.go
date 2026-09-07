@@ -355,6 +355,9 @@ type qemu struct {
 	// Stateful migration streams.
 	migrationReceiveStateful map[string]io.ReadWriteCloser
 
+	// Cancelled if the migration source fails partway through.
+	migrationReceiveCtx context.Context
+
 	// Indicate whether the root disk will be live-migrated.
 	migrationRootDisk bool
 	disksToMigrate    []localMigration.DependentVolumeArgs
@@ -387,7 +390,7 @@ func (d *qemu) getAgentClient() (*http.Client, error) {
 	}
 
 	// Only Linux and Windows support VirtIO vsock.
-	if slices.Contains([]osinfo.OSType{osinfo.FreeBSD, osinfo.MacOS}, d.GuestOS()) {
+	if slices.Contains([]osinfo.OSType{osinfo.FreeBSD, osinfo.MacOS, osinfo.NetBSD}, d.GuestOS()) {
 		// Get known network details.
 		networks, err := d.getNetworkState()
 		if err != nil {
@@ -514,15 +517,35 @@ func (d *qemu) getMonitorEventHandler() func(event string, data map[string]any) 
 		switch event {
 		case qmp.EventAgentStarted:
 			d.logger.Debug("Instance agent started")
+
+			volatileSet := make(map[string]string)
+			localConfig := d.LocalConfig()
+			if localConfig["volatile.last_state.agent"] != instance.AgentStateStarted {
+				volatileSet["volatile.last_state.agent"] = instance.AgentStateStarted
+			}
+
+			// At that point, we consider that the agent has applied the template if it was provided. This
+			// is ignored if the agent has already been started and not rebooted since.
+			if util.IsFalseOrEmpty(localConfig["volatile.last_state.agent.once"]) {
+				volatileSet["volatile.last_state.agent.once"] = "true"
+				if localConfig["volatile.apply_template"] != "" {
+					// Record that the instance devices got modified and a full reset will be needed to get a
+					// consistent state.
+					volatileSet["volatile.apply_template"] = ""
+					volatileSet["volatile.vm.needs_reset"] = "true"
+				}
+			}
+
+			if len(volatileSet) > 0 {
+				err = d.VolatileSet(volatileSet)
+				if err != nil {
+					d.logger.Error("Failed recording last agent state", logger.Ctx{"err": err})
+				}
+			}
+
 			err := d.advertiseVsockAddress()
 			if err != nil {
 				d.logger.Warn("Failed to advertise vsock address to instance agent", logger.Ctx{"err": err})
-				return
-			}
-
-			err = d.VolatileSet(map[string]string{"volatile.last_state.agent": instance.AgentStateStarted})
-			if err != nil {
-				d.logger.Error("Failed recording last agent state", logger.Ctx{"err": err})
 			}
 
 			s.Events.SendLifecycle(instProject.Name, lifecycle.InstanceAgentStarted.Event(d, nil))
@@ -1151,7 +1174,12 @@ func (d *qemu) restoreState(monitor *qmp.Monitor) error {
 			_ = pipeWrite.Close()
 		}()
 
-		err = d.restoreStateHandle(context.Background(), monitor, pipeRead)
+		ctx := d.migrationReceiveCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		err = d.restoreStateHandle(ctx, monitor, pipeRead)
 		if err != nil {
 			return fmt.Errorf("Failed restoring checkpoint from source: %w", err)
 		}
@@ -1587,6 +1615,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 	volatileSet := make(map[string]string)
 
 	if !stateful {
+		volatileSet["volatile.last_state.agent.once"] = ""
 		volatileSet["volatile.vm.needs_reset"] = ""
 	}
 
@@ -1611,11 +1640,15 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		volatileSet["volatile.uuid.generation"] = vmGenUUID
 	}
 
-	// Generate the config drive.
-	err = d.generateConfigShare(volatileSet)
-	if err != nil {
-		op.Done(err)
-		return err
+	// Generate the config drive. Skip this when starting as a live migration target as the
+	// running guest relies on the current content and the source may still hold its own
+	// mount of a shared config volume.
+	if d.migrationReceiveStateful == nil {
+		err = d.generateConfigShare()
+		if err != nil {
+			op.Done(err)
+			return err
+		}
 	}
 
 	// Create all needed paths.
@@ -1866,25 +1899,12 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		"-cpu", bs.CPUType,
 		"-nographic",
 		"-serial", "chardev:console",
+		"-qmp", "chardev:monitor",
 		"-nodefaults",
 		"-no-user-config",
-		"-sandbox", "on,obsolete=deny,elevateprivileges=allow,spawn=allow,resourcecontrol=deny",
 		"-readconfig", confFile,
 		"-pidfile", d.pidFilePath(),
 		"-D", d.LogFilePath(),
-	}
-
-	// Get the feature flags.
-	info := DriverStatuses()[instancetype.VM].Info
-	_, spiceSupported := info.Features["spice"]
-	if spiceSupported {
-		spiceConfig, err := d.spiceCmdlineConfig(&fdFiles)
-		if err != nil {
-			op.Done(err)
-			return err
-		}
-
-		qemuArgs = append(qemuArgs, "-spice", spiceConfig)
 	}
 
 	// When a GPU is using virtio-gpu DRM native context, the guest needs a host-backed
@@ -2046,17 +2066,6 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 		}
 	}
 
-	// Handle hugepages on architectures where we don't set NUMA nodes.
-	if d.architecture != osarch.ARCH_64BIT_INTEL_X86 && util.IsTrue(d.expandedConfig["limits.memory.hugepages"]) {
-		hugetlb, err := localUtil.HugepagesPath()
-		if err != nil {
-			op.Done(err)
-			return err
-		}
-
-		qemuArgs = append(qemuArgs, "-mem-path", hugetlb, "-mem-prealloc")
-	}
-
 	if d.expandedConfig["raw.qemu"] != "" {
 		fields, err := shellquote.Split(d.expandedConfig["raw.qemu"])
 		if err != nil {
@@ -2068,7 +2077,7 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 	}
 
 	// Apply the RTC configuration.
-	// This needs to happen close to creating the full qemu cmd or the time might drift in between.
+	// This needs to happen close to writing the config file or the time might drift in between.
 	adjustment := d.getStartupRTCAdjustment()
 
 	if d.GuestOS() == osinfo.Windows || adjustment != 0 {
@@ -2081,8 +2090,11 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 			base = base.UTC()
 		}
 
-		datetime := base.Format("2006-01-02T15:04:05")
-		qemuArgs = append(qemuArgs, "-rtc", fmt.Sprintf("base=%s", datetime))
+		d.conf = append(d.conf, cfg.Section{
+			Name:    "rtc",
+			Comment: "Clock",
+			Entries: map[string]string{"base": base.Format("2006-01-02T15:04:05")},
+		})
 	}
 
 	d.cmdArgs = qemuArgs
@@ -3531,25 +3543,32 @@ func (d *qemu) migrateSockPath() string {
 	return filepath.Join(d.RunPath(), "migrate.sock")
 }
 
-func (d *qemu) spiceCmdlineConfig(fdFiles *[]*os.File) (string, error) {
+func (d *qemu) spiceConfig(fdFiles *[]*os.File) ([]cfg.Section, error) {
 	// Reference the socket through a short /proc/self/fd path to handle
 	// run paths that exceed the unix socket path limit.
 	spiceDir, err := os.OpenFile(d.RunPath(), unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	spiceDirFD := d.addFileDescriptor(fdFiles, spiceDir)
-	spicePath := fmt.Sprintf("/proc/self/fd/%d/qemu.spice", spiceDirFD)
 
-	return fmt.Sprintf("unix=on,disable-ticketing=on,addr=%s", spicePath), nil
+	return []cfg.Section{{
+		Name:    "spice",
+		Comment: "SPICE",
+		Entries: map[string]string{
+			"unix":              "on",
+			"disable-ticketing": "on",
+			"addr":              fmt.Sprintf("/proc/self/fd/%d/qemu.spice", spiceDirFD),
+		},
+	}}, nil
 }
 
 // generateConfigShare generates the config share directory that will be exported to the VM via
 // a 9P share. Due to the unknown size of templates inside the images this directory is created
 // inside the VM's config volume so that it can be restricted by quota.
 // Requires the instance be mounted before calling this function.
-func (d *qemu) generateConfigShare(volatileSet map[string]string) error {
+func (d *qemu) generateConfigShare() error {
 	configDrivePath := filepath.Join(d.Path(), "config")
 
 	// Create config drive dir if doesn't exist, if it does exist, leave it around so we don't regenerate all
@@ -3582,9 +3601,12 @@ func (d *qemu) generateConfigShare(volatileSet map[string]string) error {
 
 			// Legacy support.
 			_ = os.Remove(filepath.Join(configDrivePath, "lxd-agent"))
-			err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
-			if err != nil {
-				return err
+			if guestOS != osinfo.NetBSD {
+				// NetBSD has a bug in its 9p driver when dealing with symbolic links.
+				err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
+				if err != nil {
+					return err
+				}
 			}
 		} else if agentSrcPath != "" {
 			// Install agent into config drive dir if found.
@@ -3642,9 +3664,12 @@ func (d *qemu) generateConfigShare(volatileSet map[string]string) error {
 
 			// Legacy support.
 			_ = os.Remove(filepath.Join(configDrivePath, "lxd-agent"))
-			err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
-			if err != nil {
-				return err
+			if guestOS != osinfo.NetBSD {
+				// NetBSD has a bug in its 9p driver when dealing with symbolic links.
+				err = os.Symlink("incus-agent", filepath.Join(configDrivePath, "lxd-agent"))
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			d.logger.Warn("incus-agent not found, skipping its inclusion in the VM config drive", logger.Ctx{"err": err})
@@ -3681,7 +3706,7 @@ func (d *qemu) generateConfigShare(volatileSet map[string]string) error {
 		}
 
 		// rc.d service for incus-agent.
-		agentFile, err := incusAgentLoader.ReadFile("agent-loader/rc.d/incus-agent")
+		agentFile, err := incusAgentLoader.ReadFile("agent-loader/rc.d-freebsd/incus-agent")
 		if err != nil {
 			return err
 		}
@@ -3817,6 +3842,48 @@ func (d *qemu) generateConfigShare(volatileSet map[string]string) error {
 			return err
 		}
 
+	case osinfo.NetBSD:
+		// rc.d service.
+		err = os.MkdirAll(filepath.Join(configDrivePath, "rc.d"), 0o500)
+		if err != nil {
+			return err
+		}
+
+		// rc.d service for incus-agent.
+		agentFile, err := incusAgentLoader.ReadFile("agent-loader/rc.d-netbsd/incus-agent")
+		if err != nil {
+			return err
+		}
+
+		err = os.WriteFile(filepath.Join(configDrivePath, "rc.d", "incus-agent"), agentFile, 0o500)
+		if err != nil {
+			return err
+		}
+
+		// Setup script for incus-agent that is executed by the incus-agent service before starting.
+		// The script sets up a temporary mount point, copies data from the mount (including incus-agent binary),
+		// and then unmounts it. It also ensures appropriate permissions for the Incus agent's runtime directory.
+		agentFile, err = incusAgentLoader.ReadFile("agent-loader/incus-agent-setup-netbsd")
+		if err != nil {
+			return err
+		}
+
+		err = os.WriteFile(filepath.Join(configDrivePath, "incus-agent-setup"), agentFile, 0o500)
+		if err != nil {
+			return err
+		}
+
+		// Install script for manual installs.
+		agentFile, err = incusAgentLoader.ReadFile("agent-loader/install-netbsd.sh")
+		if err != nil {
+			return err
+		}
+
+		err = os.WriteFile(filepath.Join(configDrivePath, "install.sh"), agentFile, 0o500)
+		if err != nil {
+			return err
+		}
+
 	case osinfo.Windows:
 		// Setup script for incus-agent that is executed by Service Control Manager (SCM). Since by
 		// default Windows cannot run a PowerShell script as a service without the help of a third
@@ -3854,17 +3921,12 @@ func (d *qemu) generateConfigShare(volatileSet map[string]string) error {
 	}
 
 	// Template anything that needs templating.
-	key := "volatile.apply_template"
-	if d.localConfig[key] != "" {
+	if d.localConfig["volatile.apply_template"] != "" {
 		// Run any template that needs running.
-		err = d.templateApplyNow(instance.TemplateTrigger(d.localConfig[key]), templateFilesPath)
+		err = d.templateApplyNow(instance.TemplateTrigger(d.localConfig["volatile.apply_template"]), templateFilesPath)
 		if err != nil {
 			return err
 		}
-
-		// Record that the instance devices got modified and a full reset will be needed to get a consistent state.
-		volatileSet[key] = ""
-		volatileSet["volatile.vm.needs_reset"] = "true"
 	}
 
 	err = d.templateApplyNow("start", templateFilesPath)
@@ -4214,11 +4276,16 @@ func (d *qemu) gpuNativeContextConfig(devConfs []*deviceConfig.RunConfig) (bool,
 func (d *qemu) generateQemuConfig(bs *qemuBootState, mountInfo *storagePools.MountInfo, busName string, vsockFD int, devConfs []*deviceConfig.RunConfig, fdFiles *[]*os.File) ([]monitorHook, error) {
 	var monHooks []monitorHook
 
-	isWindows := d.GuestOS() == osinfo.Windows
+	guestOS := d.GuestOS()
+	isNetBSD := guestOS == osinfo.NetBSD
+	isWindows := guestOS == osinfo.Windows
 	conf := qemuBase(&qemuBaseOpts{d.Architecture(), util.IsTrue(d.expandedConfig["security.iommu"]), bs.MachineType})
 
 	// Set OS Specific qemu args.
 	conf = append(conf, d.osVersionSpecificOptions()...)
+
+	// Restrict the available syscalls.
+	conf = append(conf, qemuSandbox()...)
 
 	err := d.addCPUMemoryConfig(&conf, bs)
 	if err != nil {
@@ -4371,6 +4438,19 @@ func (d *qemu) generateQemuConfig(bs *qemuBootState, mountInfo *storagePools.Mou
 	_, virtioSound := info.Features["virtio-sound"]
 	_, virtioVGA := info.Features["virtio-vga"]
 
+	// NetBSD doesn’t support multiport VirtIO serial, and thus doesn’t support SPICE over a
+	// serial port.
+	spice = spice && !isNetBSD
+
+	if spice {
+		spiceConf, err := d.spiceConfig(fdFiles)
+		if err != nil {
+			return nil, err
+		}
+
+		conf = append(conf, spiceConf...)
+	}
+
 	devBus, devAddr, multi = bus.allocate(busFunctionGroupGeneric)
 	serialOpts := qemuSerialOpts{
 		dev: qemuDevOpts{
@@ -4382,6 +4462,7 @@ func (d *qemu) generateQemuConfig(bs *qemuBootState, mountInfo *storagePools.Mou
 		charDevName:      qemuSerialChardevName,
 		ringbufSizeBytes: qmp.RingbufSize,
 		spice:            spice,
+		multiPort:        !isNetBSD,
 	}
 
 	conf = append(conf, qemuSerial(&serialOpts)...)
@@ -4482,7 +4563,7 @@ func (d *qemu) generateQemuConfig(bs *qemuBootState, mountInfo *storagePools.Mou
 		if sevOpts != nil {
 			for i := range conf {
 				if conf[i].Name == "machine" {
-					conf[i].Entries["memory-encryption"] = "sev0"
+					conf[i].Entries["confidential-guest-support"] = "sev0"
 					break
 				}
 			}
@@ -6274,9 +6355,10 @@ func (d *qemu) pid() (int, error) {
 		return 0, nil // Process has gone.
 	}
 
-	qemuSearchString := []byte("qemu-system")
+	// The QEMU binary name varies by distribution (e.g. qemu-kvm on EL systems).
+	isQemu := bytes.Contains(cmdLine, []byte("qemu-system")) || bytes.Contains(cmdLine, []byte("qemu-kvm"))
 	instUUID := []byte(d.localConfig["volatile.uuid"])
-	if !bytes.Contains(cmdLine, qemuSearchString) || !bytes.Contains(cmdLine, instUUID) {
+	if !isQemu || !bytes.Contains(cmdLine, instUUID) {
 		return -1, errors.New("PID doesn't match the running process")
 	}
 
@@ -7534,7 +7616,7 @@ func (d *qemu) updateMemoryLimit(newLimit string) error {
 	if curSizeMB == newSizeMB {
 		return nil
 	} else if baseSizeMB < newSizeMB {
-		if util.IsFalse(d.expandedConfig["limits.memory.hotplug"]) || d.GuestOS() == osinfo.FreeBSD {
+		if util.IsFalse(d.expandedConfig["limits.memory.hotplug"]) || slices.Contains([]osinfo.OSType{osinfo.FreeBSD, osinfo.NetBSD}, d.GuestOS()) {
 			return fmt.Errorf("Memory hotplug feature is disabled")
 		}
 
@@ -8328,6 +8410,8 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		return err
 	}
 
+	// On a cluster move the dependent volumes on shared storage are taken over by the target
+	// rather than transferred, so they're kept out of the offer.
 	dependentVolumesOffer, err := storagePools.GenerateDependentVolumesOffer(d.state, srcConfig, d.Project().Name, args.Snapshots, args.Devices, args.SkipDependentVolumes, clusterMove)
 	if err != nil {
 		err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
@@ -8382,7 +8466,8 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		if fsid != "" {
 			offerHeader.CephFsid = new(fsid)
 			offerHeader.CephPool = new(osdPool)
-			offerHeader.CephDriver = new(sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name))
+			driverIdentity := sharedStorageHandoverDriverIdentity(pool.Driver().Info().Name)
+			offerHeader.CephDriver = new(driverIdentity)
 		}
 	}
 
@@ -8600,12 +8685,19 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	{
 		err := g.Wait()
 		if err != nil {
-			if !committed {
-				if volSourceArgs.SharedStorage {
-					// The target may have completed its storage claim even though the source observed a failure.
-					d.logger.Warn("Migration failed with a pending storage handover, keeping the volatile.migration.storage_handover marker")
-				}
+			if volSourceArgs.SharedStorage {
+				// The migration failed from this server's point of view, but the
+				// target may still have completed its claim of the volumes (e.g.
+				// when its success response got lost). Only an explicit
+				// confirmation could prove that the target holds no claim, so the
+				// pending marker is kept: deleting the volumes of a completed
+				// handover would destroy the target's data, while a stale marker
+				// at worst leaks them. Clear the marker manually once the target
+				// is confirmed to hold no claim.
+				d.logger.Warn("Migration failed with a pending storage handover, keeping the volatile.migration.storage_handover marker")
+			}
 
+			if !committed {
 				op.Done(err)
 				return err
 			}
@@ -8662,7 +8754,7 @@ func (d *qemu) prepareEphemeralSnapshot(monitor *qmp.Monitor, diskName string, d
 		return "", "", nil, fmt.Errorf("Failed opening file image for migration storage snapshot %q: %w", snapshotFile, err)
 	}
 
-	defer logger.WarnOnError(func() error { return os.Remove(snapshotFile) }, "Failed to remove snapshot file")
+	defer logger.WarnOnErrorExcept(func() error { return os.Remove(snapshotFile) }, []error{fs.ErrNotExist}, "Failed to remove snapshot file")
 
 	// Pass the snapshot file to the running QEMU process.
 	snapFile, err := os.OpenFile(snapshotFile, unix.O_RDWR, 0)
@@ -8807,7 +8899,7 @@ func (d *qemu) createEphemeralSnapshot(diskName string, diskSize int64) (func(),
 // sendMigrationSnapshot transfers the snapshot to the target.
 // If finalize is true, it performs cleanup after migration.
 // Otherwise, it returns a finalize function that can be called later.
-func (d *qemu) sendMigrationSnapshot(diskName string, filesystemConn io.ReadWriteCloser, finalize bool) (func() error, error) {
+func (d *qemu) sendMigrationSnapshot(ctx context.Context, diskName string, filesystemConn io.ReadWriteCloser, finalize bool) (func() error, error) {
 	monitor, err := d.qmpConnect()
 	if err != nil {
 		return nil, err
@@ -8826,6 +8918,52 @@ func (d *qemu) sendMigrationSnapshot(diskName string, filesystemConn io.ReadWrit
 
 	defer logger.WarnOnError(listener.Close, "Failed to close listener")
 
+	// NBD servers speak first, so wait for the target's greeting rather than
+	// blocking inside blockdev-add as the target can take minutes to get ready.
+	greeting := make([]byte, 4096)
+	greetingLen := 0
+	chGreeting := make(chan error, 1)
+
+	go func() {
+		barriers := 0
+
+		for {
+			n, err := filesystemConn.Read(greeting)
+			if err != nil {
+				// Tolerate the odd stray barrier from the preceding transfer phase.
+				if errors.Is(err, io.EOF) && n == 0 && barriers < 3 {
+					barriers++
+					continue
+				}
+
+				chGreeting <- err
+				return
+			}
+
+			if n > 0 {
+				greetingLen = n
+				chGreeting <- nil
+				return
+			}
+		}
+	}()
+
+	d.logger.Debug("Waiting for migration NBD server greeting", logger.Ctx{"diskName": diskName})
+
+	var errGreeting error
+
+	select {
+	case errGreeting = <-chGreeting:
+	case <-ctx.Done():
+		errGreeting = ctx.Err()
+	case <-time.After(10 * time.Minute):
+		errGreeting = errors.New("Timed out")
+	}
+
+	if errGreeting != nil {
+		return nil, fmt.Errorf("Failed waiting for migration NBD server: %w", errGreeting)
+	}
+
 	g, _ := errgroup.WithContext(context.Background())
 
 	g.Go(func() error {
@@ -8838,6 +8976,13 @@ func (d *qemu) sendMigrationSnapshot(diskName string, filesystemConn io.ReadWrit
 		defer logger.WarnOnError(nbdConn.Close, "Failed to close connection")
 
 		d.logger.Debug("NBD connection on source started")
+
+		// Replay the NBD server greeting received during the readiness wait.
+		_, err = nbdConn.Write(greeting[:greetingLen])
+		if err != nil {
+			return fmt.Errorf("Failed forwarding NBD server greeting: %w", err)
+		}
+
 		go func() { _, _ = util.SafeCopy(filesystemConn, nbdConn) }()
 
 		_, _ = util.SafeCopy(nbdConn, filesystemConn)
@@ -8978,6 +9123,10 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 			// migration and blockdev-mirror. This requires that the migration be continued after it
 			// has reached the "pre-switchover" status.
 			"pause-before-switchover": true,
+
+			// Emit MIGRATION events on status changes so we notice pre-switchover
+			// immediately rather than on the next poll.
+			"events": true,
 		}
 
 		err = monitor.MigrateSetCapabilities(capabilities)
@@ -9023,6 +9172,15 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 		capabilities := map[string]bool{
 			// Automatically throttle down the guest to speed up convergence of RAM migration.
 			"auto-converge": true,
+
+			// Pause the migration before the device state serialization so the source can
+			// flush its pending config volume writes to disk before the target reads or
+			// overwrites them through its own mount of the shared volume.
+			"pause-before-switchover": true,
+
+			// Emit MIGRATION events on status changes so we notice pre-switchover
+			// immediately rather than on the next poll.
+			"events": true,
 		}
 
 		err = monitor.MigrateSetCapabilities(capabilities)
@@ -9094,7 +9252,7 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 
 	var finalizeRootTransfer func() error
 	if !sameSharedStorage {
-		finalizeRootTransfer, err = d.sendMigrationSnapshot(rootDiskName, filesystemConn, false)
+		finalizeRootTransfer, err = d.sendMigrationSnapshot(ctx, rootDiskName, filesystemConn, false)
 		if err != nil {
 			return fmt.Errorf("Failed transferring snapshot disk: %w", err)
 		}
@@ -9123,7 +9281,11 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 	// On failure, cancel the migration and resume the guest.
 	reverter.Add(func() {
 		_ = monitor.MigrateCancel()
-		_ = monitor.Start()
+
+		err := monitor.Start()
+		if err != nil {
+			d.logger.Error("Failed resuming instance after failed migration", logger.Ctx{"err": err})
+		}
 	})
 
 	// Start monitoring the migration progress.
@@ -9165,16 +9327,16 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 		}()
 	}
 
+	// Wait until state transfer has reached pre-switchover state (the guest OS will remain paused).
+	err = monitor.MigrateWait(ctx, "pre-switchover")
+	if err != nil {
+		return fmt.Errorf("Failed waiting for state transfer to reach pre-switchover stage: %w", err)
+	}
+
+	d.logger.Debug("Stateful migration checkpoint reached pre-switchover phase")
+
 	// Non-shared storage snapshot transfer finalization.
 	if !sameSharedStorage || dependentVolumeMove {
-		// Wait until state transfer has reached pre-switchover state (the guest OS will remain paused).
-		err = monitor.MigrateWait(ctx, "pre-switchover")
-		if err != nil {
-			return fmt.Errorf("Failed waiting for state transfer to reach pre-switchover stage: %w", err)
-		}
-
-		d.logger.Debug("Stateful migration checkpoint reached pre-switchover phase")
-
 		if finalizeRootTransfer != nil {
 			err = finalizeRootTransfer()
 			if err != nil {
@@ -9185,20 +9347,30 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 		for _, vol := range volSourceArgs.DependentVolumes {
 			diskName := d.blockNodeName(linux.PathNameEncode(vol.DeviceName))
 
-			_, err = d.sendMigrationSnapshot(diskName, filesystemConn, true)
+			_, err = d.sendMigrationSnapshot(ctx, diskName, filesystemConn, true)
 			if err != nil {
 				return fmt.Errorf("Failed transferring snapshot disk: %w", err)
 			}
 		}
-
-		// Finalise the migration state transfer (the guest OS will remain paused).
-		err = monitor.MigrateContinue("pre-switchover")
-		if err != nil {
-			return fmt.Errorf("Failed continuing state transfer: %w", err)
-		}
-
-		d.logger.Debug("Stateful migration checkpoint send continuing")
 	}
+
+	// With the guest paused, flush any pending config volume writes (TPM state, UEFI
+	// variables) so they reach the shared volume before the target writes to it during
+	// the switchover.
+	if sameSharedStorage {
+		err = linux.SyncFS(d.Path())
+		if err != nil {
+			return fmt.Errorf("Failed syncing config volume: %w", err)
+		}
+	}
+
+	// Finalize the migration state transfer (the guest OS will remain paused).
+	err = monitor.MigrateContinue("pre-switchover")
+	if err != nil {
+		return fmt.Errorf("Failed continuing state transfer: %w", err)
+	}
+
+	d.logger.Debug("Stateful migration checkpoint send continuing")
 
 	// Wait until the migration state transfer has completed (the guest OS will remain paused).
 	err = monitor.MigrateWait(ctx, "completed")
@@ -9703,6 +9875,8 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 				d.migrationReceiveStateful = map[string]io.ReadWriteCloser{
 					api.SecretNameState: stateConn,
 				}
+
+				d.migrationReceiveCtx = ctx
 
 				d.disksToMigrate = append(d.disksToMigrate, dependentVolumes...)
 
@@ -10795,6 +10969,11 @@ func (d *qemu) statusCode() api.StatusCode {
 
 	status, err := monitor.Status()
 	if err != nil {
+		// A busy monitor means QEMU is alive but processing a slow command.
+		if errors.Is(err, qmp.ErrMonitorBusy) {
+			return api.Running
+		}
+
 		if errors.Is(err, qmp.ErrMonitorDisconnect) {
 			// If cannot connect to monitor, but qemu process in pid file still exists, then likely
 			// qemu is unresponsive and this instance is in an error state.
@@ -11047,7 +11226,7 @@ func (d *qemu) checkFeatures(hostArch int, qemuPath string) (map[string]any, err
 		"-nodefaults",
 		"-no-user-config",
 		"-chardev", fmt.Sprintf("socket,id=monitor,path=%s,server=on,wait=off", qemuEscapeCmdline(monitorPath.Name())),
-		"-mon", "chardev=monitor,mode=control",
+		"-qmp", "chardev:monitor",
 		"-machine", qemuMachineType(hostArch),
 	}
 
@@ -11922,6 +12101,11 @@ func (d *qemu) CanLiveMigrate() bool {
 	return true
 }
 
+// IsLiveMigration returns whether the instance is starting as the target of a live migration.
+func (d *qemu) IsLiveMigration() bool {
+	return d.migrationReceiveStateful != nil
+}
+
 // GuestOS returns the guest OS. In this driver, we consider anything unknown to be Linux.
 func (d *qemu) GuestOS() osinfo.OSType {
 	osType, _ := osinfo.DetermineOS(strings.ToLower(d.expandedConfig["image.os"]))
@@ -12428,7 +12612,7 @@ func (d *qemu) ConnectNBDAllDisks(reuse bool) (net.Conn, func(), error) {
 		session := nbdSessions[d.id]
 		if session == nil {
 			nbdSessionsMu.Unlock()
-			return nil, nil, errors.New("No NBD session is currently active")
+			return nil, nil, api.StatusErrorf(http.StatusBadRequest, "No NBD session is currently active")
 		}
 
 		conn, err := net.Dial("unix", d.nbdPath())
@@ -12834,6 +13018,8 @@ func buildDataFileInfo(nodeName string, m *qmp.Monitor, driveConf deviceConfig.M
 	return dataDev, nil
 }
 
+// getNVRAM gets the NVRAM assuming the config volume is mounted and the NVRAM already has been
+// initialized.
 func (d *qemu) getNVRAM() (*uefi.Store, error) {
 	nvRAM, err := os.ReadFile(d.nvramPath())
 	if err != nil {

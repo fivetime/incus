@@ -1340,28 +1340,22 @@ func (d *ceph) getRBDKernelMappedDevPath(rbdName string) (string, error) {
 
 // getRBDNbdImageSpec returns the QEMU image specification used to access the given RBD image through librbd.
 func (d *ceph) getRBDNbdImageSpec(rbdName string) string {
-	// Resolve any symlinks to config path.
+	// Keep the path unresolved as librados derives the cluster name from the file name.
 	confPath := fmt.Sprintf("/etc/ceph/%s.conf", d.config["ceph.cluster_name"])
-	target, err := filepath.EvalSymlinks(confPath)
-	if err == nil {
-		confPath = target
-	}
 
 	// Configuration values containing :, @, or = can be escaped with a leading \ character.
 	optEscaper := strings.NewReplacer(":", `\:`, "@", `\@`, "=", `\=`)
 
 	imageName, snapName, _ := strings.Cut(rbdName, "@")
-	poolName := d.config["ceph.osd.pool_name"]
 
-	spec := fmt.Sprintf("rbd:%s/%s", optEscaper.Replace(poolName), optEscaper.Replace(imageName))
+	spec := fmt.Sprintf("rbd:%s/%s", optEscaper.Replace(d.config["ceph.osd.pool_name"]), optEscaper.Replace(imageName))
 	if snapName != "" {
 		spec = fmt.Sprintf("%s@%s", spec, optEscaper.Replace(snapName))
 	}
 
+	// Only "id" and "conf" are valid here, anything else is passed to rados_conf_set and rejected.
 	opts := []string{
 		fmt.Sprintf("id=%s", optEscaper.Replace(d.config["ceph.user.name"])),
-		fmt.Sprintf("pool=%s", optEscaper.Replace(poolName)),
-		fmt.Sprintf("cluster=%s", optEscaper.Replace(d.config["ceph.cluster_name"])),
 		fmt.Sprintf("conf=%s", optEscaper.Replace(confPath)),
 	}
 
@@ -1425,6 +1419,16 @@ func (d *ceph) rbdNbdMappedDevPaths(imageSpec string) ([]string, error) {
 	return devPaths, nil
 }
 
+// rbdNbdMapOptions returns the qemu-nbd detect-zeroes mode and read-only flag for the given RBD image.
+func (d *ceph) rbdNbdMapOptions(rbdName string) (string, bool) {
+	// Snapshots can only be mapped read-only.
+	if strings.Contains(rbdName, "@") {
+		return "", true
+	}
+
+	return "unmap", false
+}
+
 // rbdNbdMapVolume maps a given RBD image through qemu-nbd.
 func (d *ceph) rbdNbdMapVolume(rbdName string) (string, error) {
 	err := linux.LoadModule("nbd")
@@ -1432,13 +1436,7 @@ func (d *ceph) rbdNbdMapVolume(rbdName string) (string, error) {
 		return "", fmt.Errorf("Error loading nbd module: %w", err)
 	}
 
-	// Snapshots can only be mapped read-only.
-	readOnly := strings.Contains(rbdName, "@")
-
-	detectZeroes := "unmap"
-	if readOnly {
-		detectZeroes = ""
-	}
+	detectZeroes, readOnly := d.rbdNbdMapOptions(rbdName)
 
 	devPath, err := ConnectQemuNbd(d.getRBDNbdImageSpec(rbdName), "raw", detectZeroes, readOnly)
 	if err != nil {
@@ -1449,6 +1447,25 @@ func (d *ceph) rbdNbdMapVolume(rbdName string) (string, error) {
 	return devPath, nil
 }
 
+// rbdRefreshDevice makes a mapped device reflect a size change of the RBD image.
+// Kernel mappings track resizes on their own, qemu-nbd ones are reconnected on the same device.
+func (d *ceph) rbdRefreshDevice(vol Volume, devPath string) error {
+	if !strings.HasPrefix(devPath, "/dev/nbd") {
+		return nil
+	}
+
+	rbdName := d.getRBDVolumeName(vol, "", false)
+	detectZeroes, readOnly := d.rbdNbdMapOptions(rbdName)
+
+	err := ReconnectQemuNbd(devPath, d.getRBDNbdImageSpec(rbdName), "raw", detectZeroes, readOnly)
+	if err != nil {
+		return err
+	}
+
+	d.logger.Debug("Refreshed RBD volume mapping", logger.Ctx{"volName": rbdName, "dev": devPath})
+	return nil
+}
+
 // rbdNbdUnmapVolume unmaps any qemu-nbd mapping of the given RBD image.
 func (d *ceph) rbdNbdUnmapVolume(rbdName string, unmapAll bool) error {
 	devPaths, err := d.rbdNbdMappedDevPaths(d.getRBDNbdImageSpec(rbdName))
@@ -1457,28 +1474,10 @@ func (d *ceph) rbdNbdUnmapVolume(rbdName string, unmapAll bool) error {
 	}
 
 	for _, devPath := range devPaths {
-		// Get the qemu-nbd process for the device so we can wait for it to exit.
-		pidData, err := os.ReadFile(fmt.Sprintf("/sys/class/block/%s/pid", filepath.Base(devPath)))
-		if err != nil {
-			// Concurrently disconnected.
-			continue
-		}
-
-		pid := strings.TrimSpace(string(pidData))
-
-		err = DisconnectQemuNbd(devPath)
+		// Wait for qemu-nbd to exit so that the RBD image is fully closed.
+		err = DisconnectQemuNbdWait(devPath)
 		if err != nil {
 			return err
-		}
-
-		// Wait for qemu-nbd to exit so that the RBD image is fully closed.
-		waitUntil := time.Now().Add(30 * time.Second)
-		for util.PathExists(fmt.Sprintf("/proc/%s", pid)) {
-			if time.Now().After(waitUntil) {
-				return fmt.Errorf("Timed out waiting for qemu-nbd to release %q", devPath)
-			}
-
-			time.Sleep(100 * time.Millisecond)
 		}
 
 		d.logger.Debug("Deactivated RBD volume", logger.Ctx{"volName": rbdName, "dev": devPath})

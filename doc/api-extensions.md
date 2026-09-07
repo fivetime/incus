@@ -3551,6 +3551,13 @@ Adds new `queue.discipline` and `queue.discipline.attach` configuration keys
 to `nic` devices of type `bridged`, `p2p` and `routed`, controlling the queuing
 discipline used on the host side of the NIC and where it gets attached.
 
+## `network_bridge_dns_include_hosts`
+
+Adds a new `dns.include_hosts` configuration key to `bridge` networks,
+controlling whether the network's `dnsmasq` serves records from the host's
+`/etc/hosts` file. Setting it to `false` avoids exposing host-only entries
+to instances while keeping AppArmor confinement.
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external

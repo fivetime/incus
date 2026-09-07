@@ -2678,15 +2678,6 @@ func (d *Daemon) setupOVN() error {
 	d.ovnnb = nil
 	d.ovnsb = nil
 
-	// Get the OVN northbound address.
-	ovnNBAddr := d.globalConfig.NetworkOVNNorthboundConnection()
-
-	// If OVN isn't configured, leave the clients cleared and return.
-	// This avoids touching OVS on nodes that don't have it installed.
-	if ovnNBAddr == "" {
-		return nil
-	}
-
 	// Connect to OpenVswitch.
 	vswitch, err := d.getOVS()
 	if err != nil {
@@ -2698,6 +2689,9 @@ func (d *Daemon) setupOVN() error {
 	if err != nil {
 		return fmt.Errorf("Failed to get OVN southbound connection string: %w", err)
 	}
+
+	// Get the OVN northbound address.
+	ovnNBAddr := d.globalConfig.NetworkOVNNorthboundConnection()
 
 	// Get the SSL certificates if needed.
 	sslCACert, sslClientCert, sslClientKey := d.globalConfig.NetworkOVNSSL()
@@ -2741,6 +2735,34 @@ func (d *Daemon) setupOVN() error {
 	d.ovnsb = ovnsb
 
 	return nil
+}
+
+// hasOVNNetworks checks whether any project has an OVN network.
+func (d *Daemon) hasOVNNetworks() (bool, error) {
+	found := false
+
+	err := d.db.Cluster.Transaction(d.shutdownCtx, func(ctx context.Context, tx *db.ClusterTx) error {
+		networks, err := tx.GetCreatedNetworks(ctx)
+		if err != nil {
+			return err
+		}
+
+		for _, projectNetworks := range networks {
+			for _, network := range projectNetworks {
+				if network.Type == "ovn" {
+					found = true
+					return nil
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return found, nil
 }
 
 func (d *Daemon) getOVN() (*ovn.NB, *ovn.SB, error) {

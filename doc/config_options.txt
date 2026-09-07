@@ -3572,8 +3572,14 @@ The cluster member that the instance lived on before evacuation.
 ```
 
 ```{config:option} volatile.last_state.agent instance-volatile
-:shortdesc: "Instance agent state as of last host shutdown"
+:shortdesc: "Last recorded instance agent state"
 :type: "string"
+
+```
+
+```{config:option} volatile.last_state.agent.once instance-volatile
+:shortdesc: "Whether the agent has been seen at least once since last boot"
+:type: "bool"
 
 ```
 
@@ -3920,6 +3926,14 @@ User keys can be used in search.
 :default: "`incus`"
 :shortdesc: "Domain to advertise to DHCP clients and use for DNS resolution"
 :type: "string"
+
+```
+
+```{config:option} dns.include_hosts network_bridge-common
+:condition: "-"
+:default: "`true`"
+:shortdesc: "Whether to serve records from the host's `/etc/hosts` file"
+:type: "bool"
 
 ```
 

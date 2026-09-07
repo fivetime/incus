@@ -212,6 +212,11 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 		return response.SmartError(err)
 	}
 
+	// Pool and project changes are always migrations.
+	if req.Pool != "" || req.Project != "" {
+		req.Migration = true
+	}
+
 	// Handle simple instance renaming.
 	if !req.Migration {
 		run := func(op *operations.Operation) error {
@@ -247,6 +252,11 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 				if err != nil {
 					return response.BadRequest(err)
 				}
+			}
+
+			// A stateless move to another member would leave the instance running on the source.
+			if target != "" && target != inst.Location() && !req.Live && !req.Refresh {
+				return response.BadRequest(errors.New("Instance must be stopped for a stateless move to another cluster member"))
 			}
 
 			// Storage pool changes require a target flag.
@@ -1066,7 +1076,7 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 
 				err = tx.CreateInstanceConfig(ctx, int(id), map[string]string{"volatile.cluster.group": targetGroupName})
 				if err != nil {
-					return fmt.Errorf("Failed to set volatile.apply_template config key: %w", err)
+					return fmt.Errorf("Failed to set volatile.cluster.group config key: %w", err)
 				}
 			} else if targetMemberInfo != nil {
 				config, err := dbCluster.GetInstanceConfig(ctx, tx.Tx(), inst.ID())

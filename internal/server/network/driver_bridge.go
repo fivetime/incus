@@ -527,6 +527,15 @@ func (n *bridge) Validate(config map[string]string, clientType request.ClientTyp
 		//  shortdesc: Domain to advertise to DHCP clients and use for DNS resolution
 		"dns.domain": validate.IsAny,
 
+		// gendoc:generate(entity=network_bridge, group=common, key=dns.include_hosts)
+		//
+		// ---
+		//  type: bool
+		//  condition: -
+		//  default: `true`
+		//  shortdesc: Whether to serve records from the host's `/etc/hosts` file
+		"dns.include_hosts": validate.Optional(validate.IsBool),
+
 		// gendoc:generate(entity=network_bridge, group=common, key=dns.mode)
 		//
 		// ---
@@ -1812,8 +1821,10 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 			err := gretap.Add()
 			if err != nil {
-				return err
+				return fmt.Errorf("Failed creating tunnel interface %q: %w", tunName, err)
 			}
+
+			reverter.Add(func() { _ = gretap.Delete() })
 		} else if tunProtocol == "vxlan" {
 			tunGroup := net.ParseIP(getConfig("group"))
 			tunInterface := getConfig("interface")
@@ -1877,26 +1888,28 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 
 			err := vxlan.Add()
 			if err != nil {
-				return err
+				return fmt.Errorf("Failed creating tunnel interface %q: %w", tunName, err)
 			}
+
+			reverter.Add(func() { _ = vxlan.Delete() })
 		}
 
 		// Bridge it and bring up.
 		err = AttachInterface(n.state, n.name, tunName)
 		if err != nil {
-			return err
+			return fmt.Errorf("Failed attaching tunnel interface %q: %w", tunName, err)
 		}
 
 		tunLink := &ip.Link{Name: tunName}
 		err = tunLink.SetMTU(bridge.MTU)
 		if err != nil {
-			return err
+			return fmt.Errorf("Failed setting MTU %d on tunnel interface %q: %w", bridge.MTU, tunName, err)
 		}
 
 		// Bring up tunnel interface.
 		err = tunLink.SetUp()
 		if err != nil {
-			return err
+			return fmt.Errorf("Failed bringing up tunnel interface %q: %w", tunName, err)
 		}
 
 		// Bring up network interface.
@@ -1930,6 +1943,11 @@ func (n *bridge) setup(oldConfig map[string]string) error {
 			dnsmasqCmd = append(dnsmasqCmd, "-s", dnsDomain)
 			dnsmasqCmd = append(dnsmasqCmd, "--interface-name", fmt.Sprintf("_gateway.%s,%s", dnsDomain, n.name))
 			dnsmasqCmd = append(dnsmasqCmd, "-S", fmt.Sprintf("/%s/", dnsDomain))
+		}
+
+		// Don't serve the host's /etc/hosts entries.
+		if util.IsFalse(n.config["dns.include_hosts"]) {
+			dnsmasqCmd = append(dnsmasqCmd, "--no-hosts")
 		}
 
 		// Create a config file to contain additional config (and to prevent dnsmasq from reading /etc/dnsmasq.conf)
@@ -3576,7 +3594,13 @@ func (n *bridge) deleteChildren() error {
 			continue
 		}
 
-		if l.Master != n.name || slices.Contains(externalInterfaces, iface.Name) || !slices.Contains(kinds, l.Kind) {
+		if slices.Contains(externalInterfaces, iface.Name) || !slices.Contains(kinds, l.Kind) {
+			continue
+		}
+
+		// Also remove detached devices left behind by a failed start.
+		orphan := l.Master == "" && strings.HasPrefix(iface.Name, n.name+"-")
+		if l.Master != n.name && !orphan {
 			continue
 		}
 
