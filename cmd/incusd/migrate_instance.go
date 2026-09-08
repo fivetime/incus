@@ -20,6 +20,8 @@ import (
 	"github.com/lxc/incus/v7/shared/logger"
 )
 
+const instanceMigrationConnectionTimeout = 5 * time.Minute
+
 func newMigrationSource(inst instance.Instance, stateful bool, instanceOnly bool, allowInconsistent bool, clusterMoveSourceName string, storagePool string, devices api.DevicesMap, skipDependentVolumes []string, pushTarget *api.InstancePostTarget) (*migrationSourceWs, error) {
 	ret := migrationSourceWs{
 		migrationFields: migrationFields{
@@ -87,7 +89,7 @@ func newMigrationSource(inst instance.Instance, stateful bool, instanceOnly bool
 func (s *migrationSourceWs) do(migrateOp *operations.Operation) error {
 	l := logger.AddContext(logger.Ctx{"project": s.instance.Project().Name, "instance": s.instance.Name(), "live": s.live, "clusterMoveSourceName": s.clusterMoveSourceName, "push": s.pushOperationURL != ""})
 
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Second*30)
+	ctx, cancel := context.WithTimeout(context.TODO(), instanceMigrationConnectionTimeout)
 	defer cancel()
 
 	l.Debug("Waiting for migration control connection on source")
@@ -221,7 +223,7 @@ func newMigrationSink(args *migrationSinkArgs) (*migrationSink, error) {
 func (c *migrationSink) do(instOp *operationlock.InstanceOperation) error {
 	l := logger.AddContext(logger.Ctx{"project": c.instance.Project().Name, "instance": c.instance.Name(), "live": c.live, "clusterMoveSourceName": c.clusterMoveSourceName, "push": c.push})
 
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Second*30)
+	ctx, cancel := context.WithTimeout(context.TODO(), instanceMigrationConnectionTimeout)
 	defer cancel()
 
 	l.Debug("Waiting for migration control connection on target")
