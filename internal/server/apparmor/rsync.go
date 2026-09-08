@@ -33,6 +33,9 @@ profile "{{ .name }}" flags=(attach_disconnected,mediate_deleted) {
   @{PROC}/@{pid}/cpuset r,
   /{etc,lib,usr/lib}/os-release r,
 
+  # rsync 3.5 opens the filesystem root while securely resolving an absolute path.
+  / r,
+
   {{ .logPath }}/*/netcat.log rw,
 
   /run/{resolvconf,NetworkManager,systemd/resolve,connman,netconfig}/resolv.conf r,
