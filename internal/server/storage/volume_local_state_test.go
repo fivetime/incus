@@ -132,3 +132,60 @@ func TestCompleteStorageReleaseRequiresLocalStateProof(t *testing.T) {
 		t.Fatal("Completion callback did not run after a clean proof")
 	}
 }
+
+type testVolumeDetachedLocalStateDriver struct {
+	testVolumeLocalStateDriver
+	detachedReleases int
+	retainState      bool
+}
+
+func (d *testVolumeDetachedLocalStateDriver) ReleaseVolumeDetachedLocalState(_ drivers.Volume, identity string) error {
+	if d.identity != identity {
+		return errors.New("identity mismatch")
+	}
+
+	d.detachedReleases++
+	if d.releaseErr != nil {
+		return d.releaseErr
+	}
+
+	d.hasState = d.retainState
+	return nil
+}
+
+func TestReleaseVolumeLocalStateDetached(t *testing.T) {
+	vol := drivers.NewVolume(nil, "pool", drivers.VolumeTypeContainer, drivers.ContentTypeFS, "instance", nil, nil)
+	for _, tc := range []struct {
+		name        string
+		identity    string
+		retainState bool
+		releaseErr  error
+		wantError   bool
+	}{
+		{name: "stale receive mount", identity: "immutable"},
+		{name: "foreign identity", identity: "other", wantError: true},
+		{name: "mount remains", identity: "immutable", retainState: true, wantError: true},
+		{name: "unmount failed", identity: "immutable", releaseErr: errors.New("busy"), wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := &testVolumeDetachedLocalStateDriver{
+				testVolumeLocalStateDriver: testVolumeLocalStateDriver{identity: "immutable", hasState: true, releaseErr: tc.releaseErr},
+				retainState:                tc.retainState,
+			}
+			err := releaseVolumeLocalStateDetached(driver, vol, tc.identity)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("Unexpected release result: %v", err)
+			}
+
+			if driver.releases != 0 {
+				t.Fatal("Detached release used conservative cleanup")
+			}
+		})
+	}
+
+	fallback := &testVolumeLocalStateDriver{identity: "immutable", hasState: true}
+	err := releaseVolumeLocalStateDetached(fallback, vol, "immutable")
+	if err != nil || fallback.releases != 1 {
+		t.Fatalf("Conservative fallback failed: %v", err)
+	}
+}

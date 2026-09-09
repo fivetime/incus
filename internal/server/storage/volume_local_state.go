@@ -36,7 +36,11 @@ func releaseVolumeLocalState(driver any, vol drivers.Volume, expectedStorageIden
 // the volume has no database record (or be deleting it) before invoking this; drivers without
 // detached release support fall back to the conservative release.
 func ReleaseVolumeLocalStateDetached(driver drivers.Driver, vol drivers.Volume, expectedStorageIdentity string) error {
-	detachedReleaser, ok := any(driver).(drivers.VolumeDetachedLocalStateReleaser)
+	return releaseVolumeLocalStateDetached(driver, vol, expectedStorageIdentity)
+}
+
+func releaseVolumeLocalStateDetached(driver any, vol drivers.Volume, expectedStorageIdentity string) error {
+	detachedReleaser, ok := driver.(drivers.VolumeDetachedLocalStateReleaser)
 	if !ok {
 		return releaseVolumeLocalState(driver, vol, expectedStorageIdentity)
 	}

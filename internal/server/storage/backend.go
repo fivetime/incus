@@ -2846,7 +2846,8 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 		}
 
 		if releaseReceipt.State != storagereleasereceipt.StateComplete {
-			err = ReleaseVolumeLocalState(b.driver, vol, releaseReceipt.StorageIdentity)
+			// This identity-bound instance delete owns teardown of leaked receive mounts.
+			err = ReleaseVolumeLocalStateDetached(b.driver, vol, releaseReceipt.StorageIdentity)
 			if err != nil {
 				return fmt.Errorf("Release detached root storage local state: %w", err)
 			}
