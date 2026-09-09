@@ -59,7 +59,8 @@ RUN cc -O2 -Wall -Wextra deploy/image/aa-exec.c -lapparmor -o /out/aa-exec \
 
 FROM ${ALPINE_IMAGE} AS criu-build
 
-ARG CRIU_COMMIT=b7bdc14736b1e8598f2ffbb371f42318835a111f
+# Includes mount-v2 restoration of shared peers rooted at disjoint subdirectories.
+ARG CRIU_COMMIT=91e58b53a22229d1cc14ad98a0981eccf726f130
 
 RUN apk add --no-cache \
       bash \
@@ -84,7 +85,7 @@ RUN apk add --no-cache \
       protobuf-dev \
       python3 \
       util-linux-dev \
-    && git clone --filter=blob:none https://github.com/checkpoint-restore/criu.git /build/criu \
+    && git clone --filter=blob:none https://github.com/fivetime/criu.git /build/criu \
     && git -C /build/criu checkout --detach "${CRIU_COMMIT}" \
     && make -C /build/criu -j"$(nproc)" criu WERROR=0 \
     && /build/criu/criu/criu --version \
