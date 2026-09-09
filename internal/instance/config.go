@@ -549,6 +549,20 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	//  shortdesc: Whether the agent has been seen at least once since last boot
 	"volatile.last_state.agent.once": validate.IsBool,
 
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.checkpoint)
+	// Exact source operation owning a retained live migration checkpoint.
+	// ---
+	//  type: string
+	//  shortdesc: Source operation owning a retained migration checkpoint
+	"volatile.migration.checkpoint": validate.Optional(validate.IsUUID),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.checkpoint.state)
+	// A dumping checkpoint cannot be restored until the complete dump is ready.
+	// ---
+	//  type: string
+	//  shortdesc: Persistent migration checkpoint phase
+	"volatile.migration.checkpoint.state": validate.Optional(validate.IsOneOf("dumping", "ready", "restored")),
+
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.storage_handover)
 	// State of the shared storage handover of the instance's volumes during a
 	// migration: "pending" while the handover is in flight, "committed" once the

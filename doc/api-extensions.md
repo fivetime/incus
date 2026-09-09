@@ -3891,3 +3891,24 @@ atomically cover an external action performed after the response. Callers that
 use it before releasing an allocation must serialize their own actors and keep
 the Incus management boundary dedicated; concurrent unmanaged Incus changes
 remain outside this endpoint's guarantee.
+
+## migration_checkpoint_restore
+
+Live shared-storage migrations retain the source CRIU checkpoint in the local
+Incus state directory. `volatile.migration.checkpoint` names the source
+operation UUID and `volatile.migration.checkpoint.state` records whether the
+dump is ready. Ordinary start and further migration requests are refused while
+a checkpoint needs recovery. Instance deletion removes the retained checkpoint.
+
+A server administrator can send an instance state update with `action: start`,
+`stateful: true`, and `migration_checkpoint: <source-operation-uuid>`. The source
+must first have regained storage ownership through the existing handover API,
+after the administrator has fenced and cleaned the target. The caller must
+also restore external network and data-volume resources before this request.
+The operation restores the exact checkpoint and never substitutes a cold start.
+Unsupported drivers, another operation, an incomplete dump, or unresolved
+storage ownership fail before restore. A failed restore retains the checkpoint.
+
+The checkpoint is local to the source compute and cannot recover a permanently
+lost source disk. Interrupted dumps without the ready marker remain fenced;
+this extension does not turn an incomplete checkpoint into a recoverable one.

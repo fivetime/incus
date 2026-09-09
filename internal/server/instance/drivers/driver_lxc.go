@@ -3157,6 +3157,10 @@ func (d *lxc) detachInterfaceRename(netns string, ifName string, hostName string
 
 // Start starts the instance.
 func (d *lxc) Start(stateful bool) error {
+	if d.LocalConfig()[migrationCheckpointKey] != "" {
+		return errors.New("A retained migration checkpoint must be restored explicitly")
+	}
+
 	// Check that migration.stateful is set for stateful actions.
 	if stateful && !d.CanLiveMigrate() {
 		return errors.New("Stateful start requires that the instance migration.stateful be set to true")
@@ -4706,6 +4710,11 @@ func (d *lxc) Delete(force bool, cleanupDependencies bool) error {
 
 	if d.IsRunning() {
 		return api.StatusErrorf(http.StatusBadRequest, "Instance is running")
+	}
+
+	err = d.clearMigrationCheckpoint()
+	if err != nil {
+		return err
 	}
 
 	err = d.delete(force, cleanupDependencies)
@@ -6277,6 +6286,10 @@ fi
 
 // MigrateSend sends an instance to a target for migration.
 func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
+	if d.LocalConfig()[migrationCheckpointKey] != "" {
+		return errors.New("A previous migration checkpoint still requires recovery")
+	}
+
 	d.logger.Debug("Migration send starting")
 	defer d.logger.Debug("Migration send stopped")
 
@@ -6638,7 +6651,12 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				return fmt.Errorf("Formats other than criu rsync not understood (%q)", respHeader.Criu)
 			}
 
-			checkpointDir, err := os.MkdirTemp("", "incus_checkpoint_")
+			var checkpointDir string
+			if liveSharedStorage {
+				checkpointDir, err = d.createMigrationCheckpoint()
+			} else {
+				checkpointDir, err = os.MkdirTemp("", "incus_checkpoint_")
+			}
 			if err != nil {
 				return err
 			}
@@ -6670,6 +6688,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 							removed, cleanupErr := removeFailedCRIUCheckpoint(checkpointDir, err)
 							if removed {
 								liveSharedCheckpointDir = ""
+								cleanupErr = errors.Join(cleanupErr, d.clearMigrationCheckpoint())
 							}
 
 							return cleanupErr
@@ -6697,9 +6716,15 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					removed, cleanupErr := cleanupFailedCRIUCheckpoint(checkpointDir, err, d.IsRunning())
 					if removed {
 						liveSharedCheckpointDir = ""
+						cleanupErr = errors.Join(cleanupErr, d.clearMigrationCheckpoint())
 					}
 
 					return cleanupErr
+				}
+
+				err = d.VolatileSet(map[string]string{migrationCheckpointStateKey: "ready"})
+				if err != nil {
+					return err
 				}
 
 				err = d.unmount()
@@ -6972,7 +6997,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				if recoveryErr != nil {
 					err = errors.Join(err, fmt.Errorf("Failed restoring source after live shared storage migration failure: %w", recoveryErr))
 				} else {
-					removeErr := os.RemoveAll(liveSharedCheckpointDir)
+					removeErr := d.clearMigrationCheckpoint()
 					if removeErr != nil {
 						err = errors.Join(err, fmt.Errorf("Failed removing restored source CRIU checkpoint %q: %w", liveSharedCheckpointDir, removeErr))
 					}
@@ -7038,7 +7063,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		}
 
 		if liveSharedCheckpointDir != "" {
-			removeErr := os.RemoveAll(liveSharedCheckpointDir)
+			removeErr := d.clearMigrationCheckpoint()
 			if removeErr != nil {
 				d.logger.Error("Failed removing committed CRIU checkpoint", logger.Ctx{"path": liveSharedCheckpointDir, "err": removeErr})
 			}

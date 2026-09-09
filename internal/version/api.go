@@ -595,6 +595,7 @@ var APIExtensions = []string{
 	"migration_attempt_reservation_generation",
 	"instance_storage_handover_detached",
 	"idmap_usage",
+	"migration_checkpoint_restore",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

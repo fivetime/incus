@@ -182,6 +182,17 @@ func instanceStatePut(d *Daemon, r *http.Request) response.Response {
 		return response.BadRequest(err)
 	}
 
+	if req.MigrationCheckpoint != "" {
+		if req.Action != "start" || !req.Stateful || req.Force {
+			return response.BadRequest(errors.New("Migration checkpoint recovery requires a stateful start"))
+		}
+
+		err = s.Authorizer.CheckPermission(r.Context(), r, instanceStorageHandoverSourceOwnedAuthObject(), instanceStorageHandoverSourceOwnedAuthEntitlement)
+		if err != nil {
+			return response.SmartError(err)
+		}
+	}
+
 	// Requests forwarded from another member carry the original protocol.
 	protocol := r.Context().Value(request.CtxForwardedProtocol)
 	if protocol == nil || protocol == "" {
@@ -241,6 +252,19 @@ func instanceActionToOpType(action string) (operationtype.Type, error) {
 }
 
 func doInstanceStatePut(inst instance.Instance, req api.InstanceStatePut) error {
+	if req.MigrationCheckpoint != "" {
+		if req.Action != "start" || !req.Stateful || req.Force {
+			return errors.New("Migration checkpoint recovery requires a stateful start")
+		}
+
+		restorer, ok := inst.(interface{ RestoreMigrationCheckpoint(string) error })
+		if !ok {
+			return errors.New("Instance driver cannot restore migration checkpoints")
+		}
+
+		return restorer.RestoreMigrationCheckpoint(req.MigrationCheckpoint)
+	}
+
 	if req.Force {
 		// A zero timeout indicates to do a forced stop/restart.
 		req.Timeout = 0

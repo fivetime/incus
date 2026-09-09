@@ -10,6 +10,10 @@ import (
 //
 // API extension: instances.
 type InstanceStatePut struct {
+	// Exact source operation whose retained live migration checkpoint must resume.
+	// API extension: migration_checkpoint_restore
+	MigrationCheckpoint string `json:"migration_checkpoint,omitempty" yaml:"migration_checkpoint,omitempty"`
+
 	// State change action (start, stop, restart, freeze, unfreeze)
 	// Example: start
 	Action string `json:"action" yaml:"action"`
