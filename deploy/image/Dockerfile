@@ -60,7 +60,7 @@ RUN cc -O2 -Wall -Wextra deploy/image/aa-exec.c -lapparmor -o /out/aa-exec \
 FROM ${ALPINE_IMAGE} AS criu-build
 
 # Includes shared-root restoration and early cgroup notification file access.
-ARG CRIU_COMMIT=e7831095d15e59e2720a7bb6fe554957495a9945
+ARG CRIU_COMMIT=ef14e9fd3c7657de74ad29b36322fc4592a0f0e0
 
 RUN apk add --no-cache \
       bash \
