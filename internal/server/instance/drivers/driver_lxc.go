@@ -7483,8 +7483,12 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 	// Start filesystem transfer routine and initialize a channel that is closed when the routine finishes.
 	fsTransferDone := make(chan struct{})
-	g.Go(func() error {
-		defer close(fsTransferDone)
+	var fsTransferErr error
+	g.Go(func() (retErr error) {
+		defer func() {
+			fsTransferErr = retErr
+			close(fsTransferDone)
+		}()
 
 		d.logger.Debug("Migrate receive filesystem transfer started")
 		defer d.logger.Debug("Migrate receive filesystem transfer finished")
@@ -7683,12 +7687,16 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	// Start live state transfer routine (if required) and initialize a channel that is closed when the
 	// routine finishes. It is never closed if the routine is not started.
 	stateTransferDone := make(chan struct{})
+	var stateTransferErr error
 	if args.Live {
-		g.Go(func() error {
+		g.Go(func() (retErr error) {
 			d.logger.Debug("Migrate receive state transfer started")
 			defer d.logger.Debug("Migrate receive state transfer finished")
 
-			defer close(stateTransferDone)
+			defer func() {
+				stateTransferErr = retErr
+				close(stateTransferDone)
+			}()
 
 			imagesDir, err := os.MkdirTemp("", "incus_restore_")
 			if err != nil {
@@ -7827,9 +7835,9 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			args.Disconnect()
 		}
 
-		// If context is cancelled by this stage, then an error has occurred.
+		// Transfer channels can close before errgroup publishes the error and cancels its context.
 		// Wait for all routines to finish and collect the first error that occurred.
-		if ctx.Err() != nil || storageReceiveCompletionErr != nil {
+		if ctx.Err() != nil || fsTransferErr != nil || stateTransferErr != nil || storageReceiveCompletionErr != nil {
 			err := g.Wait()
 			if err == nil {
 				err = storageReceiveCompletionErr
