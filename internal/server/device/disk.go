@@ -32,6 +32,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/response"
 	storagePools "github.com/lxc/incus/v7/internal/server/storage"
 	storageDrivers "github.com/lxc/incus/v7/internal/server/storage/drivers"
+	"github.com/lxc/incus/v7/internal/server/storage/rescue"
 	"github.com/lxc/incus/v7/internal/server/warnings"
 	internalUtil "github.com/lxc/incus/v7/internal/util"
 	"github.com/lxc/incus/v7/shared/api"
@@ -1192,6 +1193,17 @@ func (d *disk) startContainer() (*deviceConfig.RunConfig, error) {
 		}
 
 		runConf.RootFS = rootfs
+		if d.inst.LocalConfig()["volatile.rescue.token"] != "" {
+			err := rescue.ValidateActive(d.inst.Path(), d.inst.LocalConfig()["volatile.rescue.token"])
+			if err != nil {
+				return nil, err
+			}
+
+			runConf.Mounts = append(runConf.Mounts, deviceConfig.MountEntryItem{
+				DevName: d.name, DevPath: rescue.OriginalPath(d.inst.Path()),
+				TargetPath: "mnt/root", FSType: "none", Opts: []string{"bind", "create=dir"},
+			})
+		}
 	} else if d.config["source"] == diskSourceTmpfs || d.config["source"] == diskSourceTmpfsOverlay {
 		srcPath := d.config["source"]
 

@@ -235,6 +235,10 @@ func instanceStatePut(d *Daemon, r *http.Request) response.Response {
 }
 
 func instanceActionToOpType(action string) (operationtype.Type, error) {
+	if action == "rescue" || action == "unrescue" {
+		return operationtype.InstanceUpdate, nil
+	}
+
 	switch internalInstance.InstanceAction(action) {
 	case internalInstance.Start:
 		return operationtype.InstanceStart, nil
@@ -252,6 +256,34 @@ func instanceActionToOpType(action string) (operationtype.Type, error) {
 }
 
 func doInstanceStatePut(inst instance.Instance, req api.InstanceStatePut) error {
+	if req.Action == "rescue" || req.Action == "unrescue" {
+		if req.Stateful || req.Force || req.MigrationCheckpoint != "" || req.RescueToken == "" {
+			return errors.New("Rescue requires a stopped container and an exact rescue token")
+		}
+
+		rescuer, ok := inst.(interface {
+			Rescue(string, string) error
+			Unrescue(string) error
+		})
+		if !ok {
+			return errors.New("Instance driver does not support container rescue")
+		}
+
+		if req.Action == "rescue" {
+			return rescuer.Rescue(req.RescueToken, req.RescueImage)
+		}
+
+		if req.RescueImage != "" {
+			return errors.New("Unrescue does not accept an image")
+		}
+
+		return rescuer.Unrescue(req.RescueToken)
+	}
+
+	if req.RescueToken != "" || req.RescueImage != "" {
+		return errors.New("Rescue fields require a rescue or unrescue action")
+	}
+
 	if req.MigrationCheckpoint != "" {
 		if req.Action != "start" || !req.Stateful || req.Force {
 			return errors.New("Migration checkpoint recovery requires a stateful start")

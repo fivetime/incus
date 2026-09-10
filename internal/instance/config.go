@@ -549,6 +549,30 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	//  shortdesc: Whether the agent has been seen at least once since last boot
 	"volatile.last_state.agent.once": validate.IsBool,
 
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rescue.token)
+	// ---
+	//  type: string
+	//  shortdesc: Exact active container rescue generation
+	"volatile.rescue.token": validate.Optional(validate.IsUUID),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rescue.image)
+	// ---
+	//  type: string
+	//  shortdesc: Temporary rescue image fingerprint
+	"volatile.rescue.image": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rescue.phase)
+	// ---
+	//  type: string
+	//  shortdesc: Durable container rescue phase
+	"volatile.rescue.phase": validate.Optional(validate.IsOneOf("preparing", "active", "restoring", "restoring-prepare")),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rescue.completed)
+	// ---
+	//  type: string
+	//  shortdesc: Last restored container rescue generation
+	"volatile.rescue.completed": validate.Optional(validate.IsUUID),
+
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.checkpoint)
 	// Exact source operation owning a retained live migration checkpoint.
 	// ---

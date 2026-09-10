@@ -3601,6 +3601,18 @@ The cluster member that the instance lived on before evacuation.
 
 ```
 
+```{config:option} volatile.migration.checkpoint instance-volatile
+:shortdesc: "Source operation owning a retained migration checkpoint"
+:type: "string"
+Exact source operation owning a retained live migration checkpoint.
+```
+
+```{config:option} volatile.migration.checkpoint.state instance-volatile
+:shortdesc: "Persistent migration checkpoint phase"
+:type: "string"
+A dumping checkpoint cannot be restored until the complete dump is ready.
+```
+
 ```{config:option} volatile.migration.storage_delete_protection instance-volatile
 :shortdesc: "Whether local instance deletion preserves shared migration storage"
 :type: "bool"

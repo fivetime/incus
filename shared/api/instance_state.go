@@ -10,6 +10,14 @@ import (
 //
 // API extension: instances.
 type InstanceStatePut struct {
+	// Exact rescue generation; required for rescue and unrescue actions.
+	// API extension: container_rescue
+	RescueToken string `json:"rescue_token,omitempty" yaml:"rescue_token,omitempty"`
+
+	// Cached container image fingerprint used for a temporary rescue root.
+	// API extension: container_rescue
+	RescueImage string `json:"rescue_image,omitempty" yaml:"rescue_image,omitempty"`
+
 	// Exact source operation whose retained live migration checkpoint must resume.
 	// API extension: migration_checkpoint_restore
 	MigrationCheckpoint string `json:"migration_checkpoint,omitempty" yaml:"migration_checkpoint,omitempty"`

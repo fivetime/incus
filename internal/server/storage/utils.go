@@ -593,6 +593,46 @@ func validateVolumeCommonRules(vol drivers.Volume) map[string]func(string) error
 	return rules
 }
 
+// ImageUnpackContainer extracts a container image into a storage-owned directory.
+func ImageUnpackContainer(imageFile string, destPath string, blockBackend bool, maxMemory int64, tracker *ioprogress.ProgressTracker) error {
+	imageRootfsFile := imageFile + ".rootfs"
+	rootfsPath := filepath.Join(destPath, "rootfs")
+
+	// Unpack the main image file.
+	err := archive.Unpack(imageFile, destPath, blockBackend, maxMemory, tracker)
+	if err != nil {
+		return err
+	}
+
+	// Reject a rootfs symlink which could redirect writes to the host filesystem.
+	rootfsInfo, err := os.Lstat(rootfsPath)
+	if err == nil && !rootfsInfo.IsDir() {
+		return fmt.Errorf("Image rootfs isn't a regular directory: %s", imageFile)
+	}
+
+	// Check for separate root file.
+	if util.PathExists(imageRootfsFile) {
+		err = os.MkdirAll(rootfsPath, 0o755)
+		if err != nil {
+			return errors.New("Error creating rootfs directory")
+		}
+
+		err = archive.Unpack(imageRootfsFile, rootfsPath, blockBackend, maxMemory, tracker)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Check that the container image unpack has resulted in a rootfs dir.
+	rootfsInfo, err = os.Lstat(rootfsPath)
+	if err != nil || !rootfsInfo.IsDir() {
+		return fmt.Errorf("Image is missing a rootfs: %s", imageFile)
+	}
+
+	// Done with this.
+	return nil
+}
+
 // ImageUnpack unpacks a filesystem image into the destination path.
 // There are several formats that images can come in:
 // Container Format A: Separate metadata tarball and root squashfs file.
@@ -625,40 +665,11 @@ func ImageUnpack(imageFile string, vol drivers.Volume, destBlockFile string, sys
 
 	// If no destBlockFile supplied then this is a container image unpack.
 	if destBlockFile == "" {
-		rootfsPath := filepath.Join(destPath, "rootfs")
-
-		// Unpack the main image file.
-		err := archive.Unpack(imageFile, destPath, vol.IsBlockBacked(), maxMemory, tracker)
+		err := ImageUnpackContainer(imageFile, destPath, vol.IsBlockBacked(), maxMemory, tracker)
 		if err != nil {
 			return -1, err
 		}
 
-		// Reject a rootfs symlink which could redirect writes to the host filesystem.
-		rootfsInfo, err := os.Lstat(rootfsPath)
-		if err == nil && !rootfsInfo.IsDir() {
-			return -1, fmt.Errorf("Image rootfs isn't a regular directory: %s", imageFile)
-		}
-
-		// Check for separate root file.
-		if util.PathExists(imageRootfsFile) {
-			err = os.MkdirAll(rootfsPath, 0o755)
-			if err != nil {
-				return -1, errors.New("Error creating rootfs directory")
-			}
-
-			err = archive.Unpack(imageRootfsFile, rootfsPath, vol.IsBlockBacked(), maxMemory, tracker)
-			if err != nil {
-				return -1, err
-			}
-		}
-
-		// Check that the container image unpack has resulted in a rootfs dir.
-		rootfsInfo, err = os.Lstat(rootfsPath)
-		if err != nil || !rootfsInfo.IsDir() {
-			return -1, fmt.Errorf("Image is missing a rootfs: %s", imageFile)
-		}
-
-		// Done with this.
 		return 0, nil
 	}
 

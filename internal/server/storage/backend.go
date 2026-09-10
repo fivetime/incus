@@ -1145,6 +1145,10 @@ func (b *backend) CreateInstanceFromBackup(srcBackup backup.Info, srcData io.Rea
 
 // CreateInstanceFromCopy copies an instance volume and optionally its snapshots to new volume(s).
 func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.Instance, snapshots bool, allowInconsistent bool, op *operations.Operation) error {
+	if src.LocalConfig()["volatile.rescue.token"] != "" {
+		return errors.New("Unrescue the container before copying it")
+	}
+
 	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "src": src.Name(), "snapshots": snapshots})
 	l.Debug("CreateInstanceFromCopy started")
 	defer l.Debug("CreateInstanceFromCopy finished")
@@ -3957,6 +3961,10 @@ func (b *backend) CleanupInstancePaths(inst instance.Instance, op *operations.Op
 
 // BackupInstance creates an instance backup.
 func (b *backend) BackupInstance(inst instance.Instance, tarWriter *instancewriter.InstanceTarWriter, optimized bool, snapshots bool, dependentVolumes bool, op *operations.Operation) error {
+	if inst.LocalConfig()["volatile.rescue.token"] != "" {
+		return errors.New("Unrescue the container before backing it up")
+	}
+
 	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "optimized": optimized, "snapshots": snapshots})
 	l.Debug("BackupInstance started")
 	defer l.Debug("BackupInstance finished")

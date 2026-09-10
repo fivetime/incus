@@ -2853,6 +2853,24 @@ definitions:
                 example: false
                 type: boolean
                 x-go-name: Force
+            migration_checkpoint:
+                description: |-
+                    Exact source operation whose retained live migration checkpoint must resume.
+                    API extension: migration_checkpoint_restore
+                type: string
+                x-go-name: MigrationCheckpoint
+            rescue_image:
+                description: |-
+                    Cached container image fingerprint used for a temporary rescue root.
+                    API extension: container_rescue
+                type: string
+                x-go-name: RescueImage
+            rescue_token:
+                description: |-
+                    Exact rescue generation; required for rescue and unrescue actions.
+                    API extension: container_rescue
+                type: string
+                x-go-name: RescueToken
             stateful:
                 description: Whether to store the runtime state (for stop)
                 example: false

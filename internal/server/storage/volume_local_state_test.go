@@ -172,6 +172,7 @@ func TestReleaseVolumeLocalStateDetached(t *testing.T) {
 				testVolumeLocalStateDriver: testVolumeLocalStateDriver{identity: "immutable", hasState: true, releaseErr: tc.releaseErr},
 				retainState:                tc.retainState,
 			}
+
 			err := releaseVolumeLocalStateDetached(driver, vol, tc.identity)
 			if (err != nil) != tc.wantError {
 				t.Fatalf("Unexpected release result: %v", err)

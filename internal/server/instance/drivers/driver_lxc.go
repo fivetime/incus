@@ -2359,6 +2359,18 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 
 	reverter.Add(func() { _ = d.unmount() })
 
+	err = d.validateRescueRoot()
+	if err != nil {
+		return "", nil, err
+	}
+
+	if d.localConfig[rescueTokenKey] != "" {
+		err = d.ensureRescueMountpoint()
+		if err != nil {
+			return "", nil, err
+		}
+	}
+
 	idmapType, nextIdmap, err := d.handleIdmappedStorage()
 	if err != nil {
 		return "", nil, fmt.Errorf("Failed to handle idmapped storage: %w", err)
@@ -4453,6 +4465,10 @@ func (d *lxc) snapshot(name string, expiry time.Time, stateful bool) error {
 
 // Snapshot takes a new snapshot.
 func (d *lxc) Snapshot(name string, expiry time.Time, stateful bool) error {
+	if d.localConfig[rescueTokenKey] != "" {
+		return errors.New("Unrescue the container before taking a snapshot")
+	}
+
 	return d.snapshot(name, expiry, stateful)
 }
 
@@ -4717,6 +4733,13 @@ func (d *lxc) Delete(force bool, cleanupDependencies bool) error {
 		return err
 	}
 
+	if d.localConfig[rescueTokenKey] != "" {
+		err = d.restoreRescue(d.localConfig[rescueTokenKey])
+		if err != nil {
+			return err
+		}
+	}
+
 	err = d.delete(force, cleanupDependencies)
 	if err != nil {
 		return err
@@ -4874,6 +4897,10 @@ func (d *lxc) delete(force bool, cleanupDependencies bool) error {
 
 // Rename renames the instance. Accepts an argument to enable applying deferred TemplateTriggerRename.
 func (d *lxc) Rename(newName string, applyTemplateTrigger bool) error {
+	if d.localConfig[rescueTokenKey] != "" {
+		return errors.New("Unrescue the container before renaming it")
+	}
+
 	oldName := d.Name()
 	ctxMap := logger.Ctx{
 		"created":   d.creationDate,
@@ -5910,6 +5937,10 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 
 // Export backs up the instance.
 func (d *lxc) Export(metaWriter io.Writer, rootfsWriter io.Writer, properties map[string]string, expiration time.Time, tracker *ioprogress.ProgressTracker) (*api.ImageMetadata, error) {
+	if d.localConfig[rescueTokenKey] != "" {
+		return nil, errors.New("Unrescue the container before publishing it")
+	}
+
 	ctxMap := logger.Ctx{
 		"created":   d.creationDate,
 		"ephemeral": d.ephemeral,
@@ -6286,6 +6317,10 @@ fi
 
 // MigrateSend sends an instance to a target for migration.
 func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
+	if d.localConfig[rescueTokenKey] != "" {
+		return errors.New("Unrescue the container before migrating it")
+	}
+
 	if d.LocalConfig()[migrationCheckpointKey] != "" {
 		return errors.New("A previous migration checkpoint still requires recovery")
 	}
@@ -6657,6 +6692,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 			} else {
 				checkpointDir, err = os.MkdirTemp("", "incus_checkpoint_")
 			}
+
 			if err != nil {
 				return err
 			}
@@ -8157,7 +8193,7 @@ func (d *lxc) migrate(args *instance.CriuMigrationArgs) error {
 
 func (d *lxc) templateApplyNow(trigger instance.TemplateTrigger) error {
 	// If there's no metadata, just return
-	fname := filepath.Join(d.Path(), "metadata.yaml")
+	fname := filepath.Join(d.rescueImagePath(), "metadata.yaml")
 	if !util.PathExists(fname) {
 		return nil
 	}
@@ -10374,7 +10410,7 @@ func (d *lxc) ReloadDevice(devName string) error {
 
 // CanLiveMigrate returns whether the container is live-migratable.
 func (d *lxc) CanLiveMigrate() bool {
-	return util.IsTrue(d.expandedConfig["migration.stateful"])
+	return d.localConfig[rescueTokenKey] == "" && util.IsTrue(d.expandedConfig["migration.stateful"])
 }
 
 // setupCredentials sets up the systemd credentials directory.

@@ -596,6 +596,7 @@ var APIExtensions = []string{
 	"instance_storage_handover_detached",
 	"idmap_usage",
 	"migration_checkpoint_restore",
+	"container_rescue",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

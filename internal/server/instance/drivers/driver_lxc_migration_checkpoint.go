@@ -19,8 +19,10 @@ import (
 	"github.com/lxc/incus/v7/shared/validate"
 )
 
-const migrationCheckpointKey = "volatile.migration.checkpoint"
-const migrationCheckpointStateKey = "volatile.migration.checkpoint.state"
+const (
+	migrationCheckpointKey      = "volatile.migration.checkpoint"
+	migrationCheckpointStateKey = "volatile.migration.checkpoint.state"
+)
 
 func migrationCheckpointPath(instanceUUID string, operationUUID string) (string, error) {
 	for _, value := range []string{instanceUUID, operationUUID} {
@@ -48,12 +50,12 @@ func (d *lxc) createMigrationCheckpoint() (string, error) {
 		return "", err
 	}
 
-	err = os.MkdirAll(filepath.Dir(path), 0700)
+	err = os.MkdirAll(filepath.Dir(path), 0o700)
 	if err != nil {
 		return "", err
 	}
 
-	err = os.Mkdir(path, 0700)
+	err = os.Mkdir(path, 0o700)
 	if err != nil {
 		return "", err
 	}

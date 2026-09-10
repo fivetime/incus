@@ -3912,3 +3912,24 @@ storage ownership fail before restore. A failed restore retains the checkpoint.
 The checkpoint is local to the source compute and cannot recover a permanently
 lost source disk. Interrupted dumps without the ready marker remain fenced;
 this extension does not turn an incomplete checkpoint into a recoverable one.
+## `container_rescue`
+
+Adds `rescue` and `unrescue` actions to `PUT /1.0/instances/NAME/state` for
+stopped unprivileged containers. Requests carry an exact UUID `rescue_token`;
+the rescue action also requires a cached container image fingerprint in
+`rescue_image`. Rescue does not start the container.
+
+The original root remains at its canonical path in the same owned storage
+volume. Incus stages a temporary root outside it and selects that root only
+while the rescue generation is committed. The original is available at
+`/mnt/root` inside the rescue container. The temporary image uses space from
+the existing root volume and cannot repair a backing filesystem that cannot
+be mounted. Ceph, externally owned Ceph and directory pools with a fixed
+on-disk isolated ID map are supported. No privileged mode is introduced.
+
+The volatile keys `volatile.rescue.token`, `volatile.rescue.image` and
+`volatile.rescue.phase` record the current generation. A completed unrescue
+retains `volatile.rescue.completed` for idempotent response-loss recovery.
+Interrupted preparation blocks ordinary start until the exact generation is
+restored or completed. Snapshot, copy, migration, backup and rename require
+unrescue first. Deletion cleans up rescue before releasing the root volume.
