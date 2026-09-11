@@ -33,11 +33,6 @@ profile "{{ .name }}" flags=(attach_disconnected,mediate_deleted) {
   @{PROC}/@{pid}/cpuset r,
   /{etc,lib,usr/lib}/os-release r,
 
-{{- if not .dstPath }}
-  # Senders have no destination ancestors granting root path resolution.
-  / r,
-{{- end }}
-
   {{ .logPath }}/*/netcat.log rw,
 
   /run/{resolvconf,NetworkManager,systemd/resolve,connman,netconfig}/resolv.conf r,

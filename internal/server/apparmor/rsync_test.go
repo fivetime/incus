@@ -7,7 +7,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/sys"
 )
 
-func TestRsyncProfileAllowsRootPathResolution(t *testing.T) {
+func TestRsyncProfileDestinationAncestors(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		source      string
@@ -23,8 +23,13 @@ func TestRsyncProfileAllowsRootPathResolution(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if strings.Count(profile, "\n  / r,\n") != 1 {
-				t.Fatal("Rsync profile must grant root path resolution exactly once")
+			rootRules := 0
+			if tt.destination != "" {
+				rootRules = 1
+			}
+
+			if strings.Count(profile, "\n  / r,\n") != rootRules {
+				t.Fatalf("Expected %d root read rules for destination %q", rootRules, tt.destination)
 			}
 
 			if tt.destination != "" && (!strings.Contains(profile, "\n  /tmp/ r,\n") || !strings.Contains(profile, "\n  /tmp/parent/ r,\n")) {
