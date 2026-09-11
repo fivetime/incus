@@ -426,13 +426,22 @@ func api10Get(d *Daemon, r *http.Request) response.Response {
 	fullSrv.AuthUserMethod = requestor.Protocol
 
 	err = s.Authorizer.CheckPermission(r.Context(), r, auth.ObjectServer(), auth.EntitlementCanViewSensitive)
-	if err == nil {
-		fullSrv.Config = fullSrvConfig
-	} else if !api.StatusErrorCheck(err, http.StatusForbidden) {
+	if err != nil {
+		if !api.StatusErrorCheck(err, http.StatusForbidden) {
+			return response.SmartError(err)
+		}
+
+		return response.SyncResponseETag(true, fullSrv, nil)
+	}
+
+	fullSrv.Config = fullSrvConfig
+
+	etag, err := daemonConfigETag(s, r)
+	if err != nil {
 		return response.SmartError(err)
 	}
 
-	return response.SyncResponseETag(true, fullSrv, fullSrv.Config)
+	return response.SyncResponseETag(true, fullSrv, etag)
 }
 
 // swagger:operation PUT /1.0 server server_put
@@ -522,7 +531,7 @@ func api10Put(d *Daemon, r *http.Request) response.Response {
 		return response.EmptySyncResponse
 	}
 
-	render, err := daemonConfigRender(s)
+	render, err := daemonConfigETag(s, r)
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -585,7 +594,7 @@ func api10Patch(d *Daemon, r *http.Request) response.Response {
 	// Don't apply changes to settings until daemon is fully started.
 	<-d.waitReady.Done()
 
-	render, err := daemonConfigRender(s)
+	render, err := daemonConfigETag(s, r)
 	if err != nil {
 		return response.InternalError(err)
 	}

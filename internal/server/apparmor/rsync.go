@@ -33,8 +33,10 @@ profile "{{ .name }}" flags=(attach_disconnected,mediate_deleted) {
   @{PROC}/@{pid}/cpuset r,
   /{etc,lib,usr/lib}/os-release r,
 
-  # rsync 3.5 opens the filesystem root while securely resolving an absolute path.
+{{- if not .dstPath }}
+  # Senders have no destination ancestors granting root path resolution.
   / r,
+{{- end }}
 
   {{ .logPath }}/*/netcat.log rw,
 
@@ -47,6 +49,9 @@ profile "{{ .name }}" flags=(attach_disconnected,mediate_deleted) {
 {{- end }}
 
 {{- if .dstPath }}
+{{- range .dstParents }}
+  {{ . }} r,
+{{- end }}
   {{ .dstPath }}/** rwkl,
   {{ .dstPath }}/ rwkl,
 {{- end }}
@@ -168,12 +173,23 @@ func rsyncProfile(sysOS *sys.OS, name string, sourcePath string, dstPath string)
 		execPath = fullPath
 	}
 
+	// rsync 3.5+ resolves the destination component by component from /.
+	dstParents := []string{}
+	if dstPath != "" {
+		for dir := filepath.Dir(filepath.Clean(dstPath)); dir != "/"; dir = filepath.Dir(dir) {
+			dstParents = append(dstParents, dir+"/")
+		}
+
+		dstParents = append(dstParents, "/")
+	}
+
 	sb := &strings.Builder{}
 	err = rsyncProfileTpl.Execute(sb, map[string]any{
 		"name":        name,
 		"execPath":    execPath,
 		"sourcePath":  sourcePath,
 		"dstPath":     dstPath,
+		"dstParents":  dstParents,
 		"logPath":     logPath,
 		"libraryPath": strings.Split(os.Getenv("LD_LIBRARY_PATH"), ":"),
 	})

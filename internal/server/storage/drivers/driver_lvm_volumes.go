@@ -637,7 +637,12 @@ func (d *lvm) GetVolumeUsage(vol Volume) (int64, error) {
 		// For non-snapshot thin pool block volumes we can calculate an approximate usage using the space
 		// allocated to the volume from the thin pool.
 		volPath := d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name)
-		_, usedSize, err := d.thinPoolVolumeUsage(volPath)
+
+		_, usedSize, ok, err := d.getCachedThinPoolVolumeUsage(volPath)
+		if !ok {
+			_, usedSize, err = d.thinPoolVolumeUsage(volPath)
+		}
+
 		if err != nil {
 			return -1, err
 		}
@@ -1080,6 +1085,11 @@ func (d *lvm) MountVolume(vol Volume, op *operations.Operation) error {
 			err = vol.EnsureMountPath(false)
 			if err != nil {
 				return err
+			}
+
+			// VM config volumes are small and unmounted while stopped, so repair them when needed.
+			if vol.volType == VolumeTypeVM {
+				fsckIfErrors(volDevPath, fsType)
 			}
 
 			mountFlags, mountOptions := linux.ResolveMountOptions(strings.Split(vol.ConfigBlockMountOptions(), ","))

@@ -2241,6 +2241,8 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		if err != nil {
 			return "", nil, err
 		}
+
+		reverter.Add(d.numaReservationClear)
 	}
 
 	// Check if idmap needs changing.
@@ -3882,6 +3884,8 @@ func (d *lxc) onStop(args map[string]string) error {
 		// Don't return an error here as we still want to cleanup the instance even if DB not available.
 		d.logger.Error("Failed recording last power state", logger.Ctx{"err": err})
 	}
+
+	d.numaReservationClear()
 
 	go func(d *lxc, target string, op *operationlock.InstanceOperation) {
 		d.fromHook = false

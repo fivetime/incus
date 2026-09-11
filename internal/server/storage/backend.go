@@ -46,6 +46,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/lifecycle"
 	"github.com/lxc/incus/v7/internal/server/locking"
 	localMigration "github.com/lxc/incus/v7/internal/server/migration"
+	"github.com/lxc/incus/v7/internal/server/mirror"
 	"github.com/lxc/incus/v7/internal/server/operations"
 	"github.com/lxc/incus/v7/internal/server/project"
 	"github.com/lxc/incus/v7/internal/server/response"
@@ -1153,7 +1154,13 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 	l.Debug("CreateInstanceFromCopy started")
 	defer l.Debug("CreateInstanceFromCopy finished")
 
-	err := b.isStatusReady()
+	// Write any state held outside the source volume back to it.
+	err := mirror.Flush(src.RunPath())
+	if err != nil {
+		return fmt.Errorf("Failed saving local instance state: %w", err)
+	}
+
+	err = b.isStatusReady()
 	if err != nil {
 		return err
 	}
@@ -1704,6 +1711,12 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "src": src.Name(), "srcSnapshots": len(srcSnapshots)})
 	l.Debug("RefreshInstance started")
 	defer l.Debug("RefreshInstance finished")
+
+	// Write any state held outside the source volume back to it.
+	err := mirror.Flush(src.RunPath())
+	if err != nil {
+		return fmt.Errorf("Failed saving local instance state: %w", err)
+	}
 
 	// This indicates whether or not it's a volume-only refresh.
 	snapshots := len(srcSnapshots) > 0
@@ -3969,6 +3982,12 @@ func (b *backend) BackupInstance(inst instance.Instance, tarWriter *instancewrit
 	l.Debug("BackupInstance started")
 	defer l.Debug("BackupInstance finished")
 
+	// Write any state held outside the instance volume back to it.
+	err := mirror.Flush(inst.RunPath())
+	if err != nil {
+		return fmt.Errorf("Failed saving local instance state: %w", err)
+	}
+
 	volType, err := InstanceTypeToVolumeType(inst.Type())
 	if err != nil {
 		return err
@@ -4368,6 +4387,12 @@ func (b *backend) CreateInstanceSnapshot(inst instance.Instance, src instance.In
 	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "src": src.Name()})
 	l.Debug("CreateInstanceSnapshot started")
 	defer l.Debug("CreateInstanceSnapshot finished")
+
+	// Write any state held outside the source volume back to it.
+	err := mirror.Flush(src.RunPath())
+	if err != nil {
+		return fmt.Errorf("Failed saving local instance state: %w", err)
+	}
 
 	if inst.Type() != src.Type() {
 		return errors.New("Instance types must match")
@@ -10377,7 +10402,7 @@ func (b *backend) qcow2CreateVolumeFromMigration(vol drivers.Volume, projectName
 
 		toPipe := io.Writer(to)
 		if !b.driver.Info().ZeroUnpack {
-			toPipe = drivers.NewSparseFileWrapper(to)
+			toPipe = linux.NewSparseFileWrapper(to)
 		}
 
 		_, err = util.SafeCopy(toPipe, fromPipe)
