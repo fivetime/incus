@@ -9846,9 +9846,14 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	}()
 
 	// Start filesystem transfer routine and initialize a channel that is closed when the routine finishes.
+	// The error is recorded before closing as errgroup only cancels the context after the routine returns.
+	var fsTransferErr error
 	fsTransferDone := make(chan struct{})
-	g.Go(func() error {
-		defer close(fsTransferDone)
+	g.Go(func() (retErr error) {
+		defer func() {
+			fsTransferErr = retErr
+			close(fsTransferDone)
+		}()
 
 		d.logger.Debug("Migrate receive transfer started")
 		defer d.logger.Debug("Migrate receive transfer finished")
@@ -10107,9 +10112,9 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			args.Disconnect()
 		}
 
-		// If context is cancelled by this stage, then an error has occurred.
+		// If the transfer failed or the context is cancelled by this stage, then an error has occurred.
 		// Wait for all routines to finish and collect the first error that occurred.
-		if ctx.Err() != nil || storageReceiveCompletionErr != nil {
+		if fsTransferErr != nil || ctx.Err() != nil || storageReceiveCompletionErr != nil {
 			err := g.Wait()
 			if err == nil {
 				err = storageReceiveCompletionErr
@@ -10492,11 +10497,21 @@ func (d *qemu) Exec(req api.InstanceExecPost, stdin *os.File, stdout *os.File, s
 	}
 
 	args := incus.InstanceExecArgs{
-		Stdin:    stdin,
-		Stdout:   stdout,
-		Stderr:   stderr,
 		DataDone: dataDone,
 		Control:  controlHandler,
+	}
+
+	// Only set the streams when provided, a nil *os.File would otherwise be a non-nil interface.
+	if stdin != nil {
+		args.Stdin = stdin
+	}
+
+	if stdout != nil {
+		args.Stdout = stdout
+	}
+
+	if stderr != nil {
+		args.Stderr = stderr
 	}
 
 	// Always needed for VM exec, as even for non-websocket requests from the client we need to connect the

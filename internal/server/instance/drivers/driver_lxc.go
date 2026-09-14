@@ -7547,8 +7547,9 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	}()
 
 	// Start filesystem transfer routine and initialize a channel that is closed when the routine finishes.
-	fsTransferDone := make(chan struct{})
+	// The error is recorded before closing as errgroup only cancels the context after the routine returns.
 	var fsTransferErr error
+	fsTransferDone := make(chan struct{})
 	g.Go(func() (retErr error) {
 		defer func() {
 			fsTransferErr = retErr
@@ -7751,8 +7752,8 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 
 	// Start live state transfer routine (if required) and initialize a channel that is closed when the
 	// routine finishes. It is never closed if the routine is not started.
-	stateTransferDone := make(chan struct{})
 	var stateTransferErr error
+	stateTransferDone := make(chan struct{})
 	if args.Live {
 		g.Go(func() (retErr error) {
 			d.logger.Debug("Migrate receive state transfer started")
@@ -7836,6 +7837,10 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			<-fsTransferDone
 
 			// But only proceed if no errors have occurred thus far.
+			if fsTransferErr != nil {
+				return fsTransferErr
+			}
+
 			err = ctx.Err()
 			if err != nil {
 				return err
@@ -7900,9 +7905,9 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 			args.Disconnect()
 		}
 
-		// Transfer channels can close before errgroup publishes the error and cancels its context.
+		// If a transfer failed or the context is cancelled by this stage, then an error has occurred.
 		// Wait for all routines to finish and collect the first error that occurred.
-		if ctx.Err() != nil || fsTransferErr != nil || stateTransferErr != nil || storageReceiveCompletionErr != nil {
+		if fsTransferErr != nil || stateTransferErr != nil || ctx.Err() != nil || storageReceiveCompletionErr != nil {
 			err := g.Wait()
 			if err == nil {
 				err = storageReceiveCompletionErr
