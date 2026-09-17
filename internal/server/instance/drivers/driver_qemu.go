@@ -130,6 +130,9 @@ const qemuSparseUSBPorts = 8
 
 var errQemuAgentOffline = errors.New("VM agent isn't currently running")
 
+// qemuStopHooks tracks instances with a stop hook in progress.
+var qemuStopHooks sync.Map
+
 type monitorHook func(m *qmp.Monitor) error
 
 // qemuLoad creates a Qemu instance from the supplied InstanceArgs.
@@ -759,6 +762,16 @@ func (d *qemu) pidWait(timeout time.Duration) bool {
 func (d *qemu) onStop(target string, reason string) error {
 	d.logger.Debug("onStop hook started", logger.Ctx{"target": target, "reason": reason})
 	defer d.logger.Debug("onStop hook finished", logger.Ctx{"target": target, "reason": reason})
+
+	// Only run one stop hook at a time, a duplicate would race the cleanup and restart.
+	hookKey := project.Instance(d.Project().Name, d.Name())
+	_, running := qemuStopHooks.LoadOrStore(hookKey, struct{}{})
+	if running {
+		d.logger.Warn("Ignoring duplicate stop hook", logger.Ctx{"target": target, "reason": reason})
+		return nil
+	}
+
+	defer qemuStopHooks.Delete(hookKey)
 
 	// Create/pick up operation.
 	op, err := d.onStopOperationSetup(target)
@@ -6280,7 +6293,7 @@ func (d *qemu) addPCIDevConfig(conf *[]cfg.Section, bus *qemuBus, pciConfig []de
 
 // addGPUDevConfig adds the qemu config required for adding a GPU device.
 func (d *qemu) addGPUDevConfig(conf *[]cfg.Section, bus *qemuBus, gpuConfig []deviceConfig.RunConfigItem) error {
-	var devName, pciSlotName, vgpu, gpuType string
+	var devName, pciSlotName, vgpu, gpuType, clique string
 	for _, gpuItem := range gpuConfig {
 		switch gpuItem.Key {
 		case "devName":
@@ -6291,6 +6304,8 @@ func (d *qemu) addGPUDevConfig(conf *[]cfg.Section, bus *qemuBus, gpuConfig []de
 			vgpu = gpuItem.Value
 		case "gpuType":
 			gpuType = gpuItem.Value
+		case "clique":
+			clique = gpuItem.Value
 		}
 	}
 
@@ -6337,6 +6352,7 @@ func (d *qemu) addGPUDevConfig(conf *[]cfg.Section, bus *qemuBus, gpuConfig []de
 		pciSlotName: pciSlotName,
 		vga:         vgaMode,
 		vgpu:        vgpu,
+		clique:      clique,
 	}
 
 	// Add main GPU device in VGA mode to qemu config.

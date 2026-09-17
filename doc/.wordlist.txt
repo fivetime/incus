@@ -73,6 +73,7 @@ diskful
 diskless
 Diskless
 Distrobuilder
+DMA
 DNAT
 DNS
 dnsmasq
@@ -117,6 +118,7 @@ Github
 Golang
 goroutines
 GPG
+GPUDirect
 GPUs
 Grafana
 GUID
