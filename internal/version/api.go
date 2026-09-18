@@ -582,6 +582,7 @@ var APIExtensions = []string{
 	"device_queue_disc",
 	"network_bridge_dns_include_hosts",
 	"gpu_physical_clique",
+	"authorization_scriptlet_claims",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an
