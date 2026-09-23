@@ -463,13 +463,17 @@ func checkMigrationAttemptIDMapAvailable(s *state.State, base int64, size int64)
 	}
 
 	for _, inst := range instances {
-		if inst.IsPrivileged() || util.IsFalseOrEmpty(inst.ExpandedConfig()["security.idmap.isolated"]) {
+		if inst.IsSnapshot() || inst.IsPrivileged() {
 			continue
 		}
 
-		baseValue := inst.ExpandedConfig()["volatile.idmap.base"]
+		baseValue := inst.ExpandedConfig()["security.idmap.base"]
 		if baseValue == "" {
-			baseValue = inst.ExpandedConfig()["security.idmap.base"]
+			if util.IsFalseOrEmpty(inst.ExpandedConfig()["security.idmap.isolated"]) {
+				continue
+			}
+
+			baseValue = inst.ExpandedConfig()["volatile.idmap.base"]
 		}
 
 		if baseValue == "" {

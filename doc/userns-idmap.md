@@ -64,9 +64,12 @@ size. Isolated containers without this property set default to a ID range of
 size 65536; this allows for POSIX compliance and a `nobody` user inside the
 container.
 
-To select a specific map, the `security.idmap.base` key will let you
-override the auto-detection mechanism and tell Incus what host UID/GID you
-want to use as the base for the container.
+To use a specific map, the `security.idmap.base` key will let you tell Incus
+what host UID/GID to use as the base for the container, with the range size
+coming from `security.idmap.size` (defaulting to 65536). Such a range is not
+isolated and can be shared by any number of containers using the same base,
+it therefore can't be combined with `security.idmap.isolated`. Isolated
+containers are allocated their range away from those fixed ranges.
 
 These properties require a container reboot to take effect.
 
@@ -95,3 +98,22 @@ This property requires a container reboot to take effect.
 Remember that you may need to add an entry for the `root` user into
 `/etc/subid` and/or `/etc/subgid` so the container is allowed to make
 use of it.
+
+## Fork migration reservations
+
+This fork follows upstream fixed-base semantics: fixed ranges may be shared,
+and `security.idmap.base` cannot be combined with `security.idmap.isolated=true`.
+The upstream upgrade patch disables isolation for existing fixed-base profiles,
+containers and snapshots without changing their base.
+
+Durable migration reservations remain exclusive until reconciled. Both automatic
+allocation and ordinary fixed-base creation avoid active migration reservations.
+A migration target must use the reserved fixed base and size, with isolation
+unset or false, and present the matching migration attempt token. Reservation
+registration accounts for existing fixed-base containers as well as automatically
+isolated containers. Callers using the old combination must update their requests
+before deploying this version; the database patch does not rewrite API clients.
+
+The current Nova integration in `openstack-incus` still emits the old combination
+from `nova/virt/incus/flavor.py`. Do not roll out this Incus version until the
+Nova fixed-base request path is updated and the testbed migration checks pass.

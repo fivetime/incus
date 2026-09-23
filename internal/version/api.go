@@ -583,6 +583,9 @@ var APIExtensions = []string{
 	"network_bridge_dns_include_hosts",
 	"gpu_physical_clique",
 	"authorization_scriptlet_claims",
+	"instance_project_move_live",
+	"metrics_cluster_members",
+	"instance_security_tags",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an

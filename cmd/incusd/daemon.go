@@ -140,6 +140,9 @@ type Daemon struct {
 	shutdownCancel context.CancelFunc // Cancels the shutdownCtx to indicate shutdown starting.
 	shutdownDoneCh chan error         // Receives the result of the d.Stop() function and tells the daemon to end.
 
+	shutdownForceCtx    context.Context    // Cancelled when the shutdown should stop waiting on operations and instances.
+	shutdownForceCancel context.CancelFunc // Cancels the shutdownForceCtx to force the shutdown.
+
 	// Device monitor for watching filesystem events
 	devmonitor fsmonitor.FSMonitor
 
@@ -194,6 +197,7 @@ func newDaemon(config *DaemonConfig, osInfo *sys.OS) *Daemon {
 	incusEvents := events.NewServer(daemon.Debug, daemon.Verbose, cluster.EventHubPush)
 	devIncusEvents := events.NewDevIncusServer(daemon.Debug, daemon.Verbose)
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	shutdownForceCtx, shutdownForceCancel := context.WithCancel(context.Background())
 
 	d := &Daemon{
 		clientCerts:    &certificate.Cache{},
@@ -207,7 +211,10 @@ func newDaemon(config *DaemonConfig, osInfo *sys.OS) *Daemon {
 		shutdownCtx:    shutdownCtx,
 		shutdownCancel: shutdownCancel,
 		shutdownDoneCh: make(chan error),
-		apiExtensions:  len(version.APIExtensions),
+
+		shutdownForceCtx:    shutdownForceCtx,
+		shutdownForceCancel: shutdownForceCancel,
+		apiExtensions:       len(version.APIExtensions),
 	}
 
 	d.serverCert = func() *localtls.CertInfo { return d.serverCertInt }
@@ -858,12 +865,13 @@ func (d *Daemon) createCmd(restAPI *http.ServeMux, apiVersion string, c APIEndpo
 		// Return Unavailable Error (503) if daemon is shutting down.
 		// There are some exceptions:
 		// - internal calls, e.g. shutdown
+		// - OS calls, so the host can still be rebooted
 		// - events endpoint as this is accessed when running `shutdown`
 		// - /1.0 endpoint
 		// - /1.0/operations endpoints
 		// - GET queries
 		allowedDuringShutdown := func() bool {
-			if apiVersion == "internal" {
+			if slices.Contains([]string{"internal", "os"}, apiVersion) {
 				return true
 			}
 
@@ -1898,13 +1906,15 @@ func (d *Daemon) Stop(ctx context.Context, sig os.Signal) error {
 		select {
 		case <-time.After(time.Minute):
 			logger.Error("Timed out waiting for image and backup volume")
+		case <-ctx.Done():
+			logger.Warn("Forced shutdown, no longer waiting for image and backup volume")
 		case <-done:
 		}
 
 		// Full shutdown requested.
 		if sig == unix.SIGPWR {
 			if !evacuated {
-				instancesShutdown(instances)
+				instancesShutdown(ctx, instances, s.GlobalConfig.ShutdownTimeout())
 
 				logger.Info("Stopping networks")
 				networkShutdown(s)
@@ -2195,15 +2205,16 @@ func (d *Daemon) setupOpenFGA(apiURL string, apiToken string, storeID string, tl
 				return err
 			}
 
-			err = query.Scan(ctx, tx.Tx(), "SELECT instances.name, projects.name FROM instances JOIN projects ON projects.id=instances.project_id", func(scan func(dest ...any) error) error {
-				var instanceName string
-				var projectName string
-				err := scan(&instanceName, &projectName)
-				if err != nil {
-					return err
+			resources.InstanceSecurityTags = map[auth.Object][]string{}
+			err = tx.InstanceList(ctx, func(dbInst db.InstanceArgs, p api.Project) error {
+				instanceObject := auth.ObjectInstance(dbInst.Project, dbInst.Name)
+				resources.InstanceObjects = append(resources.InstanceObjects, instanceObject)
+
+				tags := util.SplitNTrimSpace(db.ExpandInstanceConfig(dbInst.Config, dbInst.Profiles)["security.tags"], ",", -1, true)
+				if len(tags) > 0 {
+					resources.InstanceSecurityTags[instanceObject] = tags
 				}
 
-				resources.InstanceObjects = append(resources.InstanceObjects, auth.ObjectInstance(projectName, instanceName))
 				return nil
 			})
 			if err != nil {

@@ -3570,6 +3570,28 @@ GPUs passed through to the same virtual machine when they share a clique ID.
 This adds a `Claims` field to the `details` argument of the authorization
 scriptlet, holding the validated OIDC token claims of the client as a
 dictionary. This allows writing rules based on claims such as `groups`.
+
+## `instance_project_move_live`
+
+This allows a running instance to change project as part of a live migration
+to another cluster member. It also lets instances with `dependent` disks
+attached change project.
+
+## `metrics_cluster_members`
+
+This adds cluster member metrics to the `/1.0/metrics` endpoint:
+
+* `incus_cluster_member` with the member's architecture and failure domain
+* `incus_cluster_member_status` with one sample per possible status
+* `incus_cluster_member_role` with one sample per role held
+* `incus_cluster_member_group` with one sample per group the member belongs to
+
+## `instance_security_tags`
+
+Adds a new `security.tags` configuration key to instances, holding a
+comma-separated list of tags. The tags are exposed to the authorization
+backend, with OpenFGA maintaining a `security_tag` object for each tag
+along with a `tag` relation to every instance carrying it.
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external

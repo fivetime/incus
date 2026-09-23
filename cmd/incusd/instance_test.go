@@ -462,6 +462,47 @@ func (s *containerTestSuite) TestContainer_findIdmap_mixed() {
 	}
 }
 
+func (s *containerTestSuite) TestContainer_findIdmap_fixedShared() {
+	var fixed []instance.Instance
+	defer func() {
+		for _, c := range fixed {
+			_ = c.Delete(true, true)
+		}
+	}()
+
+	base := s.d.os.IdmapSet.Entries[0].HostID + 65536
+	for _, name := range []string{"fixed-one", "fixed-two"} {
+		c, op, _, err := instance.CreateInternal(s.d.State(), db.InstanceArgs{
+			Type: instancetype.Container,
+			Name: name,
+			Config: map[string]string{
+				"security.idmap.base": fmt.Sprintf("%d", base),
+			},
+		}, nil, true, true, false)
+		s.Req.NoError(err)
+		op.Done(nil)
+		fixed = append(fixed, c)
+		next, err := c.(instance.Container).NextIdmap()
+		s.Req.NoError(err)
+		s.Req.Equal(base, next.Entries[0].HostID)
+		s.Req.Equal(int64(65536), next.Entries[0].MapRange)
+	}
+
+	s.Req.Error(checkMigrationAttemptIDMapAvailable(s.d.State(), base, 65536))
+	s.Req.NoError(checkMigrationAttemptIDMapAvailable(s.d.State(), base+65536, 65536))
+	c, op, _, err := instance.CreateInternal(s.d.State(), db.InstanceArgs{
+		Type:   instancetype.Container,
+		Name:   "isolated-after-fixed",
+		Config: map[string]string{"security.idmap.isolated": "true"},
+	}, nil, true, true, false)
+	s.Req.NoError(err)
+	op.Done(nil)
+	defer func() { _ = c.Delete(true, true) }()
+	next, err := c.(instance.Container).NextIdmap()
+	s.Req.NoError(err)
+	s.Req.Equal(base+65536, next.Entries[0].HostID)
+}
+
 func (s *containerTestSuite) TestContainer_findIdmap_migrationReservation() {
 	manager := migrationattempt.New(s.d.State().DB.Node)
 	token := "905fdf8d-4215-40ad-a133-76db764cc073"
@@ -475,7 +516,7 @@ func (s *containerTestSuite) TestContainer_findIdmap_migrationReservation() {
 		Type: instancetype.Container,
 		Name: "conflicting-idmap",
 		Config: map[string]string{
-			"security.idmap.isolated": "true",
+			"security.idmap.isolated": "false",
 			"security.idmap.base":     fmt.Sprintf("%d", base),
 			"security.idmap.size":     "65536",
 		},
@@ -490,7 +531,7 @@ func (s *containerTestSuite) TestContainer_findIdmap_migrationReservation() {
 		Name:             "migration-idmap",
 		MigrationAttempt: token,
 		Config: map[string]string{
-			"security.idmap.isolated": "true",
+			"security.idmap.isolated": "false",
 			"security.idmap.base":     fmt.Sprintf("%d", base+1),
 			"security.idmap.size":     "65536",
 		},
@@ -502,7 +543,7 @@ func (s *containerTestSuite) TestContainer_findIdmap_migrationReservation() {
 		Name:             "migration-idmap",
 		MigrationAttempt: token,
 		Config: map[string]string{
-			"security.idmap.isolated": "true",
+			"security.idmap.isolated": "false",
 			"security.idmap.base":     fmt.Sprintf("%d", base),
 			"security.idmap.size":     "65536",
 		},

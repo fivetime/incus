@@ -359,6 +359,15 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	//  shortdesc: Prevents the instance from being started
 	"security.protection.start": validate.Optional(validate.IsBool),
 
+	// gendoc:generate(entity=instance, group=security, key=security.tags)
+	// Tags are made of lowercase letters, digits, dots, dashes and underscores and are at most 64 characters long.
+	// They are exposed to the authorization backend but don't affect Incus' own authorization decisions.
+	// ---
+	//  type: string
+	//  liveupdate: yes
+	//  shortdesc: Comma-separated list of security tags for the authorization backend
+	"security.tags": validate.Optional(validate.IsSecurityTagList),
+
 	// gendoc:generate(entity=instance, group=security, key=security.selinux.type)
 	// Override the SELinux file type used for labeling instance storage.
 	// ---
@@ -1067,12 +1076,12 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	"security.guestapi.images": validate.Optional(validate.IsBool),
 
 	// gendoc:generate(entity=instance, group=security, key=security.idmap.base)
-	// Setting this option overrides auto-detection.
+	// The range can be shared by other containers using the same base and can't be combined with `security.idmap.isolated`.
 	// ---
 	//  type: integer
 	//  liveupdate: no
 	//  condition: unprivileged container
-	//  shortdesc: The base host ID to use for the allocation
+	//  shortdesc: The base host ID to use for the ID map
 	"security.idmap.base": validate.Optional(validate.IsUint32),
 
 	// gendoc:generate(entity=instance, group=security, key=security.idmap.isolated)

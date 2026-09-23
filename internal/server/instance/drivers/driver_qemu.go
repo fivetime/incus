@@ -334,6 +334,15 @@ func qemuCreate(s *state.State, args db.InstanceArgs, p api.Project, partialDevi
 
 		reverter.Add(func() { _ = d.state.Authorizer.DeleteInstance(d.state.ShutdownCtx, d.project.Name, d.Name()) })
 
+		// Add the security tags to the authorizer.
+		tags := util.SplitNTrimSpace(d.expandedConfig["security.tags"], ",", -1, true)
+		if len(tags) > 0 {
+			err = d.state.Authorizer.SetInstanceSecurityTags(d.state.ShutdownCtx, d.project.Name, d.Name(), tags)
+			if err != nil {
+				logger.Error("Failed to add instance security tags to authorizer", logger.Ctx{"name": d.Name(), "project": d.project.Name, "error": err})
+			}
+		}
+
 		d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceCreated.Event(d, map[string]any{
 			"type":         api.InstanceTypeVM,
 			"storage-pool": d.storagePool.Name(),
@@ -7736,6 +7745,14 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 		}
 	}
 
+	// Update the security tags in the authorizer.
+	if !d.isSnapshot && slices.Contains(changedConfig, "security.tags") {
+		err = d.state.Authorizer.SetInstanceSecurityTags(d.state.ShutdownCtx, d.project.Name, d.Name(), util.SplitNTrimSpace(d.expandedConfig["security.tags"], ",", -1, true))
+		if err != nil {
+			d.logger.Error("Failed to update instance security tags in authorizer", logger.Ctx{"err": err})
+		}
+	}
+
 	if userRequested {
 		if d.isSnapshot {
 			d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceSnapshotUpdated.Event(d, nil))
@@ -8175,6 +8192,11 @@ func (d *qemu) delete(force bool, cleanupDependencies bool) error {
 			}
 
 			if cleanupDependencies {
+				storageProjectName, err := project.StorageVolumeProject(d.state.DB.Cluster, d.Project().Name, db.StoragePoolVolumeTypeCustom)
+				if err != nil {
+					return err
+				}
+
 				// Delete all dependent volumes associated with this instance.
 				err = d.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {
 					// Load the pool for the disk.
@@ -8184,7 +8206,7 @@ func (d *qemu) delete(force bool, cleanupDependencies bool) error {
 					}
 
 					volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
-					err = diskPool.DeleteCustomVolume(d.Project().Name, volName, nil)
+					err = diskPool.DeleteCustomVolume(storageProjectName, volName, nil)
 					if err != nil {
 						return err
 					}
@@ -8591,6 +8613,17 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		return err
 	}
 
+	// Filesystem volumes are shared over 9p, which QEMU can't live migrate.
+	if args.Live {
+		for _, vol := range dependentVolumesOffer {
+			if vol.GetContentType() != string(storageDrivers.ContentTypeBlock) {
+				err := fmt.Errorf("Live migration isn't supported for dependent disk %q with a filesystem volume", vol.GetDeviceName())
+				op.Done(err)
+				return err
+			}
+		}
+	}
+
 	offerHeader.DependentVolumes = dependentVolumesOffer
 
 	contentType := storagePools.InstanceContentType(d)
@@ -8711,7 +8744,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		return err
 	}
 
-	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, respHeader.DependentVolumes, args.Snapshots, nil, true)
+	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, respHeader.DependentVolumes, args.Snapshots, nil, true, clusterMove)
 	if err != nil {
 		err := fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 		op.Done(err)
@@ -8991,6 +9024,10 @@ func (d *qemu) prepareEphemeralSnapshot(monitor *qmp.Monitor, diskName string, d
 	blockDevs, err := d.fetchBlockDeviceChain(monitor, diskName)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("Failed fetching block device chain: %w", err)
+	}
+
+	if len(blockDevs) == 0 {
+		return "", "", nil, fmt.Errorf("No block device found for disk %q", diskName)
 	}
 
 	blockDevName := blockDevs[len(blockDevs)-1]
@@ -9710,7 +9747,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	respHeader.Refresh = &args.Refresh
 
 	localDevices := d.localDevices.CloneNative()
-	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, offerHeader.DependentVolumes, args.Snapshots, localDevices, false)
+	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, offerHeader.DependentVolumes, args.Snapshots, localDevices, false, clusterMove)
 	if err != nil {
 		return fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 	}

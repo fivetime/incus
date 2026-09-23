@@ -3018,9 +3018,9 @@ See {ref}`dev-incus` for more information.
 ```{config:option} security.idmap.base instance-security
 :condition: "unprivileged container"
 :liveupdate: "no"
-:shortdesc: "The base host ID to use for the allocation"
+:shortdesc: "The base host ID to use for the ID map"
 :type: "integer"
-Setting this option overrides auto-detection.
+The range can be shared by other containers using the same base and can't be combined with `security.idmap.isolated`.
 ```
 
 ```{config:option} security.idmap.isolated instance-security
@@ -3304,6 +3304,14 @@ This system call allows setting a limited subset of restricted extended attribut
 :shortdesc: "Whether to handle the `sysinfo` system call"
 :type: "bool"
 This system call can be used to get cgroup-based resource usage information.
+```
+
+```{config:option} security.tags instance-security
+:liveupdate: "yes"
+:shortdesc: "Comma-separated list of security tags for the authorization backend"
+:type: "string"
+Tags are made of lowercase letters, digits, dots, dashes and underscores and are at most 64 characters long.
+They are exposed to the authorization backend but don't affect Incus' own authorization decisions.
 ```
 
 <!-- config group instance-security end -->

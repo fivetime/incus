@@ -3353,8 +3353,8 @@
 						"security.idmap.base": {
 							"condition": "unprivileged container",
 							"liveupdate": "no",
-							"longdesc": "Setting this option overrides auto-detection.",
-							"shortdesc": "The base host ID to use for the allocation",
+							"longdesc": "The range can be shared by other containers using the same base and can't be combined with `security.idmap.isolated`.",
+							"shortdesc": "The base host ID to use for the ID map",
 							"type": "integer"
 						}
 					},
@@ -3658,6 +3658,14 @@
 							"longdesc": "This system call can be used to get cgroup-based resource usage information.",
 							"shortdesc": "Whether to handle the `sysinfo` system call",
 							"type": "bool"
+						}
+					},
+					{
+						"security.tags": {
+							"liveupdate": "yes",
+							"longdesc": "Tags are made of lowercase letters, digits, dots, dashes and underscores and are at most 64 characters long.\nThey are exposed to the authorization backend but don't affect Incus' own authorization decisions.",
+							"shortdesc": "Comma-separated list of security tags for the authorization backend",
+							"type": "string"
 						}
 					}
 				]
