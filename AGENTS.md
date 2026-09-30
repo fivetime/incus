@@ -18,3 +18,10 @@
  - Excessive unit tests are generally discouraged.
  - When possible, existing system tests should be extended to cover new features.
  - A full local system test run isn't required prior to contribution, all tests get run in our CI.
+
+# Authoritative branch
+
+ - `main` in `https://github.com/fivetime/incus.git` is the authoritative fork branch.
+ - Integrate reviewed upstream changes and retained fork features into `main` before retiring topic branches.
+ - Archived PR worktrees and Git bundles are historical evidence, not development or deployment baselines.
+ - Do not reintroduce superseded or rejected PR implementations when their accepted upstream replacement is already in `main`.
