@@ -285,6 +285,7 @@ RUN incus_version="$(incusd --version)" \
       "APK_PACKAGES_SHA256=${packages_sha256}" \
       > /usr/share/incus-runtime/components.env
 
+COPY deploy/image/incusd-runtime.apparmor /usr/share/incus-runtime/apparmor/incusd-runtime
 COPY deploy/image/incus-start.sh deploy/image/lxcfs-start.sh deploy/image/healthcheck.sh /usr/local/sbin/
 RUN sed -i 's/\r$//' /usr/local/sbin/incus-start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh \
     && chmod 0755 /usr/local/sbin/incus-start.sh /usr/local/sbin/lxcfs-start.sh /usr/local/sbin/healthcheck.sh

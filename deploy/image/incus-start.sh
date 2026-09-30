@@ -80,13 +80,31 @@ mount_fstype_matches /var/lib/lxcfs '^fuse(\.lxcfs)?$' \
 timeout 5 head -n 1 /var/lib/lxcfs/proc/meminfo >/dev/null \
   || fail "The incus-lxcfs FUSE mount is not responding"
 
+for command_name in aa-exec apparmor_parser; do
+  require_command "$command_name"
+done
+
+# incusd runs under a label of its own rather than whatever the outer runtime
+# happens to leave it with; see incusd-runtime.apparmor for what depends on it.
+RUNTIME_PROFILE=incusd-runtime
+RUNTIME_PROFILE_SOURCE=/usr/share/incus-runtime/apparmor/${RUNTIME_PROFILE}
 CURRENT_PROFILE=$(cat /proc/self/attr/current 2>/dev/null || true)
 case "$CURRENT_PROFILE" in
-  unconfined*|*"(unconfined)"*) ;;
+  "${RUNTIME_PROFILE} (unconfined)") ;;
+  unconfined*|*"(unconfined)"*)
+    [ "${INCUS_ENTERED_RUNTIME_PROFILE:-0}" != "1" ] \
+      || fail "Failed to enter the ${RUNTIME_PROFILE} AppArmor profile; still ${CURRENT_PROFILE}"
+    [ -r "$RUNTIME_PROFILE_SOURCE" ] \
+      || fail "The ${RUNTIME_PROFILE} AppArmor profile is missing from the image"
+    apparmor_parser --replace --skip-cache "$RUNTIME_PROFILE_SOURCE" \
+      || fail "Unable to load the ${RUNTIME_PROFILE} AppArmor profile"
+    exec aa-exec -p "$RUNTIME_PROFILE" \
+      env INCUS_ENTERED_RUNTIME_PROFILE=1 "$0" "$@"
+    ;;
   *) fail "The outer runtime must use the unconfined AppArmor profile" ;;
 esac
 
-for command_name in aa-exec apparmor_parser criu incus incusd ip6tables-legacy-restore ip6tables-restore iptables-legacy-restore iptables-restore newgidmap newuidmap nft; do
+for command_name in criu incus incusd ip6tables-legacy-restore ip6tables-restore iptables-legacy-restore iptables-restore newgidmap newuidmap nft; do
   require_command "$command_name"
 done
 

@@ -76,6 +76,12 @@ jobs:
             sh -n /usr/local/sbin/lxcfs-start.sh
             sh -n /usr/local/sbin/healthcheck.sh
             ! grep -Eq "^[[:space:]]*lxcfs .*&" /usr/local/sbin/incus-start.sh
+            apparmor_parser --skip-kernel-load --skip-cache --ofile /tmp/incusd-runtime.bin \
+              /usr/share/incus-runtime/apparmor/incusd-runtime
+            test -s /tmp/incusd-runtime.bin
+            grep -q "^profile incusd-runtime flags=(unconfined) {$" \
+              /usr/share/incus-runtime/apparmor/incusd-runtime
+            grep -Fq "exec aa-exec -p" /usr/local/sbin/incus-start.sh
             tar --help 2>&1 | grep -q -- "--no-unquote"
             ! ldd /usr/sbin/incusd | grep -q "not found"
             ! ldd /usr/local/sbin/criu | grep -q "not found"

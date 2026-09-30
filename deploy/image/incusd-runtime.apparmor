@@ -1,0 +1,14 @@
+# The label incusd runs under. incus-start.sh loads it and enters it.
+#
+# Nothing is confined: the unconfined flag allows everything. What matters is
+# that the label has a name. Ubuntu stacks every profile change made by an
+# unprivileged task whose label is plain "unconfined", and liblxc changes
+# profile inside the instance's user namespace, so instances started from
+# plain "unconfined" run as <instance>//&unconfined. The instance profile's
+# peer rules match its own name only, and processes of one instance can then
+# no longer signal or trace each other. A named label is exempt.
+abi <abi/4.0>,
+
+profile incusd-runtime flags=(unconfined) {
+  userns,
+}
