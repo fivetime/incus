@@ -23,7 +23,7 @@
   "scope": "Native Incus validation. Existing Nova Incus services were disabled/down while Kata services were active; these tests do not establish Nova end-to-end behavior.",
   "runtime_fix": "LXC CRIU restore must open the restored init pidfd before advertising RUNNING.",
   "production_validation": {
-    "status": "incomplete: historical residue repaired; remaining ordered cold pairs and production live gates running",
+    "status": "passed: production deployment, 30 effective cold cases, two live rings, cleanup and final scheduling/ownership audit",
     "incus_revision": "4f839b4f45746a29d6dbe931871a9483d6394aa1",
     "incus_image_digest": "sha256:88923d6220190237534393823f99057aa4e765242f3102b7703440a1c8cb2a21",
     "nova_driver_revision": "99349e32fd9e9510bbef3e0ef713b183e137123c",
@@ -46,13 +46,17 @@
       "BFV worker1 to worker2: genuine target startup fault and reverse-revert fault recovered automatically; exact test resource cleanup passed",
       "Kubernetes read-only audit: 23 service processes across 7 Nova pods pass runtime contract; approved image pins, required extensions, Ceph prefixes and fleet identity configuration verified",
       "BFV worker1 to worker2 normal r6 and worker2 to worker1 complete five-case r6 matrices exited zero with run-scoped cloud and complete runtime inventory checks",
-      "Historical worker3 fixture manually retired under explicit authorization; original four guest process identities and ID maps unchanged; worker3 scheduling restored"
+      "Historical worker3 fixture manually retired under explicit authorization; original four guest process identities and ID maps unchanged; worker3 scheduling restored",
+      "BFV worker3 to worker1: complete five-case r7 matrix and residual-state audit exited zero",
+      "BFV worker1 to worker3: first four r7 cases passed; interrupted reverse case excluded; fresh r9 reverse fault, automatic recovery and residual-state audit exited zero",
+      "All 30 effective cold cases across six ordered directions passed; excluded attempts retained in historical records",
+      "Managed Ceph root live ring 3->1->2->3 with data volume: PID 749, counter 57->383, three hops",
+      "Cinder BFV root live ring 3->2->1->3 with data volume: PID 749, counter 43->401, three hops",
+      "Final positive runtime, Cinder/Ceph, Neutron, Placement and fixture-journal cleanup audit passed; temporary CLI pod removed",
+      "Three workers enabled/up, both daemonsets 3/3 Ready, image digests verified and compute NoSchedule taints retained",
+      "Four original ID maps retained; three original PID/start ticks unchanged; one explicitly authorized guest stop/start repaired pre-existing LXCFS binds"
     ],
-    "incomplete": [
-      "Remaining ordered-pair cold migration fault matrices",
-      "Managed Ceph and BFV production live migration rings",
-      "Final temporary-resource cleanup and scheduling audit"
-    ],
+    "incomplete": [],
     "aborted_fault_case": {
       "exit": 143,
       "instance_uuid": "96567f9b-2b8c-4085-b6d5-e33dc6f4570a",
@@ -64,13 +68,25 @@
       "backend_cleanup_verified": true,
       "cleanup_boundary": "One-time manual historical repair after exact three-node runtime, UID/GID, mount, mapping and authenticated Ceph identity absence. Full backups retained; exact Incus rows and unused profile removed; materialization tombstone retained with empty proof digest; only four exact registry keys removed. No automatic receipt or fencing proof fabricated."
     },
-    "scheduling": "All three workers enabled/up after exact historical orphan repair; original four guests retain PID/start ticks and ID maps",
+    "scheduling": "All three workers enabled/up. Four original ID maps unchanged; one authorized guest restart is explicitly recorded below.",
     "image_ci": "Incus and Nova image builds passed",
-    "driver_github_ci": "job did not start due GitHub account billing/spending-limit rejection; not a passing check",
+    "driver_github_ci": "Run 36713117693 for a9b55b1 did not start: GitHub account billing/spending-limit rejection, no steps executed. Not a passing check.",
     "local_driver_validation": "1462 unit tests cumulatively passed; 252 tool tests passed; style and documentation build passed",
     "network_recovery": "User restarted FRR; routes, DNS, API communication and Nova heartbeats recovered. No host infrastructure changes by this validation run.",
-    "test_harness": "92243de: positive authenticated exact-root cleanup, positive runtime absence before volume deletion, scoped RBD faults and run-scoped cloud audit; 98 focused Linux tests passed",
-    "matrix_r4": "Individual cases passed; whole matrix failed global cloud inventory comparison due concurrent CI runner/Trove resources. Not counted as a matrix pass. Run-scoped audit rerun in progress."
+    "test_harness": "a9b55b1: wait for explicit idle Nova task state; retry only powering-off 409 within the operation deadline. 90 related Linux tests, Bash syntax and changed Python flake8 passed.",
+    "matrix_r4": "Individual cases passed; whole matrix failed global inventory comparison due concurrent CI/Trove resources. Not a matrix pass. Selected effective cases and later independent final cleanup audit establish the reported coverage.",
+    "power_state_test_race": "r7 reverse attempt hit Nova powering-off 409 before revert injection. Preserved fixture recovered through normal hard reboot with root marker and volume connection checks, then normal deletion and positive cleanup. No runtime code/image change.",
+    "existing_guest_lxcfs_repair": {
+      "instance": "instance-0000b23a",
+      "name": "lbe2e-web2",
+      "node": "lxd-worker2",
+      "finding": "Guest started September 17 retained disconnected FUSE device 0:230 after LXCFS service started September 23 on 0:231; predates this rollout.",
+      "repair": "User explicitly authorized normal Nova stop/start. All ten LXCFS mounts rebuilt on 0:231. Existing hostname restored from /etc/hostname; unchanged manually launched business probe restarted after DHCP readiness.",
+      "verification": "All LXCFS files readable; HTTP/TCP/UDP/SCTP responses checked from original guest on worker3; guest data script hash unchanged.",
+      "host_services_restarted": false,
+      "other_original_guests": "PID, start ticks and actual ID maps unchanged",
+      "registry": "Four assignments, four claims, zero release intents; raw ownership records unchanged from post-historical-repair baseline"
+    }
   },
   "lxc_tested_tree_revision": "8eed33fef586a0091eca96ed8a32ed354f17e312",
   "lxc_upstream_revision": "f30cbb86fff27e72ae25780aa2b90cf24937864e",
