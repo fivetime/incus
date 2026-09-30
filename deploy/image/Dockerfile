@@ -94,7 +94,9 @@ RUN apk add --no-cache \
 FROM ${ALPINE_IMAGE} AS lxc-build
 
 ARG LXC_REPOSITORY=https://github.com/lxc/lxc.git
-ARG LXC_REF=8eed33fef586a0091eca96ed8a32ed354f17e312
+ARG LXC_REF=f30cbb86fff27e72ae25780aa2b90cf24937864e
+ARG LXC_RESTORE_PIDFD_PATCH=https://raw.githubusercontent.com/fivetime/nova-incus-driver/47de4bdfdb3acf250db186dcca32881ef42369ab/patches/lxc/0001-criu-restore-init-pidfd.patch
+ARG LXC_RESTORE_PIDFD_SHA256=f5da37d1d5d75f93caa3ce1f8b8b5423d361d78dfa88d4655489491abaadebda
 
 RUN apk add --no-cache \
       build-base \
@@ -111,7 +113,11 @@ RUN apk add --no-cache \
     && git clone --filter=blob:none "${LXC_REPOSITORY}" /build/lxc \
     && git -C /build/lxc checkout --detach "${LXC_REF}"
 
-RUN meson setup /build/lxc/build /build/lxc \
+RUN wget -q -O /tmp/lxc-restore-pidfd.patch "${LXC_RESTORE_PIDFD_PATCH}" \
+    && echo "${LXC_RESTORE_PIDFD_SHA256}  /tmp/lxc-restore-pidfd.patch" | sha256sum -c - \
+    && git -C /build/lxc apply /tmp/lxc-restore-pidfd.patch \
+    && printf '%s\n' "${LXC_RESTORE_PIDFD_SHA256}" > /build/lxc.patch.sha256 \
+    && meson setup /build/lxc/build /build/lxc \
       --prefix=/usr \
       -Dtests=false \
       -Dexamples=false \
@@ -246,6 +252,7 @@ COPY --from=criu-build /build/criu.commit /usr/share/incus-runtime/criu-commit
 COPY --from=lxc-build /build/lxc/build/liblxc.so.1.9.0 /usr/lib/liblxc.so.1.9.0
 COPY --from=lxc-build /build/lxc.commit /usr/share/incus-runtime/lxc-commit
 COPY --from=lxc-build /build/lxc.ref /usr/share/incus-runtime/lxc-ref
+COPY --from=lxc-build /build/lxc.patch.sha256 /usr/share/incus-runtime/lxc-patches.sha256
 COPY --from=lxcfs-build /out/usr/bin/lxcfs /usr/bin/lxcfs
 COPY --from=lxcfs-build /out/usr/lib/lxcfs/liblxcfs.so /usr/lib/lxcfs/liblxcfs.so
 COPY --from=lxcfs-build /out/usr/share/lxc/config/common.conf.d/00-lxcfs.conf /usr/share/lxc/config/common.conf.d/00-lxcfs.conf
