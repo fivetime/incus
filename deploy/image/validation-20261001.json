@@ -133,8 +133,170 @@
     "A native fixture omitted migration.stateful=true required by Nova. Its console checkpoint failed restore; the fixture was removed after positive absence proof, then recreated with the required configuration.",
     "The first per-instance rootfs staging candidate used a non-traversable 0700 runtime directory and failed unprivileged startup. It was rejected; the validated candidate uses the 0711 device directory."
   ],
-  "scope": "Native Incus tests on three testbeds. These do not establish production Nova end-to-end acceptance. LXCFS was not restarted.",
+  "scope": "Three-testbed native Incus and packaged SDK checks, followed by current-image production Nova acceptance on all three compute nodes. Thirty cold/fault cases and both live migration rings passed, with final cleanup and original business continuity verified. LXCFS was not restarted.",
   "production_validation": {
-    "status": "pending formal CI image, deployment and renewed acceptance; prior release results are not evidence for this candidate"
+    "status": "passed",
+    "incus_helm_revision": 31,
+    "nova_helm_revision": 156,
+    "rollout": "Three nodes passed; original four guest PID/start ticks and ID maps, and all LXCFS process identities, unchanged.",
+    "runtime_contract": "23 Nova processes and three Incus image/API/storage contracts passed.",
+    "cold_fault_cases": {
+      "passed": 30,
+      "directions": [
+        "3-1",
+        "1-2",
+        "2-3",
+        "1-3",
+        "2-1",
+        "3-2"
+      ]
+    },
+    "live_migration": {
+      "ceph_root": "3 -> 1 -> 2 -> 3 passed",
+      "bfv_root": "3 -> 2 -> 1 -> 3 passed",
+      "process_and_data_continuity": "passed by live E2E gates; Ceph-root PID 749 counter 54 -> 372; BFV-root PID 749 counter 41 -> 388, each preserving its own process generation"
+    },
+    "fixture_cleanup": {
+      "servers": 32,
+      "cinder_volumes": 63,
+      "api_network_placement_storage_runtime_journals": "passed",
+      "managed_ceph_root_immutable_header_absence": "passed",
+      "kernel_rbd_mappings_absent_on_all_three_nodes": true,
+      "temporary_client_deleted": true
+    },
+    "original_business": "Four guest PID/start/ID maps and three LXCFS process identities unchanged; HTTP/TCP/UDP/SCTP checks passed without service restart.",
+    "scheduling": "All three compute services enabled/up, nodes Ready, compute NoSchedule taints retained.",
+    "ownership_registry": "Four assignments and four claims unchanged; zero pending intents.",
+    "bfv_evacuation": "Remains disabled."
+  },
+  "formal_image_validation": {
+    "incus_revision": "ebfd98de7c9a240d28a7f02a240461981f4fb632",
+    "ci_run": 36740066955,
+    "production_image": "ghcr.io/fivetime/incus@sha256:07de71e3acb29b3c345a750a5152597fb7cd340d7ff1cda48f322cdbc22151b1",
+    "tested_amd64_platform_manifest": "sha256:d027bb5f9828fc4d39ae6febbf22603d6f460626e37284a3e040ad07267ae60c",
+    "native_smoke": [
+      {
+        "node": "n2",
+        "create_start_exec": "passed",
+        "removed_rootfs_staging_recreated_on_start": "passed",
+        "staging_removed_on_delete": "passed",
+        "volume_attach_write_reattach_read": "passed",
+        "delete_with_device_configured": "passed"
+      },
+      {
+        "node": "n3",
+        "create_start_exec": "passed",
+        "removed_rootfs_staging_recreated_on_start": "passed",
+        "staging_removed_on_delete": "passed",
+        "volume_attach_write_reattach_read": "passed",
+        "delete_with_device_configured": "passed"
+      },
+      {
+        "node": "n7",
+        "create_start_exec": "passed",
+        "removed_rootfs_staging_recreated_on_start": "passed",
+        "staging_removed_on_delete": "passed",
+        "volume_attach_write_reattach_read": "passed",
+        "delete_with_device_configured": "passed"
+      }
+    ],
+    "migration": {
+      "initial": {
+        "pid": 417,
+        "counter": 3,
+        "marker": "merge-20261001-continuity"
+      },
+      "live": [
+        {
+          "source": "n3",
+          "target": "n2",
+          "pid": 417,
+          "counter": 10,
+          "marker": "merge-20261001-continuity"
+        },
+        {
+          "source": "n2",
+          "target": "n7",
+          "pid": 417,
+          "counter": 17,
+          "marker": "merge-20261001-continuity"
+        },
+        {
+          "source": "n7",
+          "target": "n3",
+          "pid": 417,
+          "counter": 24,
+          "marker": "merge-20261001-continuity"
+        }
+      ],
+      "cold": [
+        {
+          "source": "n3",
+          "target": "n2",
+          "marker_preserved": true
+        },
+        {
+          "source": "n2",
+          "target": "n7",
+          "marker_preserved": true
+        },
+        {
+          "source": "n7",
+          "target": "n3",
+          "marker_preserved": true
+        }
+      ],
+      "excluded_attempt": "Initial exec-launched probe inherited external session leader; CRIU refused dump before handover. Source remained running and target absent. Test probe now uses setsid.",
+      "additional_excluded_attempt": "r2 fixture omitted migration.stateful=true required by Nova contract; console PTY checkpoint could not restore. Exact stopped fixture cleanup proved on all nodes before recreating with the required config.",
+      "state": "passed; fixture subsequently removed after failure recovery test"
+    },
+    "restore_failure": {
+      "before": {
+        "pid": 400,
+        "counter": 3,
+        "marker": "merge-20261001-continuity"
+      },
+      "after": {
+        "pid": 400,
+        "counter": 12,
+        "marker": "merge-20261001-continuity"
+      },
+      "failure": "10.32.32.132: ['podman', 'exec', 'incus', 'incus', 'move', 'local:continuity']\n\nError: Error transferring instance data: Failed migration on target: Failed to run: /usr/sbin/incusd forkmigrate merge-20261001_continuity /var/lib/incus/containers /run/incus/merge-20261001_continuity/lxc.conf /tmp/incus_restore_2911241687/final false: exit status 1\n",
+      "target_instance_absent": true,
+      "target_operations_empty": true,
+      "target_rbd_mappings_empty": true,
+      "retry_same_target": "passed with process continuity"
+    },
+    "cleanup": {
+      "nodes": {
+        "n2": {
+          "instances": [],
+          "mappings": [],
+          "fixture_processes_absent": true,
+          "project_and_test_alias_removed": true
+        },
+        "n3": {
+          "instances": [],
+          "mappings": [],
+          "fixture_processes_absent": true,
+          "project_and_test_alias_removed": true
+        },
+        "n7": {
+          "instances": [],
+          "mappings": [],
+          "fixture_processes_absent": true,
+          "project_and_test_alias_removed": true
+        }
+      },
+      "protected_shared_root_cleanup": {
+        "image_id": "4b72ffdd136354",
+        "retired_by_verified_trash_id": true,
+        "positive_absence": true
+      },
+      "state": "passed"
+    },
+    "nova_image": "ghcr.io/fivetime/openstackhelm/nova-incus@sha256:fdd763d3c8b6ce784996b54ce29409d581db4f5dd6aebf0b4e600fd8f4e0a0b3",
+    "nova_image_ci_run": 36740664546,
+    "packaged_sdk_source_verification": "All 17 source files match eb803e4; create/unnamed snapshot/rename/delete smoke passed against final Incus image."
   }
 }
