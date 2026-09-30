@@ -37,6 +37,9 @@ case "${INCUS_RUNTIME_ROLE:-incusd}" in
          }
          END { exit !found }' /proc/self/mountinfo
     test -d /sys/kernel/security/apparmor
+    # Instances inherit the label incusd starts them from.
+    incusd_pid=$(incus query /1.0 | sed -n 's/^[[:space:]]*"server_pid": \([0-9][0-9]*\).*/\1/p')
+    test "$(cat "/proc/${incusd_pid}/attr/current")" = "incusd-runtime (unconfined)"
     awk '$2 == "/sys/fs/cgroup" && $3 == "cgroup2" { found = 1 } END { exit !found }' /proc/mounts
     check_lxcfs_mount
     ;;
