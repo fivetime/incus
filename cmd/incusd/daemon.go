@@ -765,7 +765,7 @@ func (d *Daemon) createCmd(restAPI *http.ServeMux, apiVersion string, c APIEndpo
 				}
 
 				// Allow select endpoints (unstable API but CLI supported).
-				if slices.Contains([]string{"recover/import", "recover/validate", "sql"}, c.Path) {
+				if slices.Contains([]string{"debug/pprof/{name...}", "recover/import", "recover/validate", "server-certificate", "sql"}, c.Path) {
 					return true
 				}
 
@@ -2884,13 +2884,18 @@ func (d *Daemon) clusterSyncCertificate() error {
 		return nil
 	}
 
-	// Retrieve the leader's certificate.
-	leaderCert, err := localtls.GetRemoteCertificate(fmt.Sprintf("https://%s", leaderAddress), version.UserAgent)
+	// Retrieve the leader's certificate chain.
+	leaderCerts, err := localtls.GetRemoteCertificates(fmt.Sprintf("https://%s", leaderAddress), version.UserAgent)
 	if err != nil {
 		return fmt.Errorf("Failed to retrieve cluster certificate from leader: %w", err)
 	}
 
-	leaderCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaderCert.Raw})
+	leaderCert := leaderCerts[0]
+
+	var leaderCertPEM []byte
+	for _, cert := range leaderCerts {
+		leaderCertPEM = append(leaderCertPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})...)
+	}
 
 	// Skip if the leader certificate doesn't match our private key (full cluster renewal).
 	networkCert := d.endpoints.NetworkCert()

@@ -308,6 +308,7 @@ run_standalone_storage() {
 
 # Tests related to virtual machines (needs QEMU and KVM)
 run_standalone_vm() {
+    run_test test_cloud_init_vm "VM cloud-init"
     run_test test_cpu_vm "VM CPU hotplug"
     run_test test_guestapi_vm "VM guest API"
     run_test test_network_routed "VM routed NIC"
@@ -344,6 +345,8 @@ run_standalone_network() {
     run_test test_network_ovn_l3only "OVN network layer 3 only mode"
     run_test test_network_ovn_load_balancer "OVN network load balancers"
     run_test test_network_ovn_nested_vlan "OVN network nested VLANs"
+    run_test test_network_ovn_parent "OVN network parent"
+    run_test test_network_ovn_parent_snat "OVN network parent SNAT handling"
     run_test test_network_ovn_peering "OVN network peering"
     run_test test_network_peers "network peers"
     run_test test_network_zone "network DNS zones"
@@ -405,6 +408,7 @@ run_cluster() {
     run_test test_clustering_projects "clustering projects"
     run_test test_clustering_update_cert "clustering update cert"
     run_test test_clustering_update_cert_reversion "clustering update cert reversion"
+    run_test test_clustering_join_cert_chain "clustering join cert chain"
     run_test test_clustering_address "clustering address"
     run_test test_clustering_image_replication "clustering image replication"
     run_test test_clustering_recover "clustering recovery"

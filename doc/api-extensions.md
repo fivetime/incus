@@ -3592,6 +3592,45 @@ Adds a new `security.tags` configuration key to instances, holding a
 comma-separated list of tags. The tags are exposed to the authorization
 backend, with OpenFGA maintaining a `security_tag` object for each tag
 along with a `tag` relation to every instance carrying it.
+
+## `network_ovn_parent`
+
+Adds a new `parent` configuration key to `ovn` networks, referencing another
+`ovn` network in the same project.
+
+## `disk_initial_copy`
+
+This adds the `initial.copy` property to `disk` devices backed by a custom storage volume.
+
+When set to `true` on a container, the content already present at the device `path` inside
+the container is copied into the volume the first time the volume is used, if it's empty.
+
+## `internal_debug_pprof`
+
+This adds `/internal/debug/pprof/` to the API, serving the same `pprof`
+profiles as the `core.debug_address` listener but over the regular
+listeners, restricted to trusted clients with server administration rights.
+
+## `instance_state_disk_counters`
+
+Adds a `counters` field to each entry of the `disk` section of an instance's
+state, holding `bytes_read`, `bytes_written`, `reads_completed` and
+`writes_completed`.
+
+These are only populated for virtual machines, using the block I/O
+statistics reported by QEMU. Containers do not report them because cgroup
+I/O accounting is keyed by host block device rather than by Incus device
+name, and a container's root file system and custom volumes routinely share
+a single host block device, making per-device attribution impossible.
+
+## `instances_state_tpm`
+
+Adds a `tpm` section to the instance state, listing every `tpm` device along
+with its endorsement keys, each with a type, size, SHA-256 fingerprint and
+PEM encoded public key.
+
+The endorsement keys are only known for TPM devices provisioned by Incus, that is
+when `instances.tpm.platform_cert` was set at the time the device was first started.
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external

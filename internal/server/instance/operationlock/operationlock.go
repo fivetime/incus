@@ -127,7 +127,7 @@ func CreateWaitGet(projectName string, instanceName string, apiOp *operations.Op
 
 	// Operation action matches but is not reusable or we have been asked not to reuse,
 	// so wait and return result.
-	if op.action == action && (!reuseExisting || !op.reusable) {
+	if op.Action() == action && (!reuseExisting || !op.reusable) {
 		err := op.Wait(context.Background())
 		if err != nil {
 			return nil, err
@@ -140,7 +140,7 @@ func CreateWaitGet(projectName string, instanceName string, apiOp *operations.Op
 
 	// Operation action matches one the inheritable actions, return the operation.
 	if op.ActionMatch(inheritableActions...) {
-		logger.Debug("Instance operation lock inherited", logger.Ctx{"project": op.projectName, "instance": op.instanceName, "action": op.action, "reusable": op.reusable, "inheritedByAction": action})
+		logger.Debug("Instance operation lock inherited", logger.Ctx{"project": op.projectName, "instance": op.instanceName, "action": op.Action(), "reusable": op.reusable, "inheritedByAction": action})
 
 		return op, nil
 	}
@@ -168,12 +168,15 @@ func (op *InstanceOperation) Action() Action {
 		return ""
 	}
 
+	instanceOperationsLock.Lock()
+	defer instanceOperationsLock.Unlock()
+
 	return op.action
 }
 
 // ActionMatch returns true if operation's action matches one of the matchActions.
 func (op *InstanceOperation) ActionMatch(matchActions ...Action) bool {
-	return slices.Contains(matchActions, op.action)
+	return slices.Contains(matchActions, op.Action())
 }
 
 // Wait waits for an operation to finish.
@@ -242,5 +245,27 @@ func (op *InstanceOperation) GetOperation() *operations.Operation {
 		return nil
 	}
 
+	instanceOperationsLock.Lock()
+	defer instanceOperationsLock.Unlock()
+
 	return op.op
+}
+
+// StartMigration binds a target's creation lock to its receive operation without releasing exclusivity.
+func (op *InstanceOperation) StartMigration(apiOp *operations.Operation) error {
+	if op == nil || apiOp == nil {
+		return errors.New("Migration receive requires an instance lock and API operation")
+	}
+
+	instanceOperationsLock.Lock()
+	defer instanceOperationsLock.Unlock()
+
+	opKey := project.Instance(op.projectName, op.instanceName)
+	if instanceOperations[opKey] != op || op.action != ActionCreate {
+		return errors.New("Migration receive no longer owns the instance creation lock")
+	}
+
+	op.action = ActionMigrate
+	op.op = apiOp
+	return nil
 }

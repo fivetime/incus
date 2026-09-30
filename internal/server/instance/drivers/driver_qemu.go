@@ -498,7 +498,7 @@ func (d *qemu) getMonitorEventHandler() func(event string, data map[string]any) 
 	s := d.state
 
 	return func(event string, data map[string]any) {
-		if !slices.Contains([]string{qmp.EventVMShutdown, qmp.EventVMReset, qmp.EventAgentStarted, qmp.EventAgentStopped, qmp.EventRTCChange}, event) {
+		if !slices.Contains([]string{qmp.EventVMShutdown, qmp.EventVMReset, qmp.EventAgentStarted, qmp.EventAgentStopped, qmp.EventAgentTemplated, qmp.EventRTCChange}, event) {
 			return // Don't bother loading the instance from DB if we aren't going to handle the event.
 		}
 
@@ -562,6 +562,20 @@ func (d *qemu) getMonitorEventHandler() func(event string, data map[string]any) 
 			}
 
 			s.Events.SendLifecycle(instProject.Name, lifecycle.InstanceAgentStarted.Event(d, nil))
+
+		case qmp.EventAgentTemplated:
+			d.logger.Debug("Instance agent applied templates")
+
+			// Record it now and force a full restart so the coming reboot regenerates the config drive.
+			if d.LocalConfig()["volatile.apply_template"] != "" {
+				err = d.VolatileSet(map[string]string{
+					"volatile.apply_template": "",
+					"volatile.vm.needs_reset": "true",
+				})
+				if err != nil {
+					d.logger.Error("Failed recording template application", logger.Ctx{"err": err})
+				}
+			}
 
 		case qmp.EventAgentStopped:
 			d.logger.Debug("Instance agent stopped")
@@ -3595,14 +3609,24 @@ func (d *qemu) nvramPath() string {
 	return filepath.Join(d.Path(), "qemu.nvram")
 }
 
-// nvramRunPath returns the local copy of the UEFI variables used while the VM runs.
-func (d *qemu) nvramRunPath() (string, error) {
+// nvramFileName returns the name of the UEFI variables file the qemu.nvram symlink points to.
+func (d *qemu) nvramFileName() (string, error) {
 	target, err := os.Readlink(d.nvramPath())
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(d.RunPath(), filepath.Base(target)), nil
+	return filepath.Base(target), nil
+}
+
+// nvramRunPath returns the local copy of the UEFI variables used while the VM runs.
+func (d *qemu) nvramRunPath() (string, error) {
+	name, err := d.nvramFileName()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(d.RunPath(), name), nil
 }
 
 // nvramEditPath returns the copy of the UEFI variables that reads and writes must go through.
@@ -3665,13 +3689,16 @@ func (d *qemu) startNvramMirror(seed bool) error {
 		return err
 	}
 
-	runPath, err := d.nvramRunPath()
+	name, err := d.nvramFileName()
 	if err != nil {
 		return err
 	}
 
+	runPath := filepath.Join(d.RunPath(), name)
+
 	if seed {
-		err = mirror.CopyFile(d.nvramPath(), runPath)
+		// Copy the file itself rather than going through the qemu.nvram symlink.
+		err = mirror.CopyFile(filepath.Join(d.Path(), name), runPath)
 		if err != nil {
 			return fmt.Errorf("Failed copying NVRAM file: %w", err)
 		}
@@ -6590,11 +6617,11 @@ func (d *qemu) Stop(stateful bool) error {
 	_, _ = d.ConsoleLog()
 
 	// Setup a new operation.
-	// Allow inheriting of ongoing restart or restore operation (we are called from restartCommon and Restore).
+	// Allow inheriting of ongoing restart, restore or own migrate operation (restartCommon, Restore, migration).
 	// Don't allow reuse when creating a new stop operation. This prevents other operations from interfering.
 	// Allow reuse of a reusable ongoing stop operation as Shutdown() may be called first, which allows reuse
 	// of its operations. This allow for Stop() to inherit from Shutdown() where instance is stuck.
-	op, err := operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionStop, []operationlock.Action{operationlock.ActionRestart, operationlock.ActionRestore, operationlock.ActionMigrate}, false, true)
+	op, err := operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionStop, d.stopInheritableActions(), false, true)
 	if err != nil {
 		if errors.Is(err, operationlock.ErrNonReusuableSucceeded) {
 			// An existing matching operation has now succeeded, return.
@@ -7478,6 +7505,7 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 			"security.protection.start",
 			"security.guestapi",
 			"security.secureboot",
+			"security.tags",
 		}
 
 		liveUpdateKeyPrefixes := []string{
@@ -8106,6 +8134,11 @@ func (d *qemu) Delete(force bool, cleanupDependencies bool) error {
 	// Setup a new operation.
 	op, err := operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionDelete, nil, false, false)
 	if err != nil {
+		if errors.Is(err, operationlock.ErrNonReusuableSucceeded) {
+			// An existing matching operation has now succeeded, return.
+			return nil
+		}
+
 		return fmt.Errorf("Failed to create instance delete operation: %w", err)
 	}
 
@@ -9331,6 +9364,22 @@ func (d *qemu) sendMigrationSnapshot(ctx context.Context, diskName string, files
 	return finalizeFunc, nil
 }
 
+// cancelMigrationSnapshot stops a snapshot transfer, leaving the snapshot attached so it can be merged.
+func (d *qemu) cancelMigrationSnapshot(monitor *qmp.Monitor, diskName string) {
+	// Cancel the mirror job first as its filter node blocks the merge.
+	err := monitor.BlockJobCancelWait(ephemeralSnapshotName(diskName))
+	if err != nil {
+		d.logger.Warn("Failed cancelling migration storage snapshot transfer", logger.Ctx{"diskName": diskName, "err": err})
+	}
+
+	time.Sleep(time.Second) // Wait for it to be released.
+
+	err = monitor.RemoveBlockDevice(migrationNBDTarget(diskName))
+	if err != nil {
+		d.logger.Warn("Failed removing NBD storage target device", logger.Ctx{"diskName": diskName, "err": err})
+	}
+}
+
 // migrateSendLive performs live migration send process.
 func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clusterMoveSourceName string, storagePool string, rootDiskSize int64, filesystemConn io.ReadWriteCloser, stateConn io.ReadWriteCloser, volSourceArgs *localMigration.VolumeSourceArgs, committed *bool) error {
 	monitor, err := d.qmpConnect()
@@ -9355,6 +9404,8 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 
 	reverter := revert.New()
 	defer reverter.Fail()
+
+	rootTransferDone := false
 
 	// Non-shared storage snapshot setup.
 	if !sameSharedStorage || dependentVolumeMove {
@@ -9395,7 +9446,12 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 				return fmt.Errorf("Failed creating migration snapshot: %w", err)
 			}
 
-			reverter.Add(cleanup)
+			// The snapshot is gone once its transfer has been finalized.
+			reverter.Add(func() {
+				if !rootTransferDone {
+					cleanup()
+				}
+			})
 		}
 
 		for _, vol := range volSourceArgs.DependentVolumes {
@@ -9501,6 +9557,13 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 		if err != nil {
 			return fmt.Errorf("Failed transferring snapshot disk: %w", err)
 		}
+
+		// Abort the transfer on failure so the snapshot can be merged back.
+		reverter.Add(func() {
+			if !rootTransferDone {
+				d.cancelMigrationSnapshot(monitor, rootDiskName)
+			}
+		})
 	}
 
 	d.logger.Debug("Stateful migration checkpoint send starting")
@@ -9587,6 +9650,8 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 			if err != nil {
 				return fmt.Errorf("Failed transferring root snapshot disk: %w", err)
 			}
+
+			rootTransferDone = true
 		}
 
 		for _, vol := range volSourceArgs.DependentVolumes {
@@ -10500,11 +10565,13 @@ func (d *qemu) Console(protocol string) (*os.File, chan error, error) {
 
 	_ = conn.Close()
 
-	// Handle disconnections.
-	go func() {
-		<-chDisconnect
-		_ = d.consoleSwapSocketWithRB()
-	}()
+	// Swap the text console back to the ring buffer on disconnection.
+	if protocol == instance.ConsoleTypeConsole {
+		go func() {
+			<-chDisconnect
+			_ = d.consoleSwapSocketWithRB()
+		}()
+	}
 
 	// Only emit a lifecycle event for the text console here. SPICE clients open one socket per channel
 	// (display, cursor, inputs, ...) and would otherwise produce a flurry of instance-console events
@@ -10757,14 +10824,11 @@ func (d *qemu) renderState(statusCode api.StatusCode) (*api.InstanceState, error
 		StatusCode: statusCode,
 	}
 
+	status.TPM = d.tpmState()
+
 	// If VM is stopped or errored, we're done here.
 	if d.isErrorStatusCode(statusCode) || !d.isRunningStatusCode(statusCode) {
-		diskState, err := d.diskState()
-		if err != nil && !errors.Is(err, storageDrivers.ErrNotSupported) {
-			d.logger.Warn("Error getting disk usage", logger.Ctx{"err": err})
-		}
-
-		status.Disk = diskState
+		status.Disk = d.diskState()
 
 		return status, nil
 	}
@@ -10819,12 +10883,7 @@ func (d *qemu) renderState(statusCode api.StatusCode) (*api.InstanceState, error
 	}
 
 	// Populate the disk information.
-	diskState, err := d.diskState()
-	if err != nil && !errors.Is(err, storageDrivers.ErrNotSupported) {
-		d.logger.Warn("Error getting disk usage", logger.Ctx{"err": err})
-	}
-
-	status.Disk = diskState
+	status.Disk = d.diskState()
 
 	// Populate the CPU time allocation.
 	limitsCPU, ok := d.expandedConfig["limits.cpu"]
@@ -10865,10 +10924,13 @@ func (d *qemu) renderState(statusCode api.StatusCode) (*api.InstanceState, error
 	// Populate the process information.
 	pid, _ := d.pid()
 	status.Pid = int64(pid)
-	status.StartedAt, err = d.processStartedAt(d.InitPID())
+
+	startedAt, err := d.processStartedAt(d.InitPID())
 	if err != nil {
 		return status, err
 	}
+
+	status.StartedAt = startedAt
 
 	return status, nil
 }
@@ -10879,30 +10941,99 @@ func (d *qemu) RenderState(hostInterfaces []net.Interface) (*api.InstanceState, 
 }
 
 // diskState gets disk usage info.
-func (d *qemu) diskState() (map[string]api.InstanceStateDisk, error) {
-	pool, err := d.getStoragePool()
-	if err != nil {
-		return nil, err
-	}
-
-	// Get the root disk device config.
-	rootDiskName, _, err := d.getRootDiskDevice()
-	if err != nil {
-		return nil, err
-	}
-
-	usage, err := pool.GetInstanceUsage(d)
-	if err != nil {
-		return nil, err
-	}
-
+func (d *qemu) diskState() map[string]api.InstanceStateDisk {
 	disk := map[string]api.InstanceStateDisk{}
-	disk[rootDiskName] = api.InstanceStateDisk{
-		Usage: usage.Used,
-		Total: usage.Total,
+
+	// Custom volumes may live in another project, resolve it only if needed.
+	volumeProject := ""
+
+	// Get the disk I/O counters from QEMU, best effort as QMP is unavailable when stopped.
+	var blockStats map[string]qmp.BlockStats
+
+	monitor, err := d.qmpConnect()
+	if err != nil {
+		d.logger.Debug("Failed to connect to QMP monitor to get disk I/O counters", logger.Ctx{"err": err})
+	} else {
+		blockStats, err = monitor.GetBlockStats()
+		if err != nil {
+			d.logger.Debug("Failed to get disk I/O counters", logger.Ctx{"err": err})
+		}
 	}
 
-	return disk, nil
+	for _, dev := range d.expandedDevices.Sorted() {
+		if dev.Config["type"] != "disk" {
+			continue
+		}
+
+		var usage *storagePools.VolumeUsage
+
+		if internalInstance.IsRootDiskDevice(dev.Config) {
+			pool, err := d.getStoragePool()
+			if err != nil {
+				d.logger.Error("Error loading storage pool", logger.Ctx{"err": err})
+				continue
+			}
+
+			usage, err = pool.GetInstanceUsage(d)
+			if err != nil {
+				if !errors.Is(err, storageDrivers.ErrNotSupported) {
+					d.logger.Error("Error getting disk usage", logger.Ctx{"err": err})
+				}
+
+				continue
+			}
+		} else if dev.Config["pool"] != "" {
+			pool, err := storagePools.LoadByName(d.state, dev.Config["pool"])
+			if err != nil {
+				d.logger.Error("Error loading storage pool", logger.Ctx{"poolName": dev.Config["pool"], "err": err})
+				continue
+			}
+
+			if volumeProject == "" {
+				volumeProject, err = project.StorageVolumeProject(d.state.DB.Cluster, d.Project().Name, db.StoragePoolVolumeTypeCustom)
+				if err != nil {
+					d.logger.Error("Error loading storage volume project", logger.Ctx{"err": err})
+					continue
+				}
+			}
+
+			volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
+			usage, err = pool.GetCustomVolumeUsage(volumeProject, volName)
+			if err != nil {
+				if !errors.Is(err, storageDrivers.ErrNotSupported) {
+					d.logger.Error("Error getting volume usage", logger.Ctx{"volume": dev.Config["source"], "err": err})
+				}
+
+				continue
+			}
+		} else {
+			continue
+		}
+
+		diskState := api.InstanceStateDisk{}
+		if usage != nil {
+			diskState.Usage = usage.Used
+			diskState.Total = usage.Total
+		}
+
+		if blockStats != nil {
+			qdevID := qemuDeviceIDPrefix + linux.PathNameEncode(dev.Name)
+
+			stats, ok := blockStats[qdevID]
+			if ok {
+				diskState.Counters = &api.InstanceStateDiskCounters{
+					BytesRead:       int64(stats.BytesRead),
+					BytesWritten:    int64(stats.BytesWritten),
+					ReadsCompleted:  int64(stats.ReadsCompleted),
+					WritesCompleted: int64(stats.WritesCompleted),
+				}
+			}
+		}
+
+		disk[dev.Name] = diskState
+	}
+
+	return disk
 }
 
 // agentGetState connects to the agent inside of the VM and does

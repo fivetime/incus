@@ -586,6 +586,11 @@ var APIExtensions = []string{
 	"instance_project_move_live",
 	"metrics_cluster_members",
 	"instance_security_tags",
+	"network_ovn_parent",
+	"disk_initial_copy",
+	"internal_debug_pprof",
+	"instance_state_disk_counters",
+	"instances_state_tpm",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an

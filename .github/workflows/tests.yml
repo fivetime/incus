@@ -479,6 +479,8 @@ jobs:
           - nested_vlan
           - acl
           - l3only
+          - parent
+          - parent_snat
 
     steps:
       - name: Performance tuning
@@ -810,6 +812,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - test: cloud_init_vm
           - test: cpu_vm
           - test: guestapi_vm
           - test: network_routed

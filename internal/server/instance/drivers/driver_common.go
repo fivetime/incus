@@ -999,6 +999,19 @@ func (d *common) validateStartup(stateful bool, statusCode api.StatusCode) error
 	return nil
 }
 
+// stopInheritableActions returns the operation locks a stop request may take over.
+func (d *common) stopInheritableActions() []operationlock.Action {
+	actions := []operationlock.Action{operationlock.ActionRestart, operationlock.ActionRestore}
+
+	// Only the migration itself may stop the instance while it's being migrated.
+	op := operationlock.Get(d.Project().Name, d.Name())
+	if op.Action() == operationlock.ActionMigrate && op.GetOperation() == d.op {
+		actions = append(actions, operationlock.ActionMigrate)
+	}
+
+	return actions
+}
+
 // onStopOperationSetup creates or picks up the relevant operation. This is used in the stopns and stop hooks to
 // ensure that a lock on their activities is held before the instance process is stopped. This prevents a start
 // request run at the same time from overlapping with the stop process.
@@ -1067,7 +1080,7 @@ func (d *common) canMigrate(inst instance.Instance) string {
 	for _, entry := range d.ExpandedDevices().Sorted() {
 		dev, err := d.deviceLoad(inst, entry.Name, entry.Config, false)
 		if err != nil {
-			logger.Warn("Instance will not be migrated due to a device error", logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "device": dev.Name(), "err": err})
+			logger.Warn("Instance will not be migrated due to a device error", logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "device": entry.Name, "err": err})
 			return "stop"
 		}
 
@@ -1786,13 +1799,54 @@ func (d *common) processStartedAt(pid int) (time.Time, error) {
 		return time.Time{}, err
 	}
 
-	startedAt, err := stat.StartTime()
+	bootTime, err := systemBootTime()
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	seconds, fraction := math.Modf(startedAt)
-	return time.Unix(int64(seconds), int64(fraction*float64(time.Second))), nil
+	// Process start time is expressed in clock ticks (USER_HZ, always 100) since boot.
+	seconds, fraction := math.Modf(float64(stat.Starttime) / 100)
+	return time.Unix(int64(bootTime)+int64(seconds), int64(fraction*float64(time.Second))), nil
+}
+
+// systemBootTime returns the system boot time, parsing /proc/stat only once.
+var systemBootTime = sync.OnceValues(func() (uint64, error) {
+	fs, err := procfs.NewDefaultFS()
+	if err != nil {
+		return 0, err
+	}
+
+	stat, err := fs.Stat()
+	if err != nil {
+		return 0, err
+	}
+
+	return stat.BootTime, nil
+})
+
+// tpmState returns the state of the instance's TPM devices, nil if it has none.
+func (d *common) tpmState() map[string]api.InstanceStateTPM {
+	var tpms map[string]api.InstanceStateTPM
+
+	for name, config := range d.ExpandedDevices() {
+		if config["type"] != "tpm" {
+			continue
+		}
+
+		tpmState, err := device.TPMState(d.Path(), name)
+		if err != nil {
+			d.logger.Warn("Failed getting TPM state", logger.Ctx{"device": name, "err": err})
+			continue
+		}
+
+		if tpms == nil {
+			tpms = map[string]api.InstanceStateTPM{}
+		}
+
+		tpms[name] = *tpmState
+	}
+
+	return tpms
 }
 
 // ETag returns the instance configuration ETag data for pre-condition validation.

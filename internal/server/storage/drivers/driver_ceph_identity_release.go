@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/lxc/incus/v7/internal/linux"
+	"github.com/lxc/incus/v7/internal/server/locking"
 	"github.com/lxc/incus/v7/shared/logger"
 	"github.com/lxc/incus/v7/shared/subprocess"
 	"github.com/lxc/incus/v7/shared/util"
@@ -1159,6 +1160,14 @@ func (d *ceph) deleteVolumeWithExactIdentity(vol Volume, expectedStorageIdentity
 	if vol.IsVMBlock() {
 		return errors.New("Cannot identity-delete a VM block volume without an identity-bound companion filesystem volume")
 	}
+
+	// Match ordinary deletion's lock order before touching the image or local mounts.
+	flattenUnlock, err := locking.Lock(context.TODO(), d.flattenLockName(vol))
+	if err != nil {
+		return err
+	}
+
+	defer flattenUnlock()
 
 	unlock, err := vol.MountLock()
 	if err != nil {

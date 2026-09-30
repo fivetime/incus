@@ -3534,7 +3534,7 @@ func (d *lxc) Stop(stateful bool) error {
 	}
 
 	// Setup a new operation
-	op, err := operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionStop, []operationlock.Action{operationlock.ActionRestart, operationlock.ActionRestore, operationlock.ActionMigrate}, false, true)
+	op, err := operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionStop, d.stopInheritableActions(), false, true)
 	if err != nil {
 		if errors.Is(err, operationlock.ErrNonReusuableSucceeded) {
 			// An existing matching operation has now succeeded, return.
@@ -4414,6 +4414,7 @@ func (d *lxc) renderState(statusCode api.StatusCode, hostInterfaces []net.Interf
 	}
 
 	status.Disk = d.diskState()
+	status.TPM = d.tpmState()
 
 	d.release()
 
@@ -4767,6 +4768,11 @@ func (d *lxc) Delete(force bool, cleanupDependencies bool) error {
 	// Setup a new operation.
 	op, err := operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionDelete, nil, false, false)
 	if err != nil {
+		if errors.Is(err, operationlock.ErrNonReusuableSucceeded) {
+			// An existing matching operation has now succeeded, return.
+			return nil
+		}
+
 		return fmt.Errorf("Failed to create instance delete operation: %w", err)
 	}
 
@@ -5385,6 +5391,10 @@ func (d *lxc) Update(args db.InstanceArgs, userRequested bool) error {
 				}
 
 				if newDev["pool"] != "" && newDev["path"] != "/" && strings.Contains(newDev["source"], "/") {
+					continue
+				}
+
+				if k == "initial.copy" && newDev["pool"] != "" {
 					continue
 				}
 
@@ -7333,7 +7343,12 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	d.logger.Debug("Migration receive starting")
 	defer d.logger.Debug("Migration receive stopped")
 
-	err := withMigrationAttemptGuard(args.MigrationAttemptGuard, "before negotiation", nil)
+	err := args.InstanceOperation.StartMigration(d.op)
+	if err != nil {
+		return err
+	}
+
+	err = withMigrationAttemptGuard(args.MigrationAttemptGuard, "before negotiation", nil)
 	if err != nil {
 		return err
 	}
@@ -9111,6 +9126,9 @@ func (d *lxc) cpuState() api.InstanceStateCPU {
 func (d *lxc) diskState() map[string]api.InstanceStateDisk {
 	disk := map[string]api.InstanceStateDisk{}
 
+	// Custom volumes may live in another project, resolve it only if needed.
+	volumeProject := ""
+
 	for _, dev := range d.expandedDevices.Sorted() {
 		if dev.Config["type"] != "disk" {
 			continue
@@ -9118,7 +9136,7 @@ func (d *lxc) diskState() map[string]api.InstanceStateDisk {
 
 		var usage *storagePools.VolumeUsage
 
-		if dev.Config["path"] == "/" {
+		if internalInstance.IsRootDiskDevice(dev.Config) {
 			pool, err := d.getStoragePool()
 			if err != nil {
 				d.logger.Error("Error loading storage pool", logger.Ctx{"err": err})
@@ -9140,8 +9158,16 @@ func (d *lxc) diskState() map[string]api.InstanceStateDisk {
 				continue
 			}
 
+			if volumeProject == "" {
+				volumeProject, err = project.StorageVolumeProject(d.state.DB.Cluster, d.Project().Name, db.StoragePoolVolumeTypeCustom)
+				if err != nil {
+					d.logger.Error("Error loading storage volume project", logger.Ctx{"err": err})
+					continue
+				}
+			}
+
 			volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
-			usage, err = pool.GetCustomVolumeUsage(d.Project().Name, volName)
+			usage, err = pool.GetCustomVolumeUsage(volumeProject, volName)
 			if err != nil {
 				if !errors.Is(err, storageDrivers.ErrNotSupported) {
 					d.logger.Error("Error getting volume usage", logger.Ctx{"volume": dev.Config["source"], "err": err})

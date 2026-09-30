@@ -1,6 +1,7 @@
 package drivers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/lxc/incus/v7/internal/server/locking"
 	"github.com/lxc/incus/v7/shared/subprocess"
 )
 
@@ -753,9 +755,36 @@ func TestCephIdentityReleaseIntegration(t *testing.T) {
 
 	t.Logf("Exact identity probe: A pool_id=%d image_id=%s; B pool_id=%d image_id=%s", expected.PoolID, expected.ID, replacementIdentity.PoolID, replacementIdentity.ID)
 
-	err = driver.deleteVolumeWithExactIdentity(vol, identityValue)
+	flattenUnlock, err := locking.Lock(context.Background(), driver.flattenLockName(vol))
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	released := false
+	defer func() {
+		if !released {
+			flattenUnlock()
+		}
+	}()
+
+	deleteDone := make(chan error, 1)
+	go func() { deleteDone <- driver.deleteVolumeWithExactIdentity(vol, identityValue) }()
+	select {
+	case err = <-deleteDone:
+		t.Fatalf("Identity deletion did not wait for flatten: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	flattenUnlock()
+	released = true
+	select {
+	case err = <-deleteDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+
+	case <-time.After(30 * time.Second):
+		t.Fatal("Identity deletion did not finish after flatten released its lock")
 	}
 
 	hasIdentity, err := driver.HasVolumeIdentity(vol, identityValue)

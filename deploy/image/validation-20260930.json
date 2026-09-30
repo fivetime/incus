@@ -1,0 +1,27 @@
+{
+  "date": "2026-09-30",
+  "fork_base": "d01705b1770a74fddbce7d41b5f8967e728ad213",
+  "upstream": "0dc23f9f87",
+  "lxc_revision": "8eed33fef586a0091eca96ed8a32ed354f17e312",
+  "candidate_image_id": "bb947472f603d45705d582f5223e92c0f52dd0c4983aaae6ea20a6e31534b4ad",
+  "validation_hosts": [
+    "incus-node-02",
+    "incus-node-03",
+    "incus-node-07"
+  ],
+  "checks": {
+    "go_test_all": "passed; /opt/incus-integration-20260930-unit-r2.log",
+    "race_core_packages": "passed; /opt/incus-integration-20260930-check.log",
+    "static_analysis": "passed; /opt/incus-integration-20260930-static-r2.log (run r6)",
+    "ceph_identity_release": "passed; /opt/incus-integration-20260930-ceph.log",
+    "background_flatten_delete": "delete waited for blocked flatten; completed after release; same-name recreation and cleanup passed",
+    "cold_migration": "node03 -> node02 -> node07; root marker preserved",
+    "live_migration": "all three nodes; process PID and counter preserved",
+    "restore_failure": "target CRIU restore exit injected; target removed; source asynchronously restored PID 119 and counter continued",
+    "post_migration_file_and_volume_access": "all three nodes passed file access, Ceph volume attach, read/write and detach with fixed LXC",
+    "cleanup": "test instances, custom volumes, project and temporary trust removed; protected shared test root removed by verified RBD image ID"
+  },
+  "scope": "Native Incus validation. Existing Nova Incus services were disabled/down while Kata services were active; these tests do not establish Nova end-to-end behavior.",
+  "runtime_fix": "LXC CRIU restore must open the restored init pidfd before advertising RUNNING.",
+  "production_validation": "pending"
+}

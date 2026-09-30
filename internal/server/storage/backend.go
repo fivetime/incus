@@ -67,6 +67,7 @@ import (
 	"github.com/lxc/incus/v7/shared/revert"
 	"github.com/lxc/incus/v7/shared/units"
 	"github.com/lxc/incus/v7/shared/util"
+	"github.com/lxc/incus/v7/shared/validate"
 )
 
 var (
@@ -1482,6 +1483,14 @@ func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string,
 	// Use the source volume's config if not supplied.
 	if config == nil {
 		config = srcConfig.Volume.Config
+	}
+
+	// Check project restrictions against the effective config.
+	err = b.state.DB.Cluster.Transaction(b.state.ShutdownCtx, func(ctx context.Context, tx *db.ClusterTx) error {
+		return project.AllowVolumeConfig(tx, projectName, b.name, config)
+	})
+	if err != nil {
+		return err
 	}
 
 	// Use the source volume's description if not supplied.
@@ -2969,12 +2978,12 @@ func storageReleaseReceiptRequiresLocalStateProof(receipt *db.StorageReleaseRece
 	return receipt != nil && (receipt.StorageDriver == "ceph" || receipt.StorageDriver == "cephext")
 }
 
-func validateRequiredStorageReleaseLocalState(receipt *db.StorageReleaseReceipt, validate func() error) error {
+func validateRequiredStorageReleaseLocalState(receipt *db.StorageReleaseReceipt, validateLocalState func() error) error {
 	if !storageReleaseReceiptRequiresLocalStateProof(receipt) {
 		return nil
 	}
 
-	return validate()
+	return validateLocalState()
 }
 
 func storageReleaseReceiptCanRecoverInstance(receipt *db.StorageReleaseReceipt, localConfig map[string]string, projectName string, instanceName string, poolName string) bool {
@@ -6432,6 +6441,14 @@ func (b *backend) CreateCustomVolumeFromCopy(projectName string, srcProjectName 
 		config = srcConfig.Volume.Config
 	}
 
+	// Check project restrictions against the effective config.
+	err = b.state.DB.Cluster.Transaction(b.state.ShutdownCtx, func(ctx context.Context, tx *db.ClusterTx) error {
+		return project.AllowVolumeConfig(tx, projectName, b.name, config)
+	})
+	if err != nil {
+		return err
+	}
+
 	// Use the source volume's description if not supplied.
 	if desc == "" {
 		desc = srcConfig.Volume.Description
@@ -7576,7 +7593,8 @@ func (b *backend) GetCustomVolumeUsage(projectName, volName string) (*VolumeUsag
 	// Get the volume name on storage.
 	volStorageName := project.StorageVolume(projectName, volName)
 
-	// There's no need to pass config as it's not needed when getting the volume usage.
+	// There's no need to pass config as it's not needed when getting the volume usage (the total size is
+	// read from the DB record below instead).
 	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, nil)
 
 	// Get the usage.
@@ -7592,7 +7610,7 @@ func (b *backend) GetCustomVolumeUsage(projectName, volName string) (*VolumeUsag
 	}
 
 	// Get the total size.
-	sizeStr, ok := vol.Config()["size"]
+	sizeStr, ok := volume.Config["size"]
 	if ok {
 		total, err := units.ParseByteSizeString(sizeStr)
 		if err != nil {
@@ -10934,6 +10952,12 @@ func (b *backend) volumeUsedByRunningInstance(vol *db.StorageVolume, projectName
 
 // createDependentVolumesFromBackup creates dependent volumes from a backup.
 func (b *backend) createDependentVolumesFromBackup(srcBackup backup.Info, srcData io.ReadSeeker, op *operations.Operation) error {
+	// Dependent volumes always live in the instance's project, ignore the project stored in the backup.
+	volProject, err := project.StorageVolumeProject(b.state.DB.Cluster, srcBackup.Project, db.StoragePoolVolumeTypeCustom)
+	if err != nil {
+		return err
+	}
+
 	devicesMap := map[string]string{}
 	for devName, dev := range srcBackup.Config.Container.ExpandedDevices {
 		if dev["type"] != "disk" || util.IsFalseOrEmpty(dev["dependent"]) || dev["path"] == "/" || dev["pool"] == "" {
@@ -10957,17 +10981,28 @@ func (b *backend) createDependentVolumesFromBackup(srcBackup backup.Info, srcDat
 		optimizedStorage := srcBackup.OptimizedStorage
 		optimizedHeader := srcBackup.OptimizedHeader
 
+		// Validate the volume and snapshot names to avoid path traversal when used as path segments.
+		err = validate.IsAPIName(disk.Volume.Name, false)
+		if err != nil {
+			return fmt.Errorf("Invalid dependent volume name: %w", err)
+		}
+
 		snapshots := []string{}
 		for _, snap := range disk.VolumeSnapshots {
 			if snap == nil {
 				return errors.New("Bad dependent volume snapshot definition found in index")
 			}
 
+			err = validate.IsAPIName(snap.Name, false)
+			if err != nil {
+				return fmt.Errorf("Invalid dependent volume snapshot name: %w", err)
+			}
+
 			snapshots = append(snapshots, snap.Name)
 		}
 
 		bInfo := backup.Info{
-			Project:          disk.Volume.Project,
+			Project:          volProject,
 			Name:             disk.Volume.Name,
 			Backend:          disk.Pool.Driver,
 			Pool:             disk.Pool.Name,
