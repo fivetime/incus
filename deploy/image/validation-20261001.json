@@ -136,6 +136,11 @@
   "scope": "Three-testbed native Incus and packaged SDK checks, followed by current-image production Nova acceptance on all three compute nodes. Thirty cold/fault cases and both live migration rings passed, with final cleanup and original business continuity verified. LXCFS was not restarted.",
   "production_validation": {
     "status": "passed",
+    "post_validation_upstream": {
+      "revision": "23db8b063dbb97da1c0660be3bda798daca6a868",
+      "changes": "Only po/pt.po Portuguese CLI translations; merged without conflicts after production acceptance.",
+      "deployment": "Production remains pinned to the validated ebfd98de7c9a image. Server source is unchanged; these later translations are not included in the deployed artifact."
+    },
     "incus_helm_revision": 31,
     "nova_helm_revision": 156,
     "rollout": "Three nodes passed; original four guest PID/start ticks and ID maps, and all LXCFS process identities, unchanged.",
