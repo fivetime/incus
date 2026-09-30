@@ -22,7 +22,46 @@
   },
   "scope": "Native Incus validation. Existing Nova Incus services were disabled/down while Kata services were active; these tests do not establish Nova end-to-end behavior.",
   "runtime_fix": "LXC CRIU restore must open the restored init pidfd before advertising RUNNING.",
-  "production_validation": "pending",
+  "production_validation": {
+    "status": "incomplete: cross-subnet IPv4/DNS outage interrupts fault matrix",
+    "incus_revision": "4f839b4f45746a29d6dbe931871a9483d6394aa1",
+    "incus_image_digest": "sha256:88923d6220190237534393823f99057aa4e765242f3102b7703440a1c8cb2a21",
+    "nova_driver_revision": "99349e32fd9e9510bbef3e0ef713b183e137123c",
+    "nova_image_digest_amd64": "sha256:92cab660f32398971585f5808601b7f28ec9a99c20e5e186253acdfa569aece2",
+    "nodes": [
+      "lxd-worker1",
+      "lxd-worker2",
+      "lxd-worker3"
+    ],
+    "helm_revisions": {
+      "incus": 30,
+      "nova": 155
+    },
+    "passed": [
+      "runtime preflight on all three nodes",
+      "existing four guests retained original processes and ID maps during rollout",
+      "BFV worker3 to worker2: destination TCP rejection and rollback, cold migration confirm, data attachment hard-reboot recovery, reverse migration revert and cleanup"
+    ],
+    "incomplete": [
+      "remaining ownership-transition fault cases",
+      "full ordered-pair production acceptance",
+      "cleanup convergence after network recovery"
+    ],
+    "aborted_fault_case": {
+      "exit": 143,
+      "instance_uuid": "96567f9b-2b8c-4085-b6d5-e33dc6f4570a",
+      "backend_instance": "instance-0000c170",
+      "backend_host": "lxd-worker3",
+      "backend_state": "STOPPED",
+      "fault_injection_removed": true,
+      "api_records_absent": true,
+      "backend_cleanup_verified": false
+    },
+    "scheduling": "all three Incus computes temporarily disabled while network outage persists",
+    "image_ci": "Incus and Nova image builds passed",
+    "driver_github_ci": "job did not start due GitHub account billing/spending-limit rejection; not a passing check",
+    "local_driver_validation": "1462 unit tests cumulatively passed; 252 tool tests passed; style and documentation build passed"
+  },
   "lxc_tested_tree_revision": "8eed33fef586a0091eca96ed8a32ed354f17e312",
   "lxc_upstream_revision": "f30cbb86fff27e72ae25780aa2b90cf24937864e",
   "lxc_runtime_patch": {
