@@ -42,7 +42,9 @@
       "existing four guests retained original processes and ID maps during rollout",
       "BFV worker3 to worker2: destination TCP rejection and rollback, cold migration confirm, data attachment hard-reboot recovery, reverse migration revert and cleanup",
       "existing four guests rechecked after network recovery: original processes and ID maps unchanged",
-      "BFV worker1 to worker2: post-claim data-volume failure and stopped-instance post-claim failure recovered automatically; cleanup passed"
+      "BFV worker1 to worker2: post-claim data-volume failure and stopped-instance post-claim failure recovered automatically; cleanup passed",
+      "BFV worker1 to worker2: genuine target startup fault and reverse-revert fault recovered automatically; exact test resource cleanup passed",
+      "Kubernetes read-only audit: 23 service processes across 7 Nova pods pass runtime contract; approved image pins, required extensions, Ceph prefixes and fleet identity configuration verified"
     ],
     "incomplete": [
       "remaining ownership-transition fault cases",
@@ -65,7 +67,8 @@
     "driver_github_ci": "job did not start due GitHub account billing/spending-limit rejection; not a passing check",
     "local_driver_validation": "1462 unit tests cumulatively passed; 252 tool tests passed; style and documentation build passed",
     "network_recovery": "User restarted FRR; routes, DNS, API communication and Nova heartbeats recovered. No host infrastructure changes by this validation run.",
-    "test_harness": "Invalid startup injection result excluded. Lifecycle CLI waits now use operation timeout rather than query timeout; interrupted test reverted normally and runtime/volume cleanup verified."
+    "test_harness": "Test tooling 6bbe373: positive fault/cleanup evidence, operation-specific CLI deadlines, and opt-in run-scoped cloud inventory audit for shared production clouds. 57 focused tests passed.",
+    "matrix_r4": "Individual cases passed; whole matrix failed global cloud inventory comparison due concurrent CI runner/Trove resources. Not counted as a matrix pass. Run-scoped audit rerun in progress."
   },
   "lxc_tested_tree_revision": "8eed33fef586a0091eca96ed8a32ed354f17e312",
   "lxc_upstream_revision": "f30cbb86fff27e72ae25780aa2b90cf24937864e",
