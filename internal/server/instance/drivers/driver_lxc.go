@@ -2433,6 +2433,19 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 		return "", nil, err
 	}
 
+	// Failed LXC restores can remove the rootfs staging directory.
+	rootfsMountPath := filepath.Join(d.DevicesPath(), "rootfs")
+	err = os.MkdirAll(rootfsMountPath, 0o711)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Keep restore cleanup isolated from other instances and recreate the directory on every start.
+	err = lxcSetConfigItem(d.c, "lxc.rootfs.mount", rootfsMountPath)
+	if err != nil {
+		return "", nil, err
+	}
+
 	err = os.MkdirAll(d.ShmountsPath(), 0o711)
 	if err != nil {
 		return "", nil, err
@@ -4754,6 +4767,7 @@ func (d *lxc) cleanup() {
 	seccomp.DeleteProfile(d)
 
 	// Remove the devices path
+	_ = os.Remove(filepath.Join(d.DevicesPath(), "rootfs"))
 	_ = os.Remove(d.DevicesPath())
 
 	// Remove the shmounts path
@@ -4849,6 +4863,11 @@ func (d *lxc) delete(force bool, cleanupDependencies bool) error {
 		return err
 	}
 
+	// Run device removal function for each device while the instance volume still exists.
+	if !d.IsSnapshot() {
+		d.devicesRemove(d, cleanupDependencies)
+	}
+
 	pool, err := storagePools.LoadByInstance(d.state, d)
 	if err != nil && !response.IsNotFoundError(err) {
 		return err
@@ -4917,9 +4936,6 @@ func (d *lxc) delete(force bool, cleanupDependencies bool) error {
 				return err
 			}
 		}
-
-		// Run device removal function for each device.
-		d.devicesRemove(d, cleanupDependencies)
 
 		// Clean things up.
 		d.cleanup()
@@ -6725,7 +6741,9 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 			d.logger.Debug("Starting storage migration phase")
 
 			if volSourceArgs.SharedStorage {
-				err = releaseAndSignalSharedStorageHandover(d.unmount, filesystemConn)
+				err = releaseAndSignalSharedStorageHandover(func() error {
+					return pool.UnmountInstanceStrict(d, nil)
+				}, filesystemConn)
 				if err != nil {
 					return err
 				}
@@ -6834,7 +6852,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 					return err
 				}
 
-				err = d.unmount()
+				err = pool.UnmountInstanceStrict(d, nil)
 				if err != nil {
 					return fmt.Errorf("Failed releasing source root volume after CRIU checkpoint: %w", err)
 				}
@@ -7995,7 +8013,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 					d.IsRunning,
 					func() error { return d.Stop(false) },
 					func() error {
-						return pool.UnmountInstance(d, nil)
+						return pool.UnmountInstanceStrict(d, nil)
 					},
 					d.VolatileSet,
 					func() error { return pool.DeleteInstance(d, nil) },
@@ -8042,7 +8060,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 					d.IsRunning,
 					func() error { return d.Stop(false) },
 					func() error {
-						return pool.UnmountInstance(d, nil)
+						return pool.UnmountInstanceStrict(d, nil)
 					},
 					d.VolatileSet,
 					func() error { return pool.DeleteInstance(d, nil) },
@@ -9139,14 +9157,17 @@ func (d *lxc) diskState() map[string]api.InstanceStateDisk {
 		if internalInstance.IsRootDiskDevice(dev.Config) {
 			pool, err := d.getStoragePool()
 			if err != nil {
-				d.logger.Error("Error loading storage pool", logger.Ctx{"err": err})
+				if !d.isBeingDeleted() {
+					d.logger.Warn("Error loading storage pool", logger.Ctx{"err": err})
+				}
+
 				continue
 			}
 
 			usage, err = pool.GetInstanceUsage(d)
 			if err != nil {
-				if !errors.Is(err, storageDrivers.ErrNotSupported) {
-					d.logger.Error("Error getting disk usage", logger.Ctx{"err": err})
+				if !errors.Is(err, storageDrivers.ErrNotSupported) && !d.isBeingDeleted() {
+					d.logger.Warn("Error getting disk usage", logger.Ctx{"err": err})
 				}
 
 				continue
@@ -9154,7 +9175,10 @@ func (d *lxc) diskState() map[string]api.InstanceStateDisk {
 		} else if dev.Config["pool"] != "" {
 			pool, err := storagePools.LoadByName(d.state, dev.Config["pool"])
 			if err != nil {
-				d.logger.Error("Error loading storage pool", logger.Ctx{"poolName": dev.Config["pool"], "err": err})
+				if !d.isBeingDeleted() {
+					d.logger.Warn("Error loading storage pool", logger.Ctx{"poolName": dev.Config["pool"], "err": err})
+				}
+
 				continue
 			}
 

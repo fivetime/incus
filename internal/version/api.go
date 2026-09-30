@@ -591,6 +591,7 @@ var APIExtensions = []string{
 	"internal_debug_pprof",
 	"instance_state_disk_counters",
 	"instances_state_tpm",
+	"ovn_nic_security_filtering",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an

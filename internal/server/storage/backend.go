@@ -3679,7 +3679,7 @@ func (b *backend) normalizeExternalInstanceRootfsIDMap(inst instance.Instance, v
 		return rootfsidmap.ValidateNormalizedRootfsIDMapProvenance(inst.Path())
 	})
 
-	unmountErr := b.UnmountInstance(inst, op)
+	unmountErr := b.UnmountInstanceStrict(inst, op)
 	if normalizeErr != nil {
 		if unmountErr != nil {
 			return errors.Join(normalizeErr, fmt.Errorf("Unmount externally managed root volume: %w", unmountErr))
@@ -4333,6 +4333,15 @@ func (b *backend) MountInstance(inst instance.Instance, op *operations.Operation
 
 // UnmountInstance unmounts the instance's root volume.
 func (b *backend) UnmountInstance(inst instance.Instance, op *operations.Operation) error {
+	return b.unmountInstance(inst, op, false)
+}
+
+// UnmountInstanceStrict preserves ErrInUse when storage ownership must be released.
+func (b *backend) UnmountInstanceStrict(inst instance.Instance, op *operations.Operation) error {
+	return b.unmountInstance(inst, op, true)
+}
+
+func (b *backend) unmountInstance(inst instance.Instance, op *operations.Operation, strict bool) error {
 	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name()})
 	l.Debug("UnmountInstance started")
 	defer l.Debug("UnmountInstance finished")
@@ -4376,15 +4385,18 @@ func (b *backend) UnmountInstance(inst instance.Instance, op *operations.Operati
 		for _, snap := range volSnaps {
 			currentSnapVol := b.GetVolume(vol.Type(), vol.ContentType(), project.Instance(inst.Project().Name, snap.Name), vol.Config())
 			_, err = b.driver.UnmountVolumeSnapshot(currentSnapVol, op)
-			if err != nil && !errors.Is(err, drivers.ErrInUse) {
+			if err != nil && (strict || !errors.Is(err, drivers.ErrInUse)) {
 				return err
 			}
 		}
 	}
 
 	_, err = b.driver.UnmountVolume(vol, false, op)
+	if err != nil && (strict || !errors.Is(err, drivers.ErrInUse)) {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // getInstanceDisk returns the location of the disk.

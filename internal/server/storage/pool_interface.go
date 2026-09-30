@@ -84,6 +84,7 @@ type Pool interface {
 
 	MountInstance(inst instance.Instance, op *operations.Operation) (*MountInfo, error)
 	UnmountInstance(inst instance.Instance, op *operations.Operation) error
+	UnmountInstanceStrict(inst instance.Instance, op *operations.Operation) error
 
 	// Instance snapshots.
 	CanRestoreInstanceSnapshot(inst instance.Instance, src instance.Instance) error

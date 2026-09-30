@@ -1,0 +1,140 @@
+{
+  "date": "2026-10-01",
+  "fork_base": "48c28b8c2def26d6d2059cdd3a2f449de8282380",
+  "upstream": "7f2df16a42891b87d1557d3f0c755455896c511d",
+  "tested_source_tree": "2324497163e6a3f270f2236e73693ce5403568ea",
+  "candidate_image_id": "b01a9eab76680a4e03000a6ae239a97fadbfbb9a1c708eb5b475a282d9a6ed95",
+  "compatibility_changes": [
+    "Preserve upstream ordinary unmount semantics while requiring strict reference release before shared-root handover and failed-target cleanup.",
+    "Recreate a per-instance LXC rootfs staging directory on every start/restore, under the traversable device directory; remove it during instance cleanup."
+  ],
+  "checks": {
+    "focused": {
+      "exit_code": 0,
+      "log": "focused-r5.log"
+    },
+    "unit": {
+      "exit_code": 0,
+      "log": "unit-r5.log"
+    },
+    "race": {
+      "exit_code": 0,
+      "log": "race-r5.log"
+    },
+    "static": {
+      "exit_code": 0,
+      "log": "static-r5.log"
+    },
+    "image": {
+      "exit_code": 0,
+      "log": "image-r5.log"
+    }
+  },
+  "validation_hosts": [
+    "incus-node-02",
+    "incus-node-03",
+    "incus-node-07"
+  ],
+  "native_smoke": [
+    {
+      "node": "n2",
+      "create_start_exec": "passed",
+      "removed_rootfs_staging_recreated_on_start": "passed",
+      "staging_removed_on_delete": "passed",
+      "volume_attach_write_reattach_read": "passed",
+      "delete_with_device_configured": "passed"
+    },
+    {
+      "node": "n3",
+      "create_start_exec": "passed",
+      "removed_rootfs_staging_recreated_on_start": "passed",
+      "staging_removed_on_delete": "passed",
+      "volume_attach_write_reattach_read": "passed",
+      "delete_with_device_configured": "passed"
+    },
+    {
+      "node": "n7",
+      "create_start_exec": "passed",
+      "removed_rootfs_staging_recreated_on_start": "passed",
+      "staging_removed_on_delete": "passed",
+      "volume_attach_write_reattach_read": "passed",
+      "delete_with_device_configured": "passed"
+    }
+  ],
+  "live_migration": [
+    {
+      "source": "n3",
+      "target": "n2",
+      "pid": 122,
+      "counter": 10,
+      "marker": "merge-20261001-continuity"
+    },
+    {
+      "source": "n2",
+      "target": "n7",
+      "pid": 122,
+      "counter": 17,
+      "marker": "merge-20261001-continuity"
+    },
+    {
+      "source": "n7",
+      "target": "n3",
+      "pid": 122,
+      "counter": 23,
+      "marker": "merge-20261001-continuity"
+    }
+  ],
+  "cold_migration": [
+    {
+      "source": "n3",
+      "target": "n2",
+      "marker_preserved": true
+    },
+    {
+      "source": "n2",
+      "target": "n7",
+      "marker_preserved": true
+    },
+    {
+      "source": "n7",
+      "target": "n3",
+      "marker_preserved": true
+    }
+  ],
+  "restore_failure": {
+    "before": {
+      "pid": 332,
+      "counter": 3,
+      "marker": "merge-20261001-continuity"
+    },
+    "after": {
+      "pid": 332,
+      "counter": 11,
+      "marker": "merge-20261001-continuity"
+    },
+    "target_instance_absent": true,
+    "target_operations_empty": true,
+    "target_rbd_mappings_empty": true,
+    "retry_same_target": "passed with process continuity"
+  },
+  "cleanup": {
+    "instances_operations_and_rbd_mappings_empty": true,
+    "fixture_uid_gid_processes_absent": true,
+    "projects_aliases_client_remotes_and_restricted_trust_removed": true,
+    "protected_native_root": "Native CLI migration has no Nova ownership proof and retains delete protection. After positive three-node absence checks, the retained root was manually retired using verified RBD trash ID 3a3f92b4a4cd4e."
+  },
+  "sdk": {
+    "fork_revision": "eb803e4ebb2f97ea403069fadd42453846a63ef3",
+    "canonical_revision": "560e30b6672203b17a0165a54107ed52d1e8bae1",
+    "new_upstream_api_smoke": "Volume create, automatic snapshot name, volume rename and positive cleanup passed against this candidate."
+  },
+  "excluded_attempts": [
+    "An exec-launched probe inherited an external session; CRIU refused the dump before handover. Replaced with a setsid probe.",
+    "A native fixture omitted migration.stateful=true required by Nova. Its console checkpoint failed restore; the fixture was removed after positive absence proof, then recreated with the required configuration.",
+    "The first per-instance rootfs staging candidate used a non-traversable 0700 runtime directory and failed unprivileged startup. It was rejected; the validated candidate uses the 0711 device directory."
+  ],
+  "scope": "Native Incus tests on three testbeds. These do not establish production Nova end-to-end acceptance. LXCFS was not restarted.",
+  "production_validation": {
+    "status": "pending formal CI image, deployment and renewed acceptance; prior release results are not evidence for this candidate"
+  }
+}

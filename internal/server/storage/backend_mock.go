@@ -237,6 +237,11 @@ func (b *mockBackend) UnmountInstance(inst instance.Instance, op *operations.Ope
 	return nil
 }
 
+// UnmountInstanceStrict unmounts an instance volume without tolerating remaining users.
+func (b *mockBackend) UnmountInstanceStrict(inst instance.Instance, op *operations.Operation) error {
+	return nil
+}
+
 // CreateInstanceSnapshot creates a snapshot of an instance volume.
 func (b *mockBackend) CreateInstanceSnapshot(i instance.Instance, src instance.Instance, op *operations.Operation) error {
 	return nil
