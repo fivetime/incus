@@ -95,8 +95,8 @@ FROM ${ALPINE_IMAGE} AS lxc-build
 
 ARG LXC_REPOSITORY=https://github.com/lxc/lxc.git
 ARG LXC_REF=f30cbb86fff27e72ae25780aa2b90cf24937864e
-ARG LXC_RESTORE_PIDFD_PATCH=https://raw.githubusercontent.com/fivetime/nova-incus-driver/47de4bdfdb3acf250db186dcca32881ef42369ab/patches/lxc/0001-criu-restore-init-pidfd.patch
-ARG LXC_RESTORE_PIDFD_SHA256=f5da37d1d5d75f93caa3ce1f8b8b5423d361d78dfa88d4655489491abaadebda
+ARG LXC_RESTORE_PIDFD_PATCH=https://github.com/fivetime/lxc/commit/8eed33fef586a0091eca96ed8a32ed354f17e312.diff
+ARG LXC_RESTORE_PIDFD_SHA256=6118975e098c7df94c162a498c453f41c3cbabf21297a257989fa55fff2ee50d
 
 RUN apk add --no-cache \
       build-base \
