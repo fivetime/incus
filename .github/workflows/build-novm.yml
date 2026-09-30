@@ -87,6 +87,8 @@ jobs:
             ! ldd /usr/local/sbin/criu | grep -q "not found"
             ! ldd /usr/lib/liblxc.so.1.9.0 | grep -q "not found"
             strings /usr/lib/liblxc.so.1.9.0 | grep -q "apparmor"
+            strings /usr/lib/liblxc.so.1.9.0 | grep -q "Failed to open pidfd for restored init process"
+            grep -qx "6118975e098c7df94c162a498c453f41c3cbabf21297a257989fa55fff2ee50d" /usr/share/incus-runtime/lxc-patches.sha256
             grep -qx "INCUS_REVISION=${{ github.sha }}" /usr/share/incus-runtime/components.env
             grep -Eq "^LXC_REF=[0-9a-f]{40}$" /usr/share/incus-runtime/components.env
             grep -Eq "^LXC_COMMIT=[0-9a-f]{40}$" /usr/share/incus-runtime/components.env

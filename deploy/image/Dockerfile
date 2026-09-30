@@ -94,7 +94,7 @@ RUN apk add --no-cache \
 FROM ${ALPINE_IMAGE} AS lxc-build
 
 ARG LXC_REPOSITORY=https://github.com/lxc/lxc.git
-ARG LXC_REF=f30cbb86fff27e72ae25780aa2b90cf24937864e
+ARG LXC_REF=35c69e4d503e685392ef00e05a9c797b8245df64
 ARG LXC_RESTORE_PIDFD_PATCH=https://github.com/fivetime/lxc/commit/8eed33fef586a0091eca96ed8a32ed354f17e312.diff
 ARG LXC_RESTORE_PIDFD_SHA256=6118975e098c7df94c162a498c453f41c3cbabf21297a257989fa55fff2ee50d
 
