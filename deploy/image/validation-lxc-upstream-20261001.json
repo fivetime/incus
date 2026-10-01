@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "completed_at": "2026-10-01T00:25:14.727820+00:00",
+  "ci_run": "https://github.com/fivetime/incus/actions/runs/36791803871",
+  "incus_runtime_revision": "42a76d7e7f9a26ae669fb60163d313c33f4f4f8e",
+  "lxc_upstream_revision": "35c69e4d503e685392ef00e05a9c797b8245df64",
+  "lxc_fork_main": "709202faaf7c5263dd9296c861cd5b43024da6b9",
+  "retained_pidfd_patch": "8eed33fef586a0091eca96ed8a32ed354f17e312",
+  "production_image": "ghcr.io/fivetime/incus@sha256:d4a787de3afc193f7c3f89afd0a3d536ff62a5f5c59f46664f82a782de582089",
+  "tested_amd64_manifest": "sha256:e0d4c48a5b2de9da5eb62b443a3d05a56c1026fa4b368531625981f64ab926b0",
+  "multiarch_published_image": "ghcr.io/fivetime/incus@sha256:fbe98a20a04da8955953918179339ddff15407cd23a4014b619bc40d8e63b40f",
+  "testbed_checks": "3-node create/start/exec, volume persistence, root staging recovery, deletion, 3-hop live and cold rings, target restore failure/source continuity/retry, immutable root cleanup",
+  "production_checks": "3-node sequential rollout; original 4 guest PID/start/idmap and LXCFS continuity; HTTP/TCP/UDP/SCTP probes; Ceph-root and BFV-root 3-hop live rings; 2 servers and 3 volumes independently absent in APIs/backend/trash; unchanged ownership registry; compute enabled/up and taints preserved",
+  "nova_image_changed": false,
+  "bfv_evacuation_enabled": false,
+  "evidence_sha256": {
+    "formal-testbed-rollout.json": "9277495fa3790be0bd3ba6cc761bad3c61fb08d4e5f7e85a8e0df1ec1ca3eca3",
+    "formal-smoke-results.json": "f7a0f5b8521b6cbf23e4de76fa1e9345e1ba3f83395864e7ec1ae3047cf287ab",
+    "formal-migration-results.json": "b31cb974d3032a18ccb4474f4660dcdea05f995714a4059e9c608772bdbd2ad0",
+    "formal-restore-failure-results.json": "e3ba743f2f4c6f5fe3178e663656838a67de69dd60390e265b702cb72b4acb41",
+    "formal-native-cleanup-results.json": "f5591057754e5855bf90d9f93a94280722684b05ed39f49782059546e80c0a18",
+    "production-incus-rollout.json": "b0d4eaa7c784921a8de4acdc939952c459b3c19fea742d78a02d858b819ee629",
+    "production-component-verification.json": "0e4cbe3a520eaa4e585512ce00c2ae42ce73227dbdce163443638e675218b512",
+    "production-live-results.json": "fa5474f318a67c86f3f7a546e25793228b0106f68ed2fe1cf19626339f85d449",
+    "production-final-audit.json": "aa183aa6ad7b489bda4566ee1c95f44f4435f46c2b18378a5fa8aac06475dc1a",
+    "production-existing-business-audit.json": "38787ed1783d9cb467e5ae5fea4c3f4f5d2955352be522827ea74e2d3127cb0e",
+    "production-temporary-client-cleanup.json": "f423fed803e1e7dd1007109c60007828ec0c3e5093b033dc5bd8d8deb7bdc369"
+  },
+  "upstream_followup": {
+    "incus": "OVN interconnect monitor change published during LXC release; separate review required",
+    "criu": "development branch backlog requires separate review",
+    "lxcfs": "upstream main included",
+    "pylxd": "upstream main included"
+  }
+}
