@@ -1,13 +1,76 @@
 package drivers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/lxc/incus/v7/internal/server/locking"
+	"github.com/lxc/incus/v7/internal/server/storage/cephownership"
 	"github.com/lxc/incus/v7/shared/subprocess"
 )
+
+// TransferVolumeMaterializationOwnership requires the caller's fenced, exclusive takeover grant.
+func (d *ceph) TransferVolumeMaterializationOwnership(vol Volume, expectedIdentity string, clusterFSID string, previous string, next string) error {
+	expected, err := parseCanonicalRBDVolumeIdentity(expectedIdentity)
+	if err != nil {
+		return err
+	}
+
+	if vol.contentType != ContentTypeFS || vol.volType != VolumeTypeContainer {
+		return errors.New("Fenced RBD takeover supports container filesystem roots only")
+	}
+
+	if expected.PoolID > uint64(^uint64(0)>>1) {
+		return errors.New("RBD pool ID exceeds librados bounds")
+	}
+
+	// Preserve the flatten-before-mount lock order used by identity-bound deletion.
+	flattenUnlock, err := locking.Lock(context.TODO(), d.flattenLockName(vol))
+	if err != nil {
+		return err
+	}
+
+	defer flattenUnlock()
+	unlock, err := vol.MountLock()
+	if err != nil {
+		return err
+	}
+
+	defer unlock()
+	identity, err := d.GetVolumeIdentity(vol)
+	if err != nil {
+		return err
+	}
+
+	if identity != expectedIdentity {
+		return errors.New("RBD name no longer identifies the takeover root")
+	}
+
+	err = cephownership.Transfer(cephownership.Binding{
+		Cluster: d.config["ceph.cluster_name"],
+		User:    d.config["ceph.user.name"],
+		FSID:    clusterFSID,
+		PoolID:  int64(expected.PoolID),
+		ImageID: expected.ID,
+	}, previous, next)
+	if err != nil {
+		return err
+	}
+
+	identity, err = d.GetVolumeIdentity(vol)
+	if err != nil {
+		return err
+	}
+
+	if identity != expectedIdentity {
+		return errors.New("RBD name changed during takeover; original identity remains protected")
+	}
+
+	return nil
+}
 
 const cephMaterializationOwnershipKey = "incus.openstack.materialization_ownership"
 
