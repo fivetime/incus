@@ -146,5 +146,73 @@ func TestNativeOwnershipCAS(t *testing.T) {
 	if got := rbd("image-meta", "get", retained, "incus.openstack.materialization_ownership"); got != old {
 		t.Fatal("Original image was not transferred")
 	}
-	t.Logf("Atomic competition, response replay, FSID rejection and name replacement passed for image ID %s", info.ID)
+
+	// Flatten changes the same RBD header while background storage work can
+	// overlap a fenced takeover. The identity-bound metadata CAS must remain
+	// valid and must not redirect to the parent or a same-named image.
+	flatParent := name + "_flatten_parent"
+	flatChild := name + "_flatten_child"
+	rbd("create", flatParent, "--size", "8M")
+	rbd("snap", "create", flatParent+"@base")
+	rbd("snap", "protect", flatParent+"@base")
+	rbd("clone", pool+"/"+flatParent+"@base", pool+"/"+flatChild)
+	t.Cleanup(func() {
+		for _, args := range [][]string{
+			{"rm", flatChild},
+			{"snap", "unprotect", flatParent + "@base"},
+			{"snap", "rm", flatParent + "@base"},
+			{"rm", flatParent},
+		} {
+			out, cleanupErr := exec.Command(
+				"rbd", append([]string{"--cluster", cluster, "--id", user,
+					"--pool", pool}, args...)...).CombinedOutput()
+			if cleanupErr != nil {
+				t.Errorf("Flatten fixture cleanup %v: %v: %s", args, cleanupErr, out)
+			}
+		}
+	})
+	flatInfo := struct {
+		ID string `json:"id"`
+	}{}
+	err = json.Unmarshal([]byte(rbd("info", flatChild, "--format", "json")), &flatInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flatBinding := binding
+	flatBinding.ImageID = flatInfo.ID
+	flatOld := "sha256:" + strings.Repeat("e", 64)
+	flatNext := "sha256:" + strings.Repeat("f", 64)
+	rbd("image-meta", "set", flatChild, "incus.openstack.materialization_ownership", flatOld)
+	ready := make(chan struct{})
+	flattenResults := make([]error, 2)
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		<-ready
+		_, flattenResults[0] = exec.Command(
+			"rbd", "--cluster", cluster, "--id", user, "--pool", pool,
+			"flatten", flatChild).CombinedOutput()
+	}()
+	go func() {
+		defer wait.Done()
+		<-ready
+		flattenResults[1] = Transfer(flatBinding, flatOld, flatNext)
+	}()
+	close(ready)
+	wait.Wait()
+	if flattenResults[0] != nil || flattenResults[1] != nil {
+		t.Fatalf("Concurrent flatten/transfer failed: %v", flattenResults)
+	}
+	if got := rbd("image-meta", "get", flatChild, "incus.openstack.materialization_ownership"); got != flatNext {
+		t.Fatalf("Flatten race changed owner: %q", got)
+	}
+	flatAfter := struct {
+		ID string `json:"id"`
+	}{}
+	err = json.Unmarshal([]byte(rbd("info", flatChild, "--format", "json")), &flatAfter)
+	if err != nil || flatAfter.ID != flatInfo.ID {
+		t.Fatalf("Flatten changed immutable identity: %q, %v", flatAfter.ID, err)
+	}
+
+	t.Logf("Atomic competition, response replay, FSID rejection, name replacement and flatten race passed for image ID %s", info.ID)
 }

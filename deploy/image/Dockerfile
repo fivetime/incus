@@ -57,6 +57,9 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
 RUN cc -O2 -Wall -Wextra deploy/image/aa-exec.c -lapparmor -o /out/aa-exec \
     && strip /out/aa-exec
 
+RUN cc -O2 -Wall -Wextra -Werror deploy/image/daemon-parent.c -o /out/daemon-parent \
+    && strip /out/daemon-parent
+
 FROM ${ALPINE_IMAGE} AS criu-build
 
 # Includes shared-root restoration and early cgroup notification file access.
@@ -198,6 +201,7 @@ RUN apk add --no-cache \
       apparmor-profiles-abstractions \
       apparmor-profiles-tunables \
       attr \
+      btrfs-progs \
       ceph${CEPH_VERSION}-common \
       cgroup-tools \
       coreutils \
@@ -214,6 +218,7 @@ RUN apk add --no-cache \
       libgcc \
       libnet \
       libnl3 \
+      losetup \
       lxc-libs \
       lz4-libs \
       lvm2 \
@@ -246,6 +251,7 @@ RUN apk add --no-cache \
 COPY --from=incus-build /out/incusd /usr/sbin/incusd
 COPY --from=incus-build /out/incus /usr/bin/incus
 COPY --from=incus-build /out/aa-exec /usr/local/bin/aa-exec
+COPY --from=incus-build /out/daemon-parent /usr/local/bin/daemon-parent
 COPY --from=incus-build /out/incus-revision /usr/share/incus-runtime/incus-revision
 COPY --from=criu-build /build/criu/criu/criu /usr/local/sbin/criu
 COPY --from=criu-build /build/criu.commit /usr/share/incus-runtime/criu-commit
@@ -268,6 +274,8 @@ RUN incus_version="$(incusd --version)" \
     && command -v cgexec \
     && command -v nsenter \
     && command -v lvm \
+    && command -v btrfs \
+    && losetup --help | grep -q -- "--nooverlap" \
     && command -v udevadm \
     && command -v zfs \
     && command -v zpool \

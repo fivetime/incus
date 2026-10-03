@@ -36,7 +36,7 @@ case "${INCUS_RUNTIME_ROLE:-incusd}" in
     ;;
 esac
 
-for command_name in cgcreate cgexec nsenter readlink; do
+for command_name in cgcreate cgexec daemon-parent nsenter readlink; do
   require_command "$command_name"
 done
 
@@ -150,7 +150,9 @@ fi
 # Keep this shell in the outer runtime cgroup so its stop signal is delivered.
 # incusd and its LXC monitors remain in the stable host cgroup across restarts.
 # shellcheck disable=SC2086
-cgexec --sticky -g "${CGROUP_CONTROLLERS}:${CONTROL_CGROUP}" incusd ${DAEMON_ARGS} &
+# Parent death terminates only incusd with its reload signal, preserving guests.
+cgexec --sticky -g "${CGROUP_CONTROLLERS}:${CONTROL_CGROUP}" \
+  daemon-parent "$$" incusd ${DAEMON_ARGS} &
 INCUSD_PID=$!
 INCUSD_STATUS=0
 

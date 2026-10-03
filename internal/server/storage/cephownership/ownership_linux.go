@@ -3,16 +3,17 @@
 package cephownership
 
 /*
-#cgo LDFLAGS: -ldl
+#cgo LDFLAGS: -ldl -pthread
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 // The librados C ABI is loaded at runtime; non-Ceph daemons need no Ceph libraries.
-static int ownership_cas(const char *cluster_name, const char *user, const char *config,
+static int ownership_cas_impl(const char *cluster_name, const char *user, const char *config,
                         const char *fsid, int64_t pool_id, const char *object,
                         const char *previous, const char *next) {
     void *lib = dlopen("librados.so.2", RTLD_NOW | RTLD_LOCAL);
@@ -80,6 +81,66 @@ done:
     if (io) destroy_io(io);
     if (cluster) shutdown_cluster(cluster);
     dlclose(lib);
+    return result;
+}
+
+struct ownership_work {
+    char *args[7];
+    int64_t pool_id;
+    int result;
+};
+
+static void ownership_work_free(struct ownership_work *work) {
+    for (int i = 0; i < 7; i++) free(work->args[i]);
+    free(work);
+}
+
+static void *ownership_worker(void *opaque) {
+    struct ownership_work *work = opaque;
+    work->result = ownership_cas_impl(work->args[0], work->args[1], work->args[2],
+                                      work->args[3], work->pool_id, work->args[4],
+                                      work->args[5], work->args[6]);
+    return NULL;
+}
+
+static int ownership_cas(const char *cluster_name, const char *user, const char *config,
+                        const char *fsid, int64_t pool_id, const char *object,
+                        const char *previous, const char *next) {
+    struct ownership_work *work = calloc(1, sizeof(*work));
+    if (!work) return -ENOMEM;
+    const char *args[] = {cluster_name, user, config, fsid, object, previous, next};
+    for (int i = 0; i < 7; i++) {
+        work->args[i] = strdup(args[i]);
+        if (!work->args[i]) {
+            ownership_work_free(work);
+            return -ENOMEM;
+        }
+    }
+    work->pool_id = pool_id;
+    work->result = -EIO;
+    pthread_attr_t attr;
+    int error = pthread_attr_init(&attr);
+    if (error) {
+        ownership_work_free(work);
+        return -error;
+    }
+    // Ceph's options constructor exceeds musl's small Go-created C thread stack.
+    error = pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+    pthread_t thread;
+    if (!error) error = pthread_create(&thread, &attr, ownership_worker, work);
+    pthread_attr_destroy(&attr);
+    if (error) {
+        ownership_work_free(work);
+        return -error;
+    }
+    error = pthread_join(thread, NULL);
+    if (error) {
+        // Keep private worker memory alive if its completion cannot be proved.
+        pthread_detach(thread);
+        return -error;
+    }
+    int result = work->result;
+    ownership_work_free(work);
     return result;
 }
 */

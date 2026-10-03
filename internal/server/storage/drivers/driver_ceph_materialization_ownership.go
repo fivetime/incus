@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/lxc/incus/v7/internal/server/locking"
 	"github.com/lxc/incus/v7/internal/server/storage/cephownership"
 	"github.com/lxc/incus/v7/shared/subprocess"
@@ -73,6 +75,22 @@ func (d *ceph) TransferVolumeMaterializationOwnership(vol Volume, expectedIdenti
 }
 
 const cephMaterializationOwnershipKey = "incus.openstack.materialization_ownership"
+
+// GetStorageClusterIdentity returns the configured Ceph cluster's canonical FSID.
+func (d *ceph) GetStorageClusterIdentity() (string, error) {
+	out, err := subprocess.RunCommand("ceph", "--cluster", d.config["ceph.cluster_name"], "--id", d.config["ceph.user.name"], "fsid")
+	if err != nil {
+		return "", err
+	}
+
+	fsid := strings.TrimSpace(out)
+	parsed, err := uuid.Parse(fsid)
+	if err != nil || parsed == uuid.Nil || parsed.String() != fsid {
+		return "", errors.New("Ceph returned an invalid cluster FSID")
+	}
+
+	return fsid, nil
+}
 
 // GetVolumeMaterializationOwnership returns the ownership marker stored on an
 // RBD image. An absent marker is returned as an empty string.

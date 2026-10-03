@@ -4105,6 +4105,41 @@
 						}
 					},
 					{
+						"volatile.shared_root_takeover.cluster_fsid": {
+							"longdesc": "Physical Ceph cluster identity used to reject a substituted storage backend.",
+							"shortdesc": "Physical shared-root Ceph cluster UUID",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.shared_root_takeover.generation": {
+							"longdesc": "Ownership generation retained across fenced recovery of the same original root.",
+							"shortdesc": "Shared-root ownership generation",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.shared_root_takeover.ownership": {
+							"longdesc": "Expected original RBD ownership marker; stale owners cannot mount or delete it.",
+							"shortdesc": "Expected shared-root storage ownership marker",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.shared_root_takeover.storage_identity": {
+							"longdesc": "Immutable pool ID, RBD image ID and block prefix of the original root.",
+							"shortdesc": "Immutable shared-root storage identity",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.shared_root_takeover.token": {
+							"longdesc": "Exact local transaction for a fenced original-root takeover.",
+							"shortdesc": "Fenced shared-root takeover transaction UUID",
+							"type": "string"
+						}
+					},
+					{
 						"volatile.uuid": {
 							"longdesc": "The instance UUID is globally unique across all servers and projects.",
 							"shortdesc": "Instance UUID",

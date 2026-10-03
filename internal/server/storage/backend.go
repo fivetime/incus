@@ -51,6 +51,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/project"
 	"github.com/lxc/incus/v7/internal/server/response"
 	"github.com/lxc/incus/v7/internal/server/rootfsidmap"
+	"github.com/lxc/incus/v7/internal/server/sharedroottakeover"
 	"github.com/lxc/incus/v7/internal/server/state"
 	"github.com/lxc/incus/v7/internal/server/storage/drivers"
 	"github.com/lxc/incus/v7/internal/server/storage/memorypipe"
@@ -2864,9 +2865,24 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 	}
 
 	if !deleteProtected {
+		takeoverToken := localConfig["volatile.shared_root_takeover.token"]
+		if takeoverToken != "" && takeoverToken == localConfig[internalInstance.ConfigOpenStackRootfsMaterializationID] {
+			record, takeoverErr := sharedroottakeover.New(b.state.DB.Node).Get(context.Background(), takeoverToken)
+			if takeoverErr != nil || (record.Phase != sharedroottakeover.Completed && record.Phase != sharedroottakeover.Retired) {
+				return errors.New("Incomplete original-root takeover cannot enter destructive failure cleanup")
+			}
+		}
+
 		volExists, err := b.driver.HasVolume(vol)
 		if err != nil {
 			return err
+		}
+
+		if volExists {
+			err = b.validateSharedRootOwnership(inst, vol)
+			if err != nil {
+				return err
+			}
 		}
 
 		if releaseReceipt != nil {
@@ -2954,6 +2970,14 @@ func (b *backend) DeleteInstance(inst instance.Instance, op *operations.Operatio
 	}
 
 	// Record volume deletion with authorizer.
+	takeoverToken := localConfig["volatile.shared_root_takeover.token"]
+	if takeoverToken != "" && takeoverToken == localConfig[internalInstance.ConfigOpenStackRootfsMaterializationID] {
+		err = sharedroottakeover.New(b.state.DB.Node).Retire(context.Background(), takeoverToken)
+		if err != nil {
+			return fmt.Errorf("Retire exact shared-root takeover after release: %w", err)
+		}
+	}
+
 	err = b.state.Authorizer.DeleteStoragePoolVolume(b.state.ShutdownCtx, inst.Project().Name, b.Name(), vol.Type().Singular(), inst.Name(), "")
 	if err != nil {
 		logger.Error("Failed to remove storage volume from authorizer", logger.Ctx{"name": inst.Name(), "type": vol.Type(), "pool": b.Name(), "project": inst.Project().Name, "error": err})
@@ -4263,6 +4287,11 @@ func (b *backend) MountInstance(inst instance.Instance, op *operations.Operation
 	} else {
 		contentType := InstanceContentType(inst)
 		vol = b.GetVolume(volType, contentType, volStorageName, nil)
+	}
+
+	err = b.validateSharedRootOwnership(inst, vol)
+	if err != nil {
+		return nil, err
 	}
 
 	err = b.driver.MountVolume(vol, op)

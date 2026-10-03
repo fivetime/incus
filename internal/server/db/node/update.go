@@ -103,6 +103,7 @@ var updates = map[int]schema.Update{
 	44: updateFromV43,
 	45: updateFromV44,
 	46: updateFromV45,
+	47: updateFromV46,
 }
 
 // UpdateFromPreClustering is the last schema version where clustering support
@@ -110,6 +111,27 @@ var updates = map[int]schema.Update{
 const UpdateFromPreClustering = 36
 
 // Schema updates begin here
+
+// updateFromV46 adds the durable journal for fenced shared-root takeover.
+func updateFromV46(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+CREATE TABLE shared_root_takeovers (
+    token TEXT PRIMARY KEY NOT NULL,
+    project TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    cluster_fsid TEXT NOT NULL,
+    storage_identity TEXT NOT NULL,
+    binding TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    last_error TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX shared_root_takeovers_instance
+    ON shared_root_takeovers (project, instance_name) WHERE phase != 'retired';
+CREATE UNIQUE INDEX shared_root_takeovers_image
+    ON shared_root_takeovers (cluster_fsid, storage_identity) WHERE phase != 'retired';
+`)
+	return err
+}
 
 // updateFromV45 adds durable rootfs materialization create fences.
 func updateFromV45(ctx context.Context, tx *sql.Tx) error {

@@ -625,6 +625,41 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	//  shortdesc: Whether local instance deletion preserves shared migration storage
 	"volatile.migration.storage_delete_protection": validate.Optional(validate.IsBool),
 
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.shared_root_takeover.token)
+	// Exact local transaction for a fenced original-root takeover.
+	// ---
+	//  type: string
+	//  shortdesc: Fenced shared-root takeover transaction UUID
+	"volatile.shared_root_takeover.token": validate.Optional(validate.IsUUID),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.shared_root_takeover.ownership)
+	// Expected original RBD ownership marker; stale owners cannot mount or delete it.
+	// ---
+	//  type: string
+	//  shortdesc: Expected shared-root storage ownership marker
+	"volatile.shared_root_takeover.ownership": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.shared_root_takeover.storage_identity)
+	// Immutable pool ID, RBD image ID and block prefix of the original root.
+	// ---
+	//  type: string
+	//  shortdesc: Immutable shared-root storage identity
+	"volatile.shared_root_takeover.storage_identity": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.shared_root_takeover.cluster_fsid)
+	// Physical Ceph cluster identity used to reject a substituted storage backend.
+	// ---
+	//  type: string
+	//  shortdesc: Physical shared-root Ceph cluster UUID
+	"volatile.shared_root_takeover.cluster_fsid": validate.Optional(validate.IsUUID),
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.shared_root_takeover.generation)
+	// Ownership generation retained across fenced recovery of the same original root.
+	// ---
+	//  type: string
+	//  shortdesc: Shared-root ownership generation
+	"volatile.shared_root_takeover.generation": validate.IsAny,
+
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.migration.storage_receive_complete)
 	// Whether this migration target completed receiving its shared storage.
 	// ---

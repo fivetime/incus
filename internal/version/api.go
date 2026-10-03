@@ -605,6 +605,7 @@ var APIExtensions = []string{
 	"storage_materialization_attempt_v1",
 	"migration_attempt_reservation_generation",
 	"instance_storage_handover_detached",
+	"instance_shared_root_takeover",
 	"idmap_usage",
 	"migration_checkpoint_restore",
 	"container_rescue",

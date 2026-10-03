@@ -1,5 +1,10 @@
 package drivers
 
+// StorageClusterIdentityProvider identifies the physical storage cluster independently of its local name.
+type StorageClusterIdentityProvider interface {
+	GetStorageClusterIdentity() (string, error)
+}
+
 // VolumeFencedOwnershipTransferProvider atomically replaces ownership on an exact, fenced original root.
 type VolumeFencedOwnershipTransferProvider interface {
 	TransferVolumeMaterializationOwnership(vol Volume, expectedIdentity string, clusterFSID string, previous string, next string) error

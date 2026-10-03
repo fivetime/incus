@@ -3719,6 +3719,36 @@ protocol; a record carrying it can only be deleted with a complete
 receipt binding.
 ```
 
+```{config:option} volatile.shared_root_takeover.cluster_fsid instance-volatile
+:shortdesc: "Physical shared-root Ceph cluster UUID"
+:type: "string"
+Physical Ceph cluster identity used to reject a substituted storage backend.
+```
+
+```{config:option} volatile.shared_root_takeover.generation instance-volatile
+:shortdesc: "Shared-root ownership generation"
+:type: "string"
+Ownership generation retained across fenced recovery of the same original root.
+```
+
+```{config:option} volatile.shared_root_takeover.ownership instance-volatile
+:shortdesc: "Expected shared-root storage ownership marker"
+:type: "string"
+Expected original RBD ownership marker; stale owners cannot mount or delete it.
+```
+
+```{config:option} volatile.shared_root_takeover.storage_identity instance-volatile
+:shortdesc: "Immutable shared-root storage identity"
+:type: "string"
+Immutable pool ID, RBD image ID and block prefix of the original root.
+```
+
+```{config:option} volatile.shared_root_takeover.token instance-volatile
+:shortdesc: "Fenced shared-root takeover transaction UUID"
+:type: "string"
+Exact local transaction for a fenced original-root takeover.
+```
+
 ```{config:option} volatile.uuid instance-volatile
 :shortdesc: "Instance UUID"
 :type: "string"

@@ -150,6 +150,8 @@ var api10 = []APIEndpoint{
 	storagePoolVolumeTypeStateCmd,
 	storageReleaseReceiptCmd,
 	storageMaterializationAttemptCmd,
+	sharedRootTakeoverCmd,
+	sharedRootManifestCmd,
 	warningsCmd,
 	warningCmd,
 	metricsCmd,
