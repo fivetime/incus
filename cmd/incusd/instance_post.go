@@ -566,11 +566,6 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 		return ws.do(op)
 	}
 
-	cancel := func(op *operations.Operation) error {
-		ws.disconnect()
-		return nil
-	}
-
 	if req.Target != nil {
 		// Push mode.
 		op, err := operations.OperationCreate(s, projectName, operations.OperationClassTask, operationtype.InstanceMigrate, resources, nil, run, nil, nil, r)
@@ -582,7 +577,7 @@ func instancePost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Pull mode.
-	op, err := operations.OperationCreate(s, projectName, operations.OperationClassWebsocket, operationtype.InstanceMigrate, resources, ws.Metadata(), run, cancel, ws.Connect, r)
+	op, err := operations.OperationCreate(s, projectName, operations.OperationClassWebsocket, operationtype.InstanceMigrate, resources, ws.Metadata(), run, ws.cancelInstance, ws.Connect, r)
 	if err != nil {
 		return response.InternalError(err)
 	}
@@ -1061,14 +1056,9 @@ func migrateInstance(ctx context.Context, s *state.State, inst instance.Instance
 			return sourceMigration.do(op)
 		}
 
-		cancel := func(op *operations.Operation) error {
-			sourceMigration.disconnect()
-			return nil
-		}
-
 		resources := map[string][]api.URL{}
 		resources["instances"] = []api.URL{*api.NewURL().Path(version.APIVersion, "instances", inst.Name())}
-		sourceOp, err := operations.OperationCreate(s, inst.Project().Name, operations.OperationClassWebsocket, operationtype.InstanceMigrate, resources, sourceMigration.Metadata(), run, cancel, sourceMigration.Connect, nil)
+		sourceOp, err := operations.OperationCreate(s, inst.Project().Name, operations.OperationClassWebsocket, operationtype.InstanceMigrate, resources, sourceMigration.Metadata(), run, sourceMigration.cancelInstance, sourceMigration.Connect, nil)
 		if err != nil {
 			return err
 		}

@@ -59,6 +59,7 @@ func newMigrationConn(secret string, outgoingDialer *websocket.Dialer, outgoingU
 		outgoingDialer: outgoingDialer,
 		outgoingURL:    outgoingURL,
 		connected:      make(chan struct{}),
+		closed:         make(chan struct{}),
 	}
 }
 
@@ -70,6 +71,7 @@ type migrationConn struct {
 	outgoingURL    *url.URL
 	conn           *websocket.Conn
 	connected      chan struct{}
+	closed         chan struct{}
 	disconnected   bool
 }
 
@@ -124,8 +126,9 @@ func (c *migrationConn) WebSocket(ctx context.Context) (*websocket.Conn, error) 
 	}
 
 	if c.conn != nil {
+		conn := c.conn
 		c.mu.Unlock()
-		return c.conn, nil
+		return conn, nil
 	}
 
 	if c.outgoingURL != nil && c.outgoingDialer != nil {
@@ -139,18 +142,29 @@ func (c *migrationConn) WebSocket(ctx context.Context) (*websocket.Conn, error) 
 			return nil, err
 		}
 
+		conn := c.conn
 		c.mu.Unlock()
-		return c.conn, nil
+		return conn, nil
 	}
 
 	c.mu.Unlock()
 
 	select {
 	case <-c.connected:
-		return c.conn, nil
+	case <-c.closed:
+		return nil, errors.New("Connection already disconnected")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.disconnected {
+		return nil, errors.New("Connection already disconnected")
+	}
+
+	return c.conn, nil
 }
 
 // WebsocketIO calls WebSocket and returns it wrapped for io.ReadWriteCloser compatibility.
@@ -168,7 +182,12 @@ func (c *migrationConn) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.disconnected {
+		return
+	}
+
 	c.disconnected = true
+	close(c.closed)
 
 	if c.conn != nil {
 		c.conn.Close()

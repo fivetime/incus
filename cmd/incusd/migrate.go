@@ -168,6 +168,7 @@ func (c *migrationFields) controlChannel() <-chan *localMigration.ControlRespons
 
 type migrationSourceWs struct {
 	migrationFields
+	instanceRunDone chan struct{}
 
 	clusterMoveSourceName string
 	devices               api.DevicesMap

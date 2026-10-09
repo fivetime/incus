@@ -29,6 +29,7 @@ func newMigrationSource(inst instance.Instance, stateful bool, instanceOnly bool
 			allowInconsistent: allowInconsistent,
 			storagePool:       storagePool,
 		},
+		instanceRunDone:       make(chan struct{}),
 		clusterMoveSourceName: clusterMoveSourceName,
 		devices:               devices,
 		skipDependentVolumes:  skipDependentVolumes,
@@ -87,6 +88,8 @@ func newMigrationSource(inst instance.Instance, stateful bool, instanceOnly bool
 }
 
 func (s *migrationSourceWs) do(migrateOp *operations.Operation) error {
+	defer close(s.instanceRunDone)
+
 	l := logger.AddContext(logger.Ctx{"project": s.instance.Project().Name, "instance": s.instance.Name(), "live": s.live, "clusterMoveSourceName": s.clusterMoveSourceName, "push": s.pushOperationURL != ""})
 
 	ctx, cancel := context.WithTimeout(context.TODO(), instanceMigrationConnectionTimeout)
@@ -163,6 +166,16 @@ func (s *migrationSourceWs) do(migrateOp *operations.Operation) error {
 		return errMsg
 	}
 
+	return nil
+}
+
+func (s *migrationSourceWs) cancelInstance(_ *operations.Operation) error {
+	for _, conn := range s.conns {
+		conn.Close()
+	}
+
+	// Source rollback and its device cleanup must finish before cancellation becomes terminal.
+	<-s.instanceRunDone
 	return nil
 }
 
