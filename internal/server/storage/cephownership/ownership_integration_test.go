@@ -164,8 +164,10 @@ func TestNativeOwnershipCAS(t *testing.T) {
 			{"rm", flatParent},
 		} {
 			out, cleanupErr := exec.Command(
-				"rbd", append([]string{"--cluster", cluster, "--id", user,
-					"--pool", pool}, args...)...).CombinedOutput()
+				"rbd", append([]string{
+					"--cluster", cluster, "--id", user,
+					"--pool", pool,
+				}, args...)...).CombinedOutput()
 			if cleanupErr != nil {
 				t.Errorf("Flatten fixture cleanup %v: %v: %s", args, cleanupErr, out)
 			}
