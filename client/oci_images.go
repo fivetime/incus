@@ -25,7 +25,6 @@ import (
 	"github.com/lxc/incus/v7/shared/osarch"
 	"github.com/lxc/incus/v7/shared/subprocess"
 	"github.com/lxc/incus/v7/shared/units"
-	"github.com/lxc/incus/v7/shared/util"
 )
 
 type ociInfo struct {
@@ -239,93 +238,76 @@ func (r *ProtocolOCI) GetImageFile(fingerprint string, req ImageFileRequest) (*I
 		RootfsName: "rootfs.tar.gz",
 	}
 
-	// Prepare to push the tarballs.
-	var pipeRead io.ReadCloser
-	var pipeWrite io.WriteCloser
-
 	// Push the metadata tarball.
-	pipeRead, pipeWrite = io.Pipe()
-	defer logger.WarnOnError(pipeRead.Close, "Failed to close pipe reader")
-	defer logger.WarnOnError(pipeWrite.Close, "Failed to close pipe writer")
-
-	if req.ProgressHandler != nil {
-		pipeRead = &ioprogress.ProgressReader{
-			ReadCloser: pipeRead,
-			Tracker: &ioprogress.ProgressTracker{
-				Handler: func(received int64, speed int64) {
-					req.ProgressHandler(ioprogress.ProgressData{Text: fmt.Sprintf("Generating metadata tarball: %s (%s/s)", units.GetByteSizeString(received, 2), units.GetByteSizeString(speed, 2))})
-				},
-			},
+	if req.MetaFile != nil {
+		resp.MetaSize, err = writeOCIImageTarball(ctx, req.MetaFile, []string{"-cf", "-", "-C", filepath.Join(ociPath, "image"), "config.json", "metadata.yaml"}, "metadata", req.ProgressHandler)
+		if err != nil {
+			return nil, fmt.Errorf("Failed generating metadata tarball: %w", err)
 		}
 	}
-
-	compressWrite := pgzip.NewWriter(pipeWrite)
-	err = compressWrite.SetConcurrency(1<<20, archive.CompressionThreads())
-	if err != nil {
-		return nil, err
-	}
-
-	metadataProcess := subprocess.NewProcessWithFds("tar", []string{"-cf", "-", "-C", filepath.Join(ociPath, "image"), "config.json", "metadata.yaml"}, nil, compressWrite, os.Stderr)
-	err = metadataProcess.Start(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		_, _ = metadataProcess.Wait(ctx)
-		_ = compressWrite.Close()
-		_ = pipeWrite.Close()
-	}()
-
-	size, err := util.SafeCopy(req.MetaFile, pipeRead)
-	if err != nil {
-		return nil, err
-	}
-
-	resp.MetaSize = size
 
 	// Push the rootfs tarball.
-	pipeRead, pipeWrite = io.Pipe()
-	defer logger.WarnOnError(pipeRead.Close, "Failed to close pipe reader")
-	defer logger.WarnOnError(pipeWrite.Close, "Failed to close pipe writer")
+	if req.RootfsFile != nil {
+		resp.RootfsSize, err = writeOCIImageTarball(ctx, req.RootfsFile, []string{"--format=pax", "--xattrs", "--xattrs-include=*", "--acls", "-cf", "-", "-C", filepath.Join(ociPath, "image", "rootfs"), "."}, "rootfs", req.ProgressHandler)
+		if err != nil {
+			return nil, fmt.Errorf("Failed generating rootfs tarball: %w", err)
+		}
+	}
 
-	if req.ProgressHandler != nil {
-		pipeRead = &ioprogress.ProgressReader{
-			ReadCloser: pipeRead,
+	return resp, nil
+}
+
+type ociImageTarballWriter struct {
+	io.Writer
+
+	written int64
+}
+
+func (w *ociImageTarballWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	w.written += int64(n)
+	return n, err
+}
+
+// Close leaves the caller-owned destination open.
+func (w *ociImageTarballWriter) Close() error {
+	return nil
+}
+
+func writeOCIImageTarball(ctx context.Context, target io.Writer, args []string, name string, progressHandler func(ioprogress.ProgressData)) (size int64, err error) {
+	output := &ociImageTarballWriter{Writer: target}
+	var writer io.Writer = output
+	if progressHandler != nil {
+		writer = &ioprogress.ProgressWriter{
+			WriteCloser: output,
 			Tracker: &ioprogress.ProgressTracker{
 				Handler: func(received int64, speed int64) {
-					req.ProgressHandler(ioprogress.ProgressData{Text: fmt.Sprintf("Generating rootfs tarball: %s (%s/s)", units.GetByteSizeString(received, 2), units.GetByteSizeString(speed, 2))})
+					progressHandler(ioprogress.ProgressData{Text: fmt.Sprintf("Generating %s tarball: %s (%s/s)", name, units.GetByteSizeString(received, 2), units.GetByteSizeString(speed, 2))})
 				},
 			},
 		}
 	}
 
-	compressWrite = pgzip.NewWriter(pipeWrite)
-	err = compressWrite.SetConcurrency(1<<20, archive.CompressionThreads())
-	if err != nil {
-		return nil, err
-	}
-
-	rootfsProcess := subprocess.NewProcessWithFds("tar", []string{"-cf", "-", "-C", filepath.Join(ociPath, "image", "rootfs"), "."}, nil, compressWrite, nil)
-	err = rootfsProcess.Start(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		_, _ = rootfsProcess.Wait(ctx)
-		_ = compressWrite.Close()
-		_ = pipeWrite.Close()
+	compressWrite := pgzip.NewWriter(writer)
+	defer func() {
+		err = errors.Join(err, compressWrite.Close())
+		size = output.written
 	}()
 
-	size, err = util.SafeCopy(req.RootfsFile, pipeRead)
+	err = compressWrite.SetConcurrency(1<<20, archive.CompressionThreads())
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	resp.RootfsSize = size
+	process := subprocess.NewProcessWithFds("tar", args, nil, compressWrite, os.Stderr)
+	err = process.Start(ctx)
+	if err != nil {
+		return 0, err
+	}
 
-	return resp, nil
+	// Wait for both the process and its stdout copier, including on cancellation.
+	_, err = process.Wait(context.Background())
+	return 0, err
 }
 
 // GetImageSecret isn't relevant for the simplestreams protocol.
