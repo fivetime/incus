@@ -34,6 +34,63 @@ network_ovn_wait_ping() {
     return 1
 }
 
+network_ovn_wait_ipv4() {
+    # shellcheck disable=SC2039,3043
+    local instance expected phase deadline remaining state address result
+
+    instance="${1}"
+    expected="${2}"
+    phase="${3}"
+    deadline=$(($(date +%s) + 30))
+    state=""
+    address=""
+
+    while true; do
+        remaining=$((deadline - $(date +%s)))
+        if [ "${remaining}" -le 0 ]; then
+            break
+        fi
+
+        if [ "${remaining}" -gt 5 ]; then
+            remaining=5
+        fi
+
+        if state=$(INCUS_CLI_TIMEOUT="${remaining}" incus query "/1.0/instances/${instance}/state"); then
+            :
+        else
+            result=$?
+            echo "Failed to query ${instance} ${phase} (exit ${result})" >&2
+            return "${result}"
+        fi
+
+        if address=$(printf '%s\n' "${state}" | jq -er '
+            if type != "object" or (.network | type) != "object" then
+                error("Invalid instance network state")
+            elif .network.eth0 == null then
+                ""
+            elif (.network.eth0.addresses | type) != "array" then
+                error("Invalid eth0 addresses")
+            else
+                [.network.eth0.addresses[] | select(.family == "inet" and .scope == "global") | .address] | join(",")
+            end'); then
+            :
+        else
+            echo "Invalid network state for ${instance} ${phase}: ${state}" >&2
+            return 1
+        fi
+
+        if [ "${address}" = "${expected}" ]; then
+            return 0
+        fi
+
+        sleep 1
+    done
+
+    echo "Timed out waiting for ${instance} IPv4 ${expected} ${phase}; observed '${address}'" >&2
+    printf 'Last instance state: %s\n' "${state}" >&2
+    return 1
+}
+
 network_ovn_wait_no_ping() {
     # Retry until the flows blocking the traffic have been programmed.
     for _ in 1 2 3 4 5 6; do
@@ -2128,6 +2185,9 @@ test_network_ovn_l3only() {
 }
 
 test_network_ovn_parent() {
+    # shellcheck disable=SC2039,3043
+    local instanceAddresses childInfo targetInfo childRouter targetRouter
+
     if ! network_ovn_supported; then
         return
     fi
@@ -2352,7 +2412,8 @@ test_network_ovn_parent() {
     incus config device set u1 eth0 ipv4.routes=192.0.2.123/32
     incus start u1
     sleep 5
-    U1_IPV4="$(incus list u1 -c4 --format=csv | cut -d' ' -f1)"
+    instanceAddresses=$(INCUS_CLI_TIMEOUT=5 incus list u1 -c4 --format=csv) || return "$?"
+    U1_IPV4="$(printf '%s\n' "${instanceAddresses}" | cut -d' ' -f1)"
     echo "${U1_IPV4}" | grep -F 10.10.12.
 
     # The instance reaches the uplink before the move.
@@ -2361,16 +2422,38 @@ test_network_ovn_parent() {
     # Reparenting is refused while a running instance has routes configured.
     ! incus network set ovn2 parent=ovn4 || false
 
-    # A running instance without routes doesn't block reparenting.
+    # Prepare a route-free running instance without relying on guest NIC hotplug recovery.
+    incus stop u1
     incus config device unset u1 eth0 ipv4.routes
+    incus start u1
+
+    echo "==> Check route-free instance networking before reparenting"
+    network_ovn_wait_ipv4 u1 "${U1_IPV4}" "after restarting without routes"
+    if ! INCUS_CLI_TIMEOUT=10 network_ovn_wait_ping u1 -- ping -c1 -w5 -4 10.10.10.1; then
+        echo "Instance u1 cannot reach its uplink after restarting without routes" >&2
+        return 1
+    fi
+
+    # A running instance without routes doesn't block reparenting.
+    echo "==> Check instance networking after reparenting"
     incus network set ovn2 parent=ovn4
-    sleep 2
-    [ "$(incus network info ovn2 | awk '/Logical router:/ {print $NF}')" = "$(incus network info ovn4 | awk '/Logical router:/ {print $NF}')" ]
-    [ "$(incus list u1 -c4 --format=csv | cut -d' ' -f1)" = "${U1_IPV4}" ]
+    childInfo=$(INCUS_CLI_TIMEOUT=5 incus network info ovn2) || return "$?"
+    targetInfo=$(INCUS_CLI_TIMEOUT=5 incus network info ovn4) || return "$?"
+    childRouter=$(printf '%s\n' "${childInfo}" | awk '/Logical router:/ {print $NF}')
+    targetRouter=$(printf '%s\n' "${targetInfo}" | awk '/Logical router:/ {print $NF}')
+    if [ -z "${childRouter}" ] || [ "${childRouter}" != "${targetRouter}" ]; then
+        echo "Unexpected logical router after reparenting: child='${childRouter}', target='${targetRouter}'" >&2
+        return 1
+    fi
+
+    network_ovn_wait_ipv4 u1 "${U1_IPV4}" "after reparenting"
 
     # Drop the stale ARP entry for the old gateway so the instance resolves its new one.
-    incus exec u1 -- ip neigh flush all
-    incus exec u1 -- ping -c1 -w10 -4 10.10.10.1
+    INCUS_CLI_TIMEOUT=5 incus exec u1 -- ip neigh flush all
+    if ! INCUS_CLI_TIMEOUT=10 network_ovn_wait_ping u1 -- ping -c1 -w5 -4 10.10.10.1; then
+        echo "Instance u1 cannot reach its uplink after reparenting" >&2
+        return 1
+    fi
 
     incus delete -f u1
 
