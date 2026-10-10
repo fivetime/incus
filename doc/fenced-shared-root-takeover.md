@@ -6,8 +6,9 @@ shared Ceph evacuation still required the Nova coordinator, durable Incus
 transaction and complete system acceptance described below.
 
 For current protocol contracts, see the [API extensions](api-extensions.md).
-For deployment policy and acceptance prerequisites, see the Nova driver's
-[shared Ceph root evacuation documentation](https://github.com/fivetime/nova-incus-driver/blob/master/doc/source/usage.rst#incus-managed-shared-ceph-root-evacuation). <!-- wokeignore:rule=master -->
+Deployment policy and acceptance prerequisites are maintained in the private
+`fivetime/nova-incus-driver` repository, in `doc/source/usage.rst`, under
+"Incus-managed shared Ceph root evacuation" (repository access required).
 This historical record does not authorize enabling recovery in a deployment.
 
 ## Storage ownership primitive (2026-10-03)
