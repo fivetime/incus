@@ -10,4 +10,5 @@ Packaging recommendations </packaging>
 environment
 syscall-interception
 User namespace setup <userns-idmap>
+Shared-root takeover implementation record <fenced-shared-root-takeover>
 ```
