@@ -27,8 +27,8 @@ API on a new Ceph release, run the native compatibility test against that releas
 
 Protocol references:
 
-- https://docs.ceph.com/en/latest/rados/api/librados/
-- https://github.com/ceph/ceph/blob/squid/src/cls/rbd/cls_rbd.cc
+- [librados API](https://docs.ceph.com/en/latest/rados/api/librados/)
+- [RBD metadata implementation](https://github.com/ceph/ceph/blob/squid/src/cls/rbd/cls_rbd.cc)
 
 The storage driver wrapper takes the existing background-flatten lock before the
 volume mount lock, matching identity-bound deletion. It checks the name-to-ID
@@ -79,17 +79,17 @@ The following are required before exposing or enabling shared-root evacuation:
 
 1. Persist the source manifest before failure, including configuration, ID mapping,
    immutable storage identity, source materialization marker and owner generation.
-2. Atomically bind an etcd takeover grant to one instance, source generation,
+1. Atomically bind an etcd takeover grant to one instance, source generation,
    independently verified fence retirement, original image and one target token.
    Two targets must not receive valid grants; a watcher check is auxiliary only.
-3. Persist Incus's prepare/claim/import/commit/start/completion journal before
+1. Persist Incus's prepare/claim/import/commit/start/completion journal before
    each side effect. Retrying a token must require the identical binding.
-4. Import stopped local instance and volume records using the existing original
+1. Import stopped local instance and volume records using the existing original
    storage, with deletion protection installed first. Rebuild current network and
    Cinder device configuration through Nova; do not import stale attachments.
-5. Commit durable target ownership before mounting or starting. Returned sources
+1. Commit durable target ownership before mounting or starting. Returned sources
    must discard only stale local records, mounts and networking, retaining the RBD.
-6. Validate poweroff evacuation, cross-node target competition, SIGKILL and lost
+1. Validate poweroff evacuation, cross-node target competition, SIGKILL and lost
    responses at every phase, source return, concurrent flatten, Cinder data volumes
    and final deletion on all three testbeds. Assert unchanged image ID, preserved
    data and exactly one running instance/writer. Failed target replacement remains
