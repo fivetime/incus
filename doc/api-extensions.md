@@ -4012,6 +4012,12 @@ on-disk isolated ID map are supported. No privileged mode is introduced.
 The volatile keys `volatile.rescue.token`, `volatile.rescue.image` and
 `volatile.rescue.phase` record the current generation. A completed unrescue
 retains `volatile.rescue.completed` for idempotent response-loss recovery.
+The temporary root receives its image's `create` templates at first start,
+using `volatile.rescue.apply_template` independently of the original root's
+pending template trigger. Failed rendering or trigger persistence leaves the
+rescue trigger pending for retry; a repeated active rescue request does not
+apply initialization again. Unrescue clears only the rescue trigger after
+restoring the original root.
 Interrupted preparation blocks ordinary start until the exact generation is
 restored or completed. Snapshot, copy, migration, backup and rename require
 unrescue first. Deletion cleans up rescue before releasing the root volume.
