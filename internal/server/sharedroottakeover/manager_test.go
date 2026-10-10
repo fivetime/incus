@@ -122,6 +122,7 @@ func TestReplayCannotReplaceDiskTargetOrConfiguration(t *testing.T) {
 		func(b *Binding) { b.SourceGeneration++ },
 		func(b *Binding) { b.SourceOwnership = b.FenceDigest },
 	}
+
 	for _, change := range changes {
 		other := binding
 		change(&other)

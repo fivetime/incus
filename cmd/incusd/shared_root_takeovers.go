@@ -58,6 +58,7 @@ func sharedRootTakeoverGet(d *Daemon, r *http.Request) response.Response {
 	if errors.Is(err, sharedroottakeover.ErrNotFound) {
 		return response.NotFound(err)
 	}
+
 	if err != nil {
 		return response.SmartError(err)
 	}
