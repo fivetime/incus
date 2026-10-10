@@ -62,8 +62,8 @@ RUN cc -O2 -Wall -Wextra -Werror deploy/image/daemon-parent.c -o /out/daemon-par
 
 FROM ${ALPINE_IMAGE} AS criu-build
 
-# Includes shared-root restoration and early cgroup notification file access.
-ARG CRIU_COMMIT=df1e64a6bb13bd72a7559135988e1ff9a5d16b08
+# Includes cgroup/FD restore fixes and rejects unrecoverable writable PSI FDs.
+ARG CRIU_COMMIT=cb7c12429152e29caf3d17db70eb43ce5057117e
 
 RUN apk add --no-cache \
       bash \
