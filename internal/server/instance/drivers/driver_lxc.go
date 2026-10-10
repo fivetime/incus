@@ -3472,27 +3472,7 @@ func (d *lxc) onStart(_ map[string]string) error {
 		return err
 	}
 
-	// Template anything that needs templating
-	key := "volatile.apply_template"
-	if d.localConfig[key] != "" {
-		// Run any template that needs running
-		err = d.templateApplyNow(instance.TemplateTrigger(d.localConfig[key]))
-		if err != nil {
-			_ = apparmor.InstanceUnload(d.state.OS, d)
-			return err
-		}
-
-		err := d.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-			// Remove the volatile key from the DB
-			return tx.DeleteInstanceConfigKey(ctx, int64(d.id), key)
-		})
-		if err != nil {
-			_ = apparmor.InstanceUnload(d.state.OS, d)
-			return err
-		}
-	}
-
-	err = d.templateApplyNow("start")
+	err = d.applyStartTemplates()
 	if err != nil {
 		_ = apparmor.InstanceUnload(d.state.OS, d)
 		return err
@@ -6684,6 +6664,9 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 	g, ctx := errgroup.WithContext(context.Background())
 	var targetSharedStorageReleased atomic.Bool
 	var liveSharedHandoverStarted atomic.Bool
+	targetControlDone := make(chan struct{})
+	var targetControlErr error
+	var localTransferErr error
 
 	// Start control connection monitor.
 	g.Go(func() error {
@@ -6703,6 +6686,8 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 				err = fmt.Errorf("Error from migration control target: %s", resp.GetMessage())
 			}
 
+			targetControlErr = err
+			close(targetControlDone)
 			controlResult <- err
 		}()
 
@@ -6731,9 +6716,24 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 	dumpSuccess := make(chan error, 1)
 	liveSharedCheckpointDir := ""
 
-	g.Go(func() error {
+	g.Go(func() (retErr error) {
 		d.logger.Debug("Migrate send transfer started")
 		defer d.logger.Debug("Migrate send transfer finished")
+		defer func() {
+			if retErr == nil || ctx.Err() != nil {
+				return
+			}
+
+			// Let the peer record the source failure before cancellation closes its data readers.
+			notifyCtx, cancel := context.WithTimeout(ctx, localMigration.ControlMessageTimeout)
+			defer cancel()
+
+			retErr = notifyMigrationFailure(notifyCtx, retErr, func(err error) error {
+				msg := migration.MigrationControl{Success: new(false), Message: new(err.Error())}
+				return args.ControlSend(&msg)
+			}, targetControlDone)
+			localTransferErr = retErr
+		}()
 
 		var err error
 
@@ -7079,6 +7079,14 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 	{
 		// Wait for routines to finish and collect first error.
 		err := g.Wait()
+		if localTransferErr != nil {
+			select {
+			case <-targetControlDone:
+				err = migrationFailureResult(localTransferErr, targetControlErr)
+			default:
+				err = migrationFailureResult(localTransferErr, err)
+			}
+		}
 
 		if args.Live && !liveSharedStorage {
 			restoreSuccess <- err == nil
@@ -8288,6 +8296,27 @@ func (d *lxc) migrate(args *instance.CriuMigrationArgs) error {
 	d.logger.Info("Migrated container", ctxMap)
 
 	return nil
+}
+
+func (d *lxc) applyStartTemplates() error {
+	key := "volatile.apply_template"
+	if d.localConfig[rescueTokenKey] != "" {
+		key = rescueTemplateKey
+	}
+
+	if d.localConfig[key] != "" {
+		err := d.templateApplyNow(instance.TemplateTrigger(d.localConfig[key]))
+		if err != nil {
+			return err
+		}
+
+		err = d.VolatileSet(map[string]string{key: ""})
+		if err != nil {
+			return err
+		}
+	}
+
+	return d.templateApplyNow("start")
 }
 
 func (d *lxc) templateApplyNow(trigger instance.TemplateTrigger) error {

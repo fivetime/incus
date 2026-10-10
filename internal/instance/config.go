@@ -576,6 +576,12 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	//  shortdesc: Durable container rescue phase
 	"volatile.rescue.phase": validate.Optional(validate.IsOneOf("preparing", "active", "restoring", "restoring-prepare")),
 
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.rescue.apply_template)
+	// ---
+	//  type: string
+	//  shortdesc: Template trigger pending on the temporary rescue root
+	"volatile.rescue.apply_template": validate.Optional(validate.IsOneOf("create")),
+
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.rescue.completed)
 	// ---
 	//  type: string
