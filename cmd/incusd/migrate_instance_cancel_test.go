@@ -138,6 +138,7 @@ func TestInstanceMigrationCancelWaitsForRollback(t *testing.T) {
 			<-restore
 			return errors.New("Destination restore failed after source checkpoint")
 		}
+
 		op := cancelMigrationOperation(t, source, source.do)
 		<-started
 		cancelled, err := op.Cancel()
@@ -189,6 +190,7 @@ func TestInstanceMigrationCancelPendingConnection(t *testing.T) {
 
 					return err
 				}
+
 				op := cancelMigrationOperation(t, source, source.do)
 				synctest.Wait()
 				cancelled, err := op.Cancel()

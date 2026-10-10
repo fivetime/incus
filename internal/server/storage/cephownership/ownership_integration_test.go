@@ -35,10 +35,12 @@ func TestNativeOwnershipCAS(t *testing.T) {
 
 		return strings.TrimSpace(string(out))
 	}
+
 	rbd := func(args ...string) string {
 		t.Helper()
 		return command("rbd", append([]string{"--cluster", cluster, "--id", user, "--pool", pool}, args...)...)
 	}
+
 	idBytes := make([]byte, 12)
 	_, err := rand.Read(idBytes)
 	if err != nil {
@@ -102,6 +104,7 @@ func TestNativeOwnershipCAS(t *testing.T) {
 			if winner >= 0 {
 				t.Fatal("Two ownership transfers succeeded")
 			}
+
 			winner = i
 		}
 	}
@@ -109,11 +112,15 @@ func TestNativeOwnershipCAS(t *testing.T) {
 	if winner < 0 {
 		t.Fatalf("No ownership transfer succeeded: %v", results)
 	}
-	if err := Transfer(binding, old, next[winner]); err != nil {
-		t.Fatalf("Lost-response replay failed: %v", err)
+
+	replayErr := Transfer(binding, old, next[winner])
+	if replayErr != nil {
+		t.Fatalf("Lost-response replay failed: %v", replayErr)
 	}
-	if got := rbd("image-meta", "get", name, "incus.openstack.materialization_ownership"); got != next[winner] {
-		t.Fatalf("Unexpected owner %q", got)
+
+	currentOwner := rbd("image-meta", "get", name, "incus.openstack.materialization_ownership")
+	if currentOwner != next[winner] {
+		t.Fatalf("Unexpected owner %q", currentOwner)
 	}
 
 	wrongCluster := binding
@@ -121,6 +128,7 @@ func TestNativeOwnershipCAS(t *testing.T) {
 	if Transfer(wrongCluster, next[winner], old) == nil {
 		t.Fatal("Wrong cluster accepted")
 	}
+
 	missingImage := binding
 	missingImage.ImageID = "ffffffffffffffffffffffff"
 	if Transfer(missingImage, old, next[winner]) == nil {
@@ -139,11 +147,14 @@ func TestNativeOwnershipCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := rbd("image-meta", "get", name, "incus.openstack.materialization_ownership"); got != replacementMarker {
-		t.Fatalf("Replacement marker changed: %q", got)
+
+	replacementOwner := rbd("image-meta", "get", name, "incus.openstack.materialization_ownership")
+	if replacementOwner != replacementMarker {
+		t.Fatalf("Replacement marker changed: %q", replacementOwner)
 	}
 
-	if got := rbd("image-meta", "get", retained, "incus.openstack.materialization_ownership"); got != old {
+	retainedOwner := rbd("image-meta", "get", retained, "incus.openstack.materialization_ownership")
+	if retainedOwner != old {
 		t.Fatal("Original image was not transferred")
 	}
 
@@ -180,6 +191,7 @@ func TestNativeOwnershipCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	flatBinding := binding
 	flatBinding.ImageID = flatInfo.ID
 	flatOld := "sha256:" + strings.Repeat("e", 64)
@@ -205,9 +217,12 @@ func TestNativeOwnershipCAS(t *testing.T) {
 	if flattenResults[0] != nil || flattenResults[1] != nil {
 		t.Fatalf("Concurrent flatten/transfer failed: %v", flattenResults)
 	}
-	if got := rbd("image-meta", "get", flatChild, "incus.openstack.materialization_ownership"); got != flatNext {
-		t.Fatalf("Flatten race changed owner: %q", got)
+
+	flattenedOwner := rbd("image-meta", "get", flatChild, "incus.openstack.materialization_ownership")
+	if flattenedOwner != flatNext {
+		t.Fatalf("Flatten race changed owner: %q", flattenedOwner)
 	}
+
 	flatAfter := struct {
 		ID string `json:"id"`
 	}{}

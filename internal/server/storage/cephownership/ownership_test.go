@@ -8,7 +8,8 @@ import (
 func TestBindingValidation(t *testing.T) {
 	base := Binding{Cluster: "ceph", User: "nova", FSID: "12345678-1234-1234-1234-123456789abc", PoolID: 1, ImageID: "a123b"}
 	marker := "sha256:" + strings.Repeat("a", 64)
-	if err := base.validate(marker, marker); err != nil {
+	err := base.validate(marker, marker)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -25,6 +26,7 @@ func TestBindingValidation(t *testing.T) {
 		{"image name", func(b *Binding) { b.ImageID = "container_test" }},
 		{"NUL config", func(b *Binding) { b.ConfigFile = "config\x00other" }},
 	}
+
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
 			binding := base
