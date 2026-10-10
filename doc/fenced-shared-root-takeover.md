@@ -7,7 +7,7 @@ transaction and complete system acceptance described below.
 
 For current protocol contracts, see the [API extensions](api-extensions.md).
 For deployment policy and acceptance prerequisites, see the Nova driver's
-[shared Ceph root evacuation documentation](https://github.com/fivetime/nova-incus-driver/blob/master/doc/source/usage.rst#incus-managed-shared-ceph-root-evacuation).
+[shared Ceph root evacuation documentation](https://github.com/fivetime/nova-incus-driver/blob/master/doc/source/usage.rst#incus-managed-shared-ceph-root-evacuation). <!-- wokeignore:rule=master -->
 This historical record does not authorize enabling recovery in a deployment.
 
 ## Storage ownership primitive (2026-10-03)
