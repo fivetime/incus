@@ -198,6 +198,7 @@ func (m *Manager) Register(ctx context.Context, binding Binding) (*db.SharedRoot
 			InstanceName: binding.InstanceName, ClusterFSID: binding.ClusterFSID,
 			StorageIdentity: binding.StorageIdentity, Binding: encoded, Phase: Prepared,
 		}
+
 		return tx.CreateSharedRootTakeover(ctx, *record)
 	})
 	return record, err
@@ -308,6 +309,7 @@ func (m *Manager) Commit(ctx context.Context, binding Binding) (*db.SharedRootTa
 			State:        storagematerializationattempt.StateCommitted,
 			StoragePhase: storagematerializationattempt.PhaseMaterialized, Started: true, Finished: true,
 		}
+
 		err = tx.CreateStorageMaterializationAttempt(ctx, attempt)
 		if err != nil {
 			return err

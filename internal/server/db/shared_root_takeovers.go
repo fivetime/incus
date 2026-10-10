@@ -2,7 +2,9 @@
 
 package db
 
-import "context"
+import (
+	"context"
+)
 
 // SharedRootTakeover is a local journal; the external coordinator grants cross-host authority.
 type SharedRootTakeover struct {

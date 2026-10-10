@@ -114,6 +114,9 @@ registration accounts for existing fixed-base containers as well as automaticall
 isolated containers. Callers using the old combination must update their requests
 before deploying this version; the database patch does not rewrite API clients.
 
-The current Nova integration in `openstack-incus` still emits the old combination
-from `nova/virt/incus/flavor.py`. Do not roll out this Incus version until the
-Nova fixed-base request path is updated and the testbed migration checks pass.
+The Nova integration in `openstack-incus` sends a registered fixed base and size
+with `security.idmap.isolated=false`; its registry owns allocation exclusivity.
+Requests without a registered fixed base retain automatic isolated allocation.
+Migration targets must still satisfy the reservation and attempt-token contract
+above. Deploy matching Incus and Nova versions and pass the migration checks
+for the target environment before enabling migration.

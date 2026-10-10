@@ -2,12 +2,16 @@ package migration
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/lxc/incus/v7/internal/migration"
 )
 
 // IndexHeaderVersion version of the index header to be sent/recv.
 const IndexHeaderVersion uint32 = 1
+
+// ControlMessageTimeout bounds migration control messages and failure acknowledgements.
+const ControlMessageTimeout = 2 * time.Minute
 
 // ControlResponse encapsulates MigrationControl with a receive error.
 type ControlResponse struct {

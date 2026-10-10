@@ -7,6 +7,7 @@ permissions:
 
 jobs:
   dco-check:
+    if: github.repository == 'lxc/incus'
     permissions:
       pull-requests: read  # for tim-actions/get-pr-commits to get list of commits from the PR
     name: Signed-off-by (DCO)

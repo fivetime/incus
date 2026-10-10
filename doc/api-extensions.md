@@ -4005,13 +4005,19 @@ The original root remains at its canonical path in the same owned storage
 volume. Incus stages a temporary root outside it and selects that root only
 while the rescue generation is committed. The original is available at
 `/mnt/root` inside the rescue container. The temporary image uses space from
-the existing root volume and cannot repair a backing filesystem that cannot
+the existing root volume and cannot repair a backing file system that cannot
 be mounted. Ceph, externally owned Ceph and directory pools with a fixed
 on-disk isolated ID map are supported. No privileged mode is introduced.
 
 The volatile keys `volatile.rescue.token`, `volatile.rescue.image` and
-`volatile.rescue.phase` record the current generation. A completed unrescue
+`volatile.rescue.phase` record the current generation. A completed `unrescue`
 retains `volatile.rescue.completed` for idempotent response-loss recovery.
+The temporary root receives its image's `create` templates at first start,
+using `volatile.rescue.apply_template` independently of the original root's
+pending template trigger. Failed rendering or trigger persistence leaves the
+rescue trigger pending for retry; a repeated active rescue request does not
+apply initialization again. The `unrescue` action clears only the rescue trigger after
+restoring the original root.
 Interrupted preparation blocks ordinary start until the exact generation is
 restored or completed. Snapshot, copy, migration, backup and rename require
-unrescue first. Deletion cleans up rescue before releasing the root volume.
+`unrescue` first. Deletion cleans up rescue before releasing the root volume.

@@ -35,9 +35,9 @@ incus_remote() {
         cmd="${cmd} ${DEBUG-}"
     fi
     if [ -n "${DEBUG:-}" ]; then
-        eval "set -x;timeout --foreground ${INCUS_CLI_TIMEOUT:-120} ${cmd}"
+        eval "set -x;timeout --foreground --kill-after=5s ${INCUS_CLI_TIMEOUT:-120} ${cmd}"
     else
-        eval "timeout --foreground ${INCUS_CLI_TIMEOUT:-120} ${cmd}"
+        eval "timeout --foreground --kill-after=5s ${INCUS_CLI_TIMEOUT:-120} ${cmd}"
     fi
 }
 

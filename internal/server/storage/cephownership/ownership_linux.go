@@ -53,6 +53,7 @@ static int ownership_cas_impl(const char *cluster_name, const char *user, const 
         result = -EXDEV;
         goto done;
     }
+
     result = create_io(cluster, pool_id, &io);
     if (result < 0) goto done;
 
@@ -65,6 +66,7 @@ static int ownership_cas_impl(const char *cluster_name, const char *user, const 
             result = -ENOMEM;
             break;
         }
+
         int compare_result = 0;
         assert_exists(op);
         compare(op, key, 1, expected, strlen(expected), &compare_result);
@@ -133,12 +135,14 @@ static int ownership_cas(const char *cluster_name, const char *user, const char 
         ownership_work_free(work);
         return -error;
     }
+
     error = pthread_join(thread, NULL);
     if (error) {
         // Keep private worker memory alive if its completion cannot be proved.
         pthread_detach(thread);
         return -error;
     }
+
     int result = work->result;
     ownership_work_free(work);
     return result;

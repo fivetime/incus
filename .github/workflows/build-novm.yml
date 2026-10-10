@@ -151,15 +151,17 @@ jobs:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         run: |
           short_sha="${GITHUB_SHA::7}"
-          tags=(
-            --tag "${IMAGE}:novm"
-            --tag "${IMAGE}:novm-${short_sha}"
-          )
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            tags+=(--tag "${IMAGE}:novm-${GITHUB_REF_NAME}")
-          fi
+          tags=(--tag "${IMAGE}:novm-${GITHUB_SHA}")
+          case "${GITHUB_REF}" in
+            refs/heads/main|refs/tags/incus-v*)
+              tags+=(--tag "${IMAGE}:novm" --tag "${IMAGE}:novm-${short_sha}")
+              if [ "${GITHUB_REF_TYPE}" = tag ]; then
+                tags+=(--tag "${IMAGE}:novm-${GITHUB_REF_NAME}")
+              fi
+              ;;
+          esac
           docker buildx imagetools create \
             "${tags[@]}" \
             "${IMAGE}:novm-${GITHUB_SHA}-amd64" \
             "${IMAGE}:novm-${GITHUB_SHA}-arm64"
-          docker buildx imagetools inspect "${IMAGE}:novm"
+          docker buildx imagetools inspect "${IMAGE}:novm-${GITHUB_SHA}"

@@ -83,7 +83,7 @@ nearlive_mixed_storage() {
 
 test_clustering_move() {
     # shellcheck disable=2039,3043,SC2034
-    local INCUS_DIR
+    local INCUS_DIR sourceInstances targetInstance
 
     setup_clustering_bridge
     prefix="inc$$"
@@ -284,6 +284,10 @@ EOF
     INCUS_DIR="${INCUS_ONE_DIR}" incus config device add c7 dsk disk pool=data source=depvol path=/mnt dependent=true
     INCUS_DIR="${INCUS_ONE_DIR}" incus move c7 --target node2 --target-project depproject
     INCUS_DIR="${INCUS_ONE_DIR}" incus info c7 --project depproject | grep -q "Location: node2"
+    sourceInstances=$(INCUS_DIR="${INCUS_ONE_DIR}" incus list --project default --format json)
+    printf '%s\n' "${sourceInstances}" | jq -e 'type == "array" and all(.[]; .name != "c7")'
+    targetInstance=$(INCUS_DIR="${INCUS_ONE_DIR}" incus query '/1.0/instances/c7?project=depproject')
+    printf '%s\n' "${targetInstance}" | jq -e 'type == "object" and .name == "c7" and (.config | type == "object") and .config["volatile.migration.storage_handover"] == null and .config["volatile.migration.storage_handover_role"] == null'
     INCUS_DIR="${INCUS_ONE_DIR}" incus storage volume show data depvol --project depproject > /dev/null # Verify the volume moved.
     ! INCUS_DIR="${INCUS_ONE_DIR}" incus storage volume show data depvol > /dev/null 2>&1 || false      # Verify it left the source project.
     INCUS_DIR="${INCUS_ONE_DIR}" incus delete -f c7 --project depproject

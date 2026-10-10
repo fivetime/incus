@@ -29,6 +29,7 @@ const (
 	rescueImageKey     = "volatile.rescue.image"
 	rescuePhaseKey     = "volatile.rescue.phase"
 	rescueCompletedKey = "volatile.rescue.completed"
+	rescueTemplateKey  = "volatile.rescue.apply_template"
 )
 
 // Rescue prepares a temporary root within the already owned root volume.
@@ -125,7 +126,7 @@ func (d *lxc) Rescue(token string, fingerprint string) error {
 
 		err = d.VolatileSet(map[string]string{
 			rescueTokenKey: token, rescueImageKey: fingerprint,
-			rescuePhaseKey: "preparing", rescueCompletedKey: "",
+			rescuePhaseKey: "preparing", rescueCompletedKey: "", rescueTemplateKey: "",
 		})
 		if err != nil {
 			return err
@@ -156,7 +157,21 @@ func (d *lxc) Rescue(token string, fingerprint string) error {
 		return fmt.Errorf("Prepare rescue root: %w", err)
 	}
 
-	return d.VolatileSet(map[string]string{rescuePhaseKey: "active"})
+	return d.activateRescue()
+}
+
+func (d *lxc) activateRescue() error {
+	if d.localConfig[rescuePhaseKey] == "active" {
+		return nil
+	}
+
+	if d.localConfig[rescuePhaseKey] != "preparing" {
+		return errors.New("Rescue root is not prepared for activation")
+	}
+
+	return d.VolatileSet(map[string]string{
+		rescuePhaseKey: "active", rescueTemplateKey: "create",
+	})
 }
 
 // Unrescue restores the original root without changing storage attachment ownership.
@@ -210,7 +225,7 @@ func (d *lxc) restoreRescue(token string) error {
 
 	return d.VolatileSet(map[string]string{
 		rescueTokenKey: "", rescueImageKey: "", rescuePhaseKey: "",
-		rescueCompletedKey: token,
+		rescueCompletedKey: token, rescueTemplateKey: "",
 	})
 }
 

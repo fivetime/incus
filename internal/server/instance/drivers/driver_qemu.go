@@ -8718,7 +8718,8 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	// mixed up: "ceph" volumes are owned by Incus while "cephext" volumes are
 	// owned by an external system, so a handover is only valid between pools
 	// using the same driver.
-	if !clusterMove && !storageMove && !args.Live && !d.IsRunning() {
+	// Cluster migration copies use the upstream transfer path, not standalone daemon handover.
+	if !d.state.ServerClustered && !clusterMove && !storageMove && !args.Live && !d.IsRunning() {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid != "" {
 			offerHeader.CephFsid = new(fsid)
@@ -9913,7 +9914,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	// ("ceph") and externally-owned ("cephext") volumes from ever getting handed
 	// over across ownership semantics.
 	sharedStorage := false
-	if offerHeader.GetCephFsid() != "" && offerHeader.Criu == nil && !clusterMove && !args.Refresh && !args.Live {
+	if !d.state.ServerClustered && offerHeader.GetCephFsid() != "" && offerHeader.Criu == nil && !clusterMove && !args.Refresh && !args.Live {
 		fsid, osdPool := storagePools.PoolSharedIdentity(pool)
 		if fsid == offerHeader.GetCephFsid() &&
 			osdPool == offerHeader.GetCephPool() &&

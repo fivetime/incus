@@ -2,7 +2,9 @@
 
 package cephownership
 
-import "errors"
+import (
+	"errors"
+)
 
 // Transfer fails closed when the native librados adapter is unavailable.
 func Transfer(binding Binding, previous string, next string) error {

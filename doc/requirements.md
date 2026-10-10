@@ -17,7 +17,7 @@ Incus requires a kernel with support for:
 * Namespaces (`cgroup`, `ipc`, `pid`, `mount`, `net`, `user` and `uts`)
 * Seccomp
 * Native Linux AIO
-  ([`io_setup(2)`](https://man7.org/linux/man-pages/man2/io_setup.2.html), etc.)
+  ([`io_setup(2)`](https://manpages.debian.org/trixie/manpages-dev/io_setup.2.en.html), etc.)
 
 The following optional features also require extra kernel options:
 

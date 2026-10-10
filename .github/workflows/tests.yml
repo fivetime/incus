@@ -5,6 +5,7 @@ on:
       - main
       - stable-*
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -808,6 +809,8 @@ jobs:
 
   vm-tests:
     name: VM
+    # The novm fork has no access to the upstream VM runners.
+    if: github.repository == 'lxc/incus'
     strategy:
       fail-fast: false
       matrix:

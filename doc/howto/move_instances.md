@@ -61,10 +61,20 @@ marked `dependent`, which move with it.
 ### Live migration for containers
 
 For containers, there is limited support for live migration using [{abbr}`CRIU (Checkpoint/Restore in Userspace)`](https://criu.org/).
-However, because of extensive kernel dependencies, only very basic containers (non-`systemd` containers without a network device) can be migrated reliably.
+Checkpoint compatibility depends on the kernel, CRIU version and the container's running workload.
+Qualify that combination, including its networking and service protections, before relying on live migration.
 In most real-world scenarios, you should stop the container, move it over and then start it again.
 
 If you want to use live migration for containers, you must first make sure that CRIU is installed on both systems.
+
+The runtime image built by this fork rejects writable PSI pressure descriptors during the final dump because their per-open trigger state cannot currently be restored.
+This check applies to the running workload in both native and OCI-derived system containers, including descriptors held by systemd or tenant applications.
+Read-only pressure statistics and `O_PATH` handles do not trigger this refusal.
+Do not disable PSI monitoring or systemd service protections to make migration pass.
+Qualify source process continuity and destination cleanup after refusal separately from successful migration.
+
+Nova-managed containers must keep `migration.incremental.memory=false` and follow the Nova driver's full-checkpoint admission policy.
+The pre-copy configuration below applies to standalone Incus.
 
 To optimize the memory transfer for a container, set the {config:option}`instance-migration:migration.incremental.memory` property to `true` to make use of the pre-copy features in CRIU.
 With this configuration, Incus instructs CRIU to perform a series of memory dumps for the container.
