@@ -28,6 +28,15 @@ LXCFS and pylxd were current against their upstream branches at the audit.
 The Incus OVN interconnect fix and CRIU development backlog were left for
 separate review in that LXC runtime release.
 
+The 2026-10-15 LXC update moves to upstream `61d8ba0a9`, which adds three
+fixes on top of `35c69e4d`: `exec_criu` initializes its `controllers` pointer
+before the scope-exit free (`5707d8dd6`), fstab and mount entries share one
+idmapped mount sequence counter (`ddb556c3a`), and a macro spelling fix. Patch
+`8eed33fe` still applies unchanged and is retained; upstream review is
+lxc/lxc#4734. The pinned LXC already provides `environment_runtime_hooks`, so
+the Incus upstream merge of the same date activates split runtime and hook
+environments; validate both together.
+
 The subsequent CRIU release on 2026-10-01 integrates official `criu-dev`
 `4485a86da` and retains the three container restoration fixes plus a buffer-size
 argument adaptation at `df1e64a6b`. Incus image revision `3a2c173e99` also includes
