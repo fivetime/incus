@@ -130,6 +130,16 @@ func Qcow2Rebase(path string, backingPath string) error {
 	return nil
 }
 
+// Qcow2Flatten merges the backing chain into a qcow2 image and drops the backing file reference.
+func Qcow2Flatten(path string) error {
+	_, err := subprocess.RunCommand("qemu-img", "rebase", "-U", "-f", "qcow2", "-b", "", path)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Qcow2Commit commits changes from a qcow2 image to its immediate backing file.
 func Qcow2Commit(path string) error {
 	_, err := subprocess.RunCommand("qemu-img", "commit", "-f", "qcow2", path)
@@ -393,6 +403,20 @@ func syncBtrfs(mountPath string) error {
 // IsQcow2Block checks whether a volume is a QCOW2 block device.
 func IsQcow2Block(vol Volume) bool {
 	return vol.Config()["block.type"] == BlockVolumeTypeQcow2 && vol.ContentType() == ContentTypeBlock
+}
+
+// VolumeBlockSizeBytes returns the size of a block volume, using the virtual size for QCOW2 volumes.
+func VolumeBlockSizeBytes(vol Volume, diskPath string) (int64, error) {
+	if IsQcow2Block(vol) {
+		imgInfo, err := Qcow2Info(diskPath)
+		if err != nil {
+			return -1, err
+		}
+
+		return int64(imgInfo.VirtualSize), nil
+	}
+
+	return BlockDiskSizeBytes(diskPath)
 }
 
 // getFreeNbd returns the first free NBD device.

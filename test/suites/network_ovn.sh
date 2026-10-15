@@ -297,11 +297,18 @@ test_network_ovn_basic() {
     incus network delete ovn-virtual-network --project testovn
 
     # Test we have to specify uplink network if multiple are allowed.
-    incus network create incusbr1 --project default
+    incus network create incusbr1 --project default ipv4.address=10.10.11.1/24 ipv4.dhcp.ranges=10.10.11.2-10.10.11.199 ipv4.ovn.ranges=10.10.11.200-10.10.11.254 ipv6.address=none
     incus project set testovn restricted.networks.uplinks=incusbr0,incusbr1
     ! incus network create ovn-virtual-network --project testovn || false
     incus network create ovn-virtual-network network=incusbr0 --project testovn
     incus network delete ovn-virtual-network --project testovn
+
+    # Test the uplink's OVN bridge mapping is removed on deletion while other mappings remain.
+    incus network create ovn-virtual-network network=incusbr1 --project testovn
+    ovs-vsctl get open_vswitch . external_ids:ovn-bridge-mappings | grep -q "incusbr1:"
+    incus network delete ovn-virtual-network --project testovn
+    ! ovs-vsctl get open_vswitch . external_ids:ovn-bridge-mappings | grep -q "incusbr1:" || false
+    ovs-vsctl get open_vswitch . external_ids:ovn-bridge-mappings | grep -q "incusbr0:"
     incus network delete incusbr1 --project default
 
     # Test networks shared from the default project through restricted.networks.access.
@@ -337,8 +344,14 @@ test_network_ovn_basic() {
     incus project unset testovn restricted.networks.access
     incus network delete incusbr-shared --project default
 
-    # Test physical uplink with external IPs.
+    # Deleting a network removes the VLAN interface created from the extended external interface syntax.
     ip link add dummy0 type dummy
+    incus network create ovn-ext --type=ovn network=none bridge.external_interfaces=ovnvlan222/dummy0/222 ipv4.address=10.222.222.1/24 ipv4.nat=false ipv6.address=none
+    ip link show ovnvlan222
+    incus network delete ovn-ext
+    ! ip link show ovnvlan222 || false
+
+    # Test physical uplink with external IPs.
     incus network create dummy --type=physical --project default \
         parent=dummy0 \
         ipv4.gateway=192.0.2.1/24 \
@@ -686,14 +699,51 @@ test_network_ovn_basic() {
     incus exec u1 -- ping -c1 -w5 192.0.2.1
     incus exec u1 -- ping -c1 -w5 2001:db8:1:1::1
 
-    # Set external SNAT address on OVN network (and check it only is allowed with uplink routed ingress mode).
-    ! incus network set ovn-virtual-network ipv4.nat.address=198.51.100.1 || false
-    ! incus network set ovn-virtual-network ipv6.nat.address=2001:db8:1:2::1 || false
+    # Set external SNAT address on OVN network under (default) l2proxy uplink ingress mode.
+    incus network set ovn-virtual-network ipv4.nat.address=198.51.100.1
+    incus network set ovn-virtual-network ipv6.nat.address=2001:db8:1:2::1
+    ovn-nbctl list nat | grep -F 198.51.100.1
+    ovn-nbctl list nat | grep -F 2001:db8:1:2::1
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -F "arp_proxy=198.51.100.1/32 2001:db8:1:2::1/128"
+
+    # Check connectivity back to uplink bridge using the SNAT address, which the host only reaches by resolving it through the proxy.
+    ip route add 198.51.100.1/32 dev dummybr0
+    ip -6 route add 2001:db8:1:2::1/128 dev dummybr0
+    incus exec u1 -- ping -c1 -w5 192.0.2.1
+    incus exec u1 -- ping -c1 -w5 2001:db8:1:1::1
+    ip route del 198.51.100.1/32 dev dummybr0
+    ip -6 route del 2001:db8:1:2::1/128 dev dummybr0
+
+    # Remove the SNAT address and check the ARP/NDP proxy entries are cleaned up.
+    incus network unset ovn-virtual-network ipv4.nat.address
+    incus network unset ovn-virtual-network ipv6.nat.address
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -cF arp_proxy | grep -xF 0
+
+    # Check a child networks own NAT address proxy entry migrates off the parents router.
+    incus network create ovn-virtual-child --type=ovn parent=ovn-virtual-network ipv4.address=10.10.200.1/24 ipv4.nat=true ipv6.address=none
+    incus network set ovn-virtual-child ipv4.nat.address=198.51.100.4
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -F "arp_proxy=198.51.100.4/32"
+    incus network set ovn-virtual-child parent= network=dummy
+    sleep 2
+    [ "$(ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -cF "arp_proxy=198.51.100.4/32")" = "1" ]
+    incus network delete ovn-virtual-child
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -cF arp_proxy | grep -xF 0
+
+    # Removing parent and NAT address at the same time must not error.
+    incus network create ovn-virtual-child --type=ovn parent=ovn-virtual-network ipv4.address=10.10.201.1/24 ipv4.nat=true ipv6.address=none
+    incus network set ovn-virtual-child ipv4.nat.address=198.51.100.5
+    incus network set ovn-virtual-child parent= network=dummy ipv4.nat.address=
+    sleep 2
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -cF arp_proxy | grep -xF 0
+    incus network delete ovn-virtual-child
+
+    # Switch uplink to routed ingress mode, which requires a real route instead of ARP/NDP proxy.
     incus network set dummy ovn.ingress_mode=routed
     incus network set ovn-virtual-network ipv4.nat.address=198.51.100.1
     incus network set ovn-virtual-network ipv6.nat.address=2001:db8:1:2::1
     ovn-nbctl list nat | grep -F 198.51.100.1
     ovn-nbctl list nat | grep -F 2001:db8:1:2::1
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -cF arp_proxy | grep -xF 0
 
     # A child network can NAT to an address of its own on the shared router.
     incus network create ovn-virtual-child --type=ovn parent=ovn-virtual-network ipv4.address=10.10.200.1/24 ipv4.nat=true ipv6.address=none
@@ -701,6 +751,9 @@ test_network_ovn_basic() {
     incus network set ovn-virtual-child ipv4.nat.address=198.51.100.2
     ovn-nbctl --bare --format=csv --columns=logical_ip,external_ip,type find nat | grep -xF "10.10.200.0/24,198.51.100.2,snat"
     ! incus network set ovn-virtual-network ipv4.nat.address=198.51.100.2 || false # Used by the child.
+
+    # The child's NAT address isn't proxied either under routed ingress mode.
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -cF arp_proxy | grep -xF 0
 
     # Add a static route to SNAT address on uplink to OVN network's router (simulating BGP route advert to uplink).
     ovnIPv4="$(incus network get ovn-virtual-network volatile.network.ipv4.address)"
@@ -735,6 +788,15 @@ test_network_ovn_basic() {
     ! incus network set ovn-virtual-network2 ipv6.nat.address=2001:db8:1:2::1 || false
     ! incus network set ovn-virtual-network2 ipv4.nat.address=198.51.100.2 || false
     incus network delete ovn-virtual-network2
+
+    # Switching the uplink back to l2proxy advertises the NAT addresses of both the parent and the child.
+    incus network unset dummy ovn.ingress_mode
+    sleep 2
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -F "arp_proxy=198.51.100.1/32 198.51.100.2/32 2001:db8:1:2::1/128"
+    incus network set dummy ovn.ingress_mode=routed
+    sleep 2
+    ovn-nbctl --bare --format=csv --column=options find logical_switch_port | grep -cF arp_proxy | grep -xF 0
+
     incus network delete ovn-virtual-child
 
     # Remove external SNAT address and check normal SNAT operation returns connectivity.
@@ -1563,6 +1625,88 @@ test_network_ovn_peering() {
     incus network delete incusbr0
 }
 
+test_network_ovn_cluster_retry() {
+    # shellcheck disable=SC2039,SC3043,SC2034
+    local INCUS_DIR
+
+    if ! network_ovn_supported; then
+        return
+    fi
+
+    setup_clustering_bridge
+    prefix="inc$$"
+    bridge="${prefix}"
+
+    setup_clustering_netns 1
+    INCUS_ONE_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+    chmod +x "${INCUS_ONE_DIR}"
+    ns1="${prefix}1"
+    spawn_incus_and_bootstrap_cluster "${ns1}" "${bridge}" "${INCUS_ONE_DIR}"
+    cert=$(sed ':a;N;$!ba;s/\n/\n\n/g' "${INCUS_ONE_DIR}/cluster.crt")
+
+    setup_clustering_netns 2
+    INCUS_TWO_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+    chmod +x "${INCUS_TWO_DIR}"
+    ns2="${prefix}2"
+    spawn_incus_and_join_cluster "${ns2}" "${bridge}" "${cert}" 2 1 "${INCUS_TWO_DIR}" "${INCUS_ONE_DIR}"
+
+    setup_clustering_netns 3
+    INCUS_THREE_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+    chmod +x "${INCUS_THREE_DIR}"
+    ns3="${prefix}3"
+    spawn_incus_and_join_cluster "${ns3}" "${bridge}" "${cert}" 3 1 "${INCUS_THREE_DIR}" "${INCUS_ONE_DIR}"
+
+    # Shutdown the third member and wait for it to be detected as offline.
+    INCUS_DIR="${INCUS_ONE_DIR}" incus config set cluster.offline_threshold 11
+    INCUS_DIR="${INCUS_THREE_DIR}" incus admin shutdown
+    sleep 12
+    INCUS_DIR="${INCUS_ONE_DIR}" incus cluster show node3 | grep -q "status: Offline"
+
+    # Creation fails while a member is offline and leaves the network errored.
+    net="${bridge}-ovn"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network create "${net}" --type=ovn network=none bridge.mtu=1442 ipv4.address=192.0.2.1/24 ipv4.nat=false ipv6.address=none 2>&1 | grep -q "is down"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network show "${net}" | grep -xF "status: Errored"
+
+    # Retrying reaches the partial creation checks rather than failing on the member records.
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network create "${net}" --type=ovn ipv4.address=192.0.3.1/24 2>&1 | grep -q "Please do not specify any global config"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network create "${net}" --type=bridge 2>&1 | grep -q "doesn't match type"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network create "${net}" --type=ovn 2>&1 | grep -q "is down"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network delete "${net}" 2>&1 | grep -q "is down"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network get "${net}" ipv4.address | grep -xF "192.0.2.1/24"
+
+    # Once the member is back, retrying completes the creation with the stored config.
+    respawn_incus_cluster_member "${ns3}" "${INCUS_THREE_DIR}"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network create "${net}" --type=ovn
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network show "${net}" | grep -xF "status: Created"
+    INCUS_DIR="${INCUS_THREE_DIR}" incus network show "${net}" | grep -xF "status: Created"
+    INCUS_DIR="${INCUS_THREE_DIR}" incus network get "${net}" ipv4.address | grep -xF "192.0.2.1/24"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network create "${net}" --type=ovn 2>&1 | grep -q "already created"
+
+    # Deletion cleans up OVN and allows the name to be reused.
+    net_id=$(INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global "SELECT id FROM networks WHERE name='${net}'" --format=csv)
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network delete "${net}"
+    ! ovn-nbctl lr-list | grep -F "incus-net${net_id}-" || false
+    ! ovn-nbctl ls-list | grep -F "incus-net${net_id}-" || false
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network create "${net}" --type=ovn network=none bridge.mtu=1442 ipv4.address=192.0.3.1/24 ipv4.nat=false ipv6.address=none
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network show "${net}" | grep -xF "status: Created"
+    INCUS_DIR="${INCUS_ONE_DIR}" incus network delete "${net}"
+
+    INCUS_DIR="${INCUS_THREE_DIR}" incus admin shutdown
+    INCUS_DIR="${INCUS_TWO_DIR}" incus admin shutdown
+    INCUS_DIR="${INCUS_ONE_DIR}" incus admin shutdown
+    sleep 0.5
+    rm -f "${INCUS_THREE_DIR}/unix.socket"
+    rm -f "${INCUS_TWO_DIR}/unix.socket"
+    rm -f "${INCUS_ONE_DIR}/unix.socket"
+
+    teardown_clustering_netns
+    teardown_clustering_bridge
+
+    kill_incus "${INCUS_ONE_DIR}"
+    kill_incus "${INCUS_TWO_DIR}"
+    kill_incus "${INCUS_THREE_DIR}"
+}
+
 test_network_ovn_dhcp_reservation() {
     if ! network_ovn_supported; then
         return
@@ -1985,6 +2129,17 @@ test_network_ovn_acl() {
     incus network acl rule remove ingress-ping ingress action=allow protocol=icmp4 destination=10.10.10.1-10.10.11.2
     incus network acl rule add ingress-ping ingress action=allow protocol=icmp4 destination=10.10.10.1-10.10.11.1
     ! incus exec c2 -- ping -c1 -w5 -4 10.10.11.2 || false
+
+    # Test address set subjects aren't treated as referenced ACLs.
+    incus network address-set create pingset
+    incus network address-set add pingset 10.10.11.2
+    # shellcheck disable=2016
+    incus network acl rule add ingress-ping ingress action=allow protocol=icmp4 destination='\$pingset'
+    incus exec c2 -- ping -c1 -w5 -4 10.10.11.2
+    ! ovn-nbctl --bare --column=name --format=csv find port_group | grep -q incus_acl0_ || false
+    # shellcheck disable=2016
+    incus network acl rule remove ingress-ping ingress action=allow protocol=icmp4 destination='\$pingset'
+    incus network address-set delete pingset
 
     # Test ACL rule referencing our own ACL name as source in rule.
     incus network acl rule remove ingress-ping ingress action=allow protocol=icmp4 destination=10.10.10.1-10.10.11.1
@@ -2467,6 +2622,23 @@ test_network_ovn_parent() {
     ! incus network delete ovn1 || false
     incus network delete ovn2
     incus network delete ovn1
+
+    echo "==> Check a refused delete of a parent in a project leaves its gateway in place"
+    incus project create testparent -c features.networks=true -c features.images=false -c restricted=true
+    incus project set testparent restricted.networks.uplinks=incusbr0
+    incus network create p1 --project testparent --type=ovn network=incusbr0 ipv4.address=10.10.21.1/24 ipv4.nat=true ipv6.address=none
+    incus network create p2 --project testparent --type=ovn parent=p1 ipv4.address=10.10.22.1/24 ipv4.nat=true ipv6.address=none
+    sleep 2
+    incus network show p1 --project testparent | grep -F "/1.0/networks/p2?project=testparent"
+    projectRouter="$(incus network info p1 --project testparent | awk '/Logical router:/ {print $NF}')"
+    [ -n "$(ovn-nbctl --bare --columns=ha_chassis find ha_chassis_group "name=${projectRouter%-lr}")" ]
+    ! incus network delete p1 --project testparent || false
+    sleep 2
+    [ -n "$(ovn-nbctl --bare --columns=ha_chassis find ha_chassis_group "name=${projectRouter%-lr}")" ]
+    incus network delete p2 --project testparent
+    incus network delete p1 --project testparent
+    incus project delete testparent
+
     incus network delete incusbr0
 }
 

@@ -167,7 +167,7 @@ func TestRescueStartTemplatesRetainPendingTriggerOnFailure(t *testing.T) {
 			if failure == "render" {
 				require.NoError(t, os.WriteFile(template, []byte("{% invalid_template_tag %}"), 0o600))
 			} else {
-				_, err := d.state.DB.Cluster.DB().Exec(`CREATE TRIGGER fail_rescue_template_delete BEFORE DELETE ON instances_config WHEN OLD.key='volatile.rescue.apply_template' BEGIN SELECT RAISE(ABORT, 'forced template persistence failure'); END`)
+				_, err := d.state.DB.Cluster.Exec(`CREATE TRIGGER fail_rescue_template_delete BEFORE DELETE ON instances_config WHEN OLD.key='volatile.rescue.apply_template' BEGIN SELECT RAISE(ABORT, 'forced template persistence failure'); END`)
 				require.NoError(t, err)
 			}
 
@@ -178,7 +178,7 @@ func TestRescueStartTemplatesRetainPendingTriggerOnFailure(t *testing.T) {
 			if failure == "render" {
 				require.NoError(t, os.WriteFile(template, []byte(`{{ config_get("user.user-data", "") }}`), 0o600))
 			} else {
-				_, err := d.state.DB.Cluster.DB().Exec("DROP TRIGGER fail_rescue_template_delete")
+				_, err := d.state.DB.Cluster.Exec("DROP TRIGGER fail_rescue_template_delete")
 				require.NoError(t, err)
 			}
 
@@ -196,7 +196,7 @@ func TestRescueStartTemplatesRetainPendingTriggerOnFailure(t *testing.T) {
 
 func TestRescueActivationCommitsPhaseAndTemplateTogether(t *testing.T) {
 	d := rescueTemplateDriver(t)
-	_, err := d.state.DB.Cluster.DB().Exec(`CREATE TRIGGER fail_rescue_template_insert BEFORE INSERT ON instances_config WHEN NEW.key='volatile.rescue.apply_template' BEGIN SELECT RAISE(ABORT, 'forced activation failure'); END`)
+	_, err := d.state.DB.Cluster.Exec(`CREATE TRIGGER fail_rescue_template_insert BEFORE INSERT ON instances_config WHEN NEW.key='volatile.rescue.apply_template' BEGIN SELECT RAISE(ABORT, 'forced activation failure'); END`)
 	require.NoError(t, err)
 	require.Error(t, d.activateRescue())
 	config := rescueTemplateConfig(t, d)
@@ -205,7 +205,7 @@ func TestRescueActivationCommitsPhaseAndTemplateTogether(t *testing.T) {
 	require.Equal(t, "preparing", d.localConfig[rescuePhaseKey])
 	require.Error(t, d.validateRescueRoot())
 
-	_, err = d.state.DB.Cluster.DB().Exec("DROP TRIGGER fail_rescue_template_insert")
+	_, err = d.state.DB.Cluster.Exec("DROP TRIGGER fail_rescue_template_insert")
 	require.NoError(t, err)
 	d.localConfig, d.expandedConfig = config, maps.Clone(config)
 	require.NoError(t, d.activateRescue())

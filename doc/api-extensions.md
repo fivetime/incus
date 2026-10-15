@@ -3640,6 +3640,37 @@ They are implemented through OVN port security on the instance's logical switch 
 restricting the source MAC address and, when IP filtering is enabled, the IP addresses
 (including any static routes) the instance may use.
 
+## `authorization_scriptlet_request`
+
+This adds the following fields to the `details` argument of the authorization scriptlet:
+
+* `URL`, holding the raw client request URL (`<path>?<query>`)
+* `Path`, holding the API path requested by the client
+* `Query`, holding the dictionary of query parameters (note: the values are lists of strings and not single strings)
+* `Method`, holding the HTTP method used in the request
+
+## `vm_boot_priority_skip`
+
+This adds the ability to define `boot.priority` to `skip` on NIC and disk devices, to skip them from the boot sequence. The new default for NICs is to be skipped.
+This additionally adds a `boot.pxe` VM configuration key, defaulting to `false`, to enable PXE on all the NICs included in the boot sequence. This doesn’t affect HTTP boot, which is always enabled for those NICs.
+
+## `network_ovn_nat_address_l2proxy`
+
+Allows `ipv4.nat.address` and `ipv6.nat.address` on an `ovn` network whose uplink uses
+`ovn.ingress_mode=l2proxy`, previously only supported with `ovn.ingress_mode=routed`.
+
+## `oidc_id_token`
+
+This adds support for OIDC providers that issue opaque (non-JWT) access tokens.
+
+When the access token isn't a JWT, Incus verifies the ID token instead, checking that it was issued by the configured issuer for the configured client ID.
+Clients send the ID token alongside the opaque access token through the `X-Incus-OIDC-idtoken` header.
+
+## `certificate_ca_trust`
+
+A CA certificate added to the trust store now also trusts the client certificates it issued.
+Those clients are identified by the CA entry's fingerprint and inherit its type, restrictions and projects.
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external

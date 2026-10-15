@@ -293,9 +293,14 @@ func (d *common) ApplyPatch(name string) error {
 // header where possible so that the backup header is where it is expected in case of any corruption with the
 // primary header.
 func (d *common) moveGPTAltHeader(devPath string) error {
+	return MoveGPTAltHeader(d.logger, devPath)
+}
+
+// MoveGPTAltHeader moves the GPT alternative header to the end of the disk device supplied.
+func MoveGPTAltHeader(l logger.Logger, devPath string) error {
 	path, err := exec.LookPath("sgdisk")
 	if err != nil {
-		d.logger.Warn("Skipped moving GPT alternative header to end of disk as sgdisk command not found", logger.Ctx{"dev": devPath})
+		l.Warn("Skipped moving GPT alternative header to end of disk as sgdisk command not found", logger.Ctx{"dev": devPath})
 		return nil
 	}
 
@@ -321,7 +326,7 @@ func (d *common) moveGPTAltHeader(devPath string) error {
 
 	_, err = subprocess.RunCommand(path, "--move-second-header", devPath)
 	if err == nil {
-		d.logger.Debug("Moved GPT alternative header to end of disk", logger.Ctx{"dev": devPath})
+		l.Debug("Moved GPT alternative header to end of disk", logger.Ctx{"dev": devPath})
 		return nil
 	}
 
@@ -401,6 +406,11 @@ func (d *common) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool,
 // GetVolumeDiskPath returns the location of a root disk block device.
 func (d *common) GetVolumeDiskPath(vol Volume) (string, error) {
 	return "", ErrNotSupported
+}
+
+// GetVolumeDiskSize returns the size in bytes of a block volume or snapshot without mounting it.
+func (d *common) GetVolumeDiskSize(vol Volume) (int64, error) {
+	return -1, ErrNotSupported
 }
 
 // ListVolumes returns a list of volumes in storage pool.

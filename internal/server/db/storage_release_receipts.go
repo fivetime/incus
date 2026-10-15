@@ -33,7 +33,7 @@ type StorageReleaseReceipt struct {
 // GetStorageReleaseReceipt returns the receipt with the supplied token.
 func (n *NodeTx) GetStorageReleaseReceipt(ctx context.Context, token string) (*StorageReleaseReceipt, error) {
 	receipt := &StorageReleaseReceipt{}
-	err := n.tx.QueryRowContext(ctx, `
+	err := n.QueryRowContext(ctx, `
 SELECT token, allocation_id, compute_id, materialization_id, owner,
        project, instance_name, idmap_base, idmap_size,
        storage_driver, storage_pool, storage_volume, rbd_image,
@@ -72,7 +72,7 @@ WHERE token = ?
 
 // CreateStorageReleaseReceipt creates a pending receipt.
 func (n *NodeTx) CreateStorageReleaseReceipt(ctx context.Context, receipt StorageReleaseReceipt) error {
-	_, err := n.tx.ExecContext(ctx, `
+	_, err := n.ExecContext(ctx, `
 INSERT INTO storage_release_receipts
     (token, allocation_id, compute_id, materialization_id, owner,
      project, instance_name, idmap_base, idmap_size,
@@ -108,7 +108,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
 // CompleteStorageReleaseReceipt marks a matching pending receipt complete.
 func (n *NodeTx) CompleteStorageReleaseReceipt(ctx context.Context, token string, completedAt int64) (bool, error) {
-	result, err := n.tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE storage_release_receipts
 SET state = 'complete', completed_at = ?
 WHERE token = ? AND state = 'pending'
@@ -129,7 +129,7 @@ WHERE token = ? AND state = 'pending'
 // receipt whose release work never ran. It matches the current outcome
 // explicitly so a concurrent transition cannot be overwritten blindly.
 func (n *NodeTx) SupersedeStorageReleaseReceiptOutcome(ctx context.Context, token string, fromOutcome string, toOutcome string) (bool, error) {
-	result, err := n.tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE storage_release_receipts
 SET outcome = ?
 WHERE token = ? AND state = 'pending' AND outcome = ?
@@ -148,7 +148,7 @@ WHERE token = ? AND state = 'pending' AND outcome = ?
 
 // RetireStorageReleaseReceipt retains an acknowledged token tombstone.
 func (n *NodeTx) RetireStorageReleaseReceipt(ctx context.Context, token string) (bool, error) {
-	result, err := n.tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE storage_release_receipts
 SET state = 'retired'
 WHERE token = ? AND state = 'complete'
