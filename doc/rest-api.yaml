@@ -6370,6 +6370,12 @@ definitions:
                 example: fd200419b271f1dc2a5591b693cc5774b7f234e1ff8c6b78ad703b6888fe2b69
                 type: string
                 x-go-name: CertificateFingerprint
+            criu_sha256:
+                description: |-
+                    SHA256 of the CRIU executable in the daemon environment, or empty if unavailable.
+                    API extension: migration_criu_sha256
+                type: string
+                x-go-name: CRIUSHA256
             driver:
                 description: List of supported instance drivers (separate by " | ")
                 example: lxc | qemu

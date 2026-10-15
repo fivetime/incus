@@ -609,6 +609,7 @@ var APIExtensions = []string{
 	"idmap_usage",
 	"migration_checkpoint_restore",
 	"container_rescue",
+	"migration_criu_sha256",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

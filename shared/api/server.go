@@ -9,6 +9,10 @@ import (
 
 // ServerEnvironment represents the read-only environment fields of a server configuration.
 type ServerEnvironment struct {
+	// SHA256 of the CRIU executable in the daemon environment, or empty if unavailable.
+	// API extension: migration_criu_sha256
+	CRIUSHA256 string `json:"criu_sha256" yaml:"criu_sha256"`
+
 	// List of addresses the server is listening on
 	// Example: [":8443"]
 	Addresses []string `json:"addresses" yaml:"addresses"`
