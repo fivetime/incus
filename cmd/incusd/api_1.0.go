@@ -373,6 +373,8 @@ func api10Get(d *Daemon, r *http.Request) response.Response {
 		Firewall:               s.Firewall.String(),
 	}
 
+	// Unknown or changing binaries are not suitable for migration admission.
+	env.CRIUSHA256, _ = localUtil.CRIUSHA256()
 	env.KernelFeatures = map[string]string{}
 
 	drivers := instanceDrivers.DriverStatuses()
