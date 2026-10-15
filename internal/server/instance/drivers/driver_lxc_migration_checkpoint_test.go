@@ -3,6 +3,8 @@
 package drivers
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -37,5 +39,50 @@ func TestMigrationCheckpointPathRejectsUnboundLocations(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Invalid instance accepted: %q", invalid)
 		}
+	}
+}
+
+func TestRemoveMigrationCheckpointRemovesEmptyInstanceDirectory(t *testing.T) {
+	instanceDir := filepath.Join(t.TempDir(), "10000000-0000-0000-0000-000000000001")
+	first := filepath.Join(instanceDir, "20000000-0000-0000-0000-000000000002")
+	second := filepath.Join(instanceDir, "30000000-0000-0000-0000-000000000003")
+	for _, dir := range []string{first, second} {
+		err := os.MkdirAll(dir, 0o700)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = os.WriteFile(filepath.Join(dir, "pages-1.img"), []byte("x"), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Another checkpoint of the same instance keeps the directory.
+	err := removeMigrationCheckpoint(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = os.Stat(filepath.Join(second, "pages-1.img"))
+	if err != nil {
+		t.Fatalf("Sibling checkpoint was removed: %v", err)
+	}
+
+	// The last checkpoint takes the empty instance directory with it.
+	err = removeMigrationCheckpoint(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = os.Stat(instanceDir)
+	if !os.IsNotExist(err) {
+		t.Fatalf("Empty instance checkpoint directory was left behind: %v", err)
+	}
+
+	// Removing an already removed checkpoint is not an error.
+	err = removeMigrationCheckpoint(second)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

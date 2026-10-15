@@ -5,10 +5,12 @@ package drivers
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	liblxc "github.com/lxc/go-lxc"
+	"golang.org/x/sys/unix"
 
 	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	"github.com/lxc/incus/v7/internal/server/instance"
@@ -65,7 +67,7 @@ func (d *lxc) createMigrationCheckpoint() (string, error) {
 		migrationCheckpointStateKey: "dumping",
 	})
 	if err != nil {
-		return "", errors.Join(err, os.Remove(path))
+		return "", errors.Join(err, removeMigrationCheckpoint(path))
 	}
 
 	return path, nil
@@ -82,12 +84,30 @@ func (d *lxc) clearMigrationCheckpoint() error {
 		return err
 	}
 
-	err = os.RemoveAll(path)
+	err = removeMigrationCheckpoint(path)
 	if err != nil {
 		return err
 	}
 
 	return d.VolatileSet(map[string]string{migrationCheckpointKey: "", migrationCheckpointStateKey: ""})
+}
+
+// removeMigrationCheckpoint removes an operation's checkpoint and then its
+// per-instance parent directory once no other checkpoint remains in it.
+// Without the second step every migrated instance left an empty directory
+// behind under migration-checkpoints.
+func removeMigrationCheckpoint(path string) error {
+	err := os.RemoveAll(path)
+	if err != nil {
+		return err
+	}
+
+	err = os.Remove(filepath.Dir(path))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, unix.ENOTEMPTY) && !errors.Is(err, unix.EEXIST) {
+		return fmt.Errorf("Failed removing migration checkpoint directory %q: %w", filepath.Dir(path), err)
+	}
+
+	return nil
 }
 
 // RestoreMigrationCheckpoint resumes the exact retained source checkpoint after external fencing.
