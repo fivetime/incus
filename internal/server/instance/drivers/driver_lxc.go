@@ -159,6 +159,14 @@ func lxcSetConfigItem(c *liblxc.Container, key string, value string) error {
 		}
 	}
 
+	if key == "lxc.environment.runtime" && !liblxc.HasAPIExtension("environment_runtime_hooks") {
+		key = "lxc.environment"
+	}
+
+	if key == "lxc.environment.hooks" && !liblxc.HasAPIExtension("environment_runtime_hooks") {
+		return nil
+	}
+
 	err := c.SetConfigItem(key, value)
 	if err != nil {
 		return fmt.Errorf("Failed to set LXC config: %s=%s", key, value)
@@ -1256,14 +1264,24 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
 		after, ok := strings.CutPrefix(k, "environment.")
 		if ok {
 			// LXC supports quoting the value between " even if the value itself contains ".
-			err = lxcSetConfigItem(cc, "lxc.environment", fmt.Sprintf("\"%s=%s\"", after, v))
+			err = lxcSetConfigItem(cc, "lxc.environment.runtime", fmt.Sprintf("\"%s=%s\"", after, v))
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	err = lxcSetConfigItem(cc, "lxc.environment", "CREDENTIALS_DIRECTORY=/dev/.incus-systemd-credentials")
+	err = lxcSetConfigItem(cc, "lxc.environment.runtime", "CREDENTIALS_DIRECTORY=/dev/.incus-systemd-credentials")
+	if err != nil {
+		return nil, err
+	}
+
+	hostPath := os.Getenv("PATH")
+	if hostPath == "" {
+		hostPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	}
+
+	err = lxcSetConfigItem(cc, "lxc.environment.hooks", fmt.Sprintf("\"PATH=%s\"", hostPath))
 	if err != nil {
 		return nil, err
 	}
@@ -2697,7 +2715,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
 				continue
 			}
 
-			err = lxcSetConfigItem(cc, "lxc.environment", fmt.Sprintf("\"%s=%s\"", k, v))
+			err = lxcSetConfigItem(cc, "lxc.environment.runtime", fmt.Sprintf("\"%s=%s\"", k, v))
 			if err != nil {
 				return "", nil, err
 			}
@@ -6507,7 +6525,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 
 	// On a cluster move the dependent volumes on shared storage are taken over by the target
 	// rather than transferred, so they're kept out of the offer.
-	dependentVolumesOffer, err := storagePools.GenerateDependentVolumesOffer(d.state, srcConfig, d.Project().Name, args.Snapshots, args.Devices, args.SkipDependentVolumes, clusterMove)
+	dependentVolumesOffer, err := storagePools.GenerateDependentVolumesOffer(d.state, srcConfig, d.ExpandedDevices().CloneNative(), d.Project().Name, args.Snapshots, args.Devices, args.SkipDependentVolumes, clusterMove)
 	if err != nil {
 		err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
 		op.Done(err)

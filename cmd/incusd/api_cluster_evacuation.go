@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cowsql/go-cowsql/cluster/membership"
 	"golang.org/x/sync/errgroup"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -75,6 +76,36 @@ type evacuateOpts struct {
 	stopInstance    evacuateStopFunc
 	migrateInstance evacuateMigrateFunc
 	op              *operations.Operation
+}
+
+// evacuateReconcileState reverts the transient state left on a member by an interrupted evacuation or restore.
+func evacuateReconcileState(s *state.State, name string) error {
+	return s.DB.Cluster.Transaction(context.Background(), func(ctx context.Context, tx *db.ClusterTx) error {
+		node, err := tx.GetNodeByName(ctx, name)
+		if err != nil {
+			return fmt.Errorf("Failed to get cluster member by name: %w", err)
+		}
+
+		// Match what the operation's own reverter would have done.
+		var newState int
+		switch node.State {
+		case db.ClusterMemberStateEvacuating:
+			newState = db.ClusterMemberStateCreated
+		case db.ClusterMemberStateRestoring:
+			newState = db.ClusterMemberStateEvacuated
+		default:
+			return nil
+		}
+
+		logger.Warn("Reverting cluster member state left by an interrupted operation", logger.Ctx{"state": node.State, "newState": newState})
+
+		err = tx.UpdateNodeStatus(node.ID, newState)
+		if err != nil {
+			return fmt.Errorf("Failed to update cluster member status: %w", err)
+		}
+
+		return nil
+	})
 }
 
 func evacuateClusterSetState(s *state.State, name string, newState int) error {
@@ -865,7 +896,7 @@ func autoHealClusterTask(d *Daemon) (task.Func, task.Schedule) {
 
 		leader, err := s.Cluster.LeaderAddress()
 		if err != nil {
-			if errors.Is(err, cluster.ErrNodeIsNotClustered) {
+			if errors.Is(err, membership.ErrNodeIsNotClustered) {
 				return // Skip healing if not clustered.
 			}
 

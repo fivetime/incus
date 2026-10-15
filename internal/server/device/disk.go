@@ -502,10 +502,11 @@ func (d *disk) validateConfig(instConf instance.ConfigReader, partialValidation 
 		// gendoc:generate(entity=devices, group=disk, key=boot.priority)
 		//
 		// ---
-		//  type: integer
+		//  type: string
+		//  default: `0`
 		//  required: no
-		//  shortdesc: Boot priority for VMs (higher value boots first)
-		"boot.priority": validate.Optional(validate.IsUint32),
+		//  shortdesc: Boot priority for VMs (higher value boots first), `skip` to skip
+		"boot.priority": validate.Optional(validate.Or(validate.IsUint32, validate.IsOneOf("skip"))),
 
 		// gendoc:generate(entity=devices, group=disk, key=path)
 		// This controls which path inside the instance the disk should be mounted on.
@@ -1043,7 +1044,7 @@ func (d *disk) UpdatableFields(oldDevice Type) []string {
 		return []string{}
 	}
 
-	return []string{"limits.max", "limits.read", "limits.write", "limits.max.burst", "limits.read.burst", "limits.write.burst", "limits.read.burst.length", "limits.write.burst.length", "limits.max.burst.length", "size", "size.state", "dependent"}
+	return []string{"limits.max", "limits.read", "limits.write", "limits.max.burst", "limits.read.burst", "limits.write.burst", "limits.read.burst.length", "limits.write.burst.length", "limits.max.burst.length", "size", "size.state", "dependent", "boot.priority"}
 }
 
 // Register calls mount for the disk volume (which should already be mounted) to reinitialize the reference counter
@@ -1258,6 +1259,7 @@ func (d *disk) startContainer() (*deviceConfig.RunConfig, error) {
 				"/opt/incus/lib/lxc/rootfs/",
 				"/usr/lib/x86_64-linux-gnu/lxc/rootfs/",
 				"/usr/lib/aarch64-linux-gnu/lxc/rootfs/",
+				"/usr/lib/loongarch64-linux-gnu/lxc/rootfs/",
 			}
 
 			rootFsPath := ""

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cowsql/go-cowsql/cluster/membership"
 	"golang.org/x/sync/errgroup"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -581,7 +582,7 @@ func networksPost(d *Daemon, r *http.Request) response.Response {
 	}
 
 	// Check if we're clustered.
-	count, err := cluster.Count(s)
+	count, err := membership.Count(d.gateway)
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -589,8 +590,8 @@ func networksPost(d *Daemon, r *http.Request) response.Response {
 	// No targetNode was specified and we're clustered or there is an existing partially created single node
 	// network, either way finalize the config in the db and actually create the network on all cluster nodes.
 	if count > 1 || (netInfo != nil && netInfo.Status != api.NetworkStatusCreated) {
-		// Simulate adding pending node network config when the driver doesn't support per-node config.
-		if !netTypeInfo.NodeSpecificConfig && clientType != clusterRequest.ClientTypeJoiner {
+		// Add pending member records for initial creation when the driver has no per-member config.
+		if !netTypeInfo.NodeSpecificConfig && clientType != clusterRequest.ClientTypeJoiner && (netInfo == nil || netInfo.Status == api.NetworkStatusPending) {
 			// Create pending entry for each node.
 			err = s.DB.Cluster.Transaction(r.Context(), func(ctx context.Context, tx *db.ClusterTx) error {
 				members, err := tx.GetNodes(ctx)

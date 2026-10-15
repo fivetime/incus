@@ -62,10 +62,11 @@
 					},
 					{
 						"boot.priority": {
+							"default": "`0`",
 							"longdesc": "",
 							"required": "no",
-							"shortdesc": "Boot priority for VMs (higher value boots first)",
-							"type": "integer"
+							"shortdesc": "Boot priority for VMs (higher value boots first), `skip` to skip",
+							"type": "string"
 						}
 					},
 					{
@@ -626,10 +627,11 @@
 					},
 					{
 						"boot.priority": {
+							"default": "`skip`",
 							"longdesc": "",
 							"managed": "no",
-							"shortdesc": "Boot priority for VMs (higher value boots first)",
-							"type": "integer"
+							"shortdesc": "Boot priority for VMs (higher value boots first), `skip` to skip",
+							"type": "string"
 						}
 					},
 					{
@@ -1093,10 +1095,11 @@
 					},
 					{
 						"boot.priority": {
+							"default": "`skip`",
 							"longdesc": "",
 							"managed": "no",
-							"shortdesc": "Boot priority for VMs (higher value boots first)",
-							"type": "integer"
+							"shortdesc": "Boot priority for VMs (higher value boots first), `skip` to skip",
+							"type": "string"
 						}
 					},
 					{
@@ -1210,10 +1213,11 @@
 					},
 					{
 						"boot.priority": {
+							"default": "`skip`",
 							"longdesc": "",
 							"managed": "no",
-							"shortdesc": "Boot priority for VMs (higher value boots first)",
-							"type": "integer"
+							"shortdesc": "Boot priority for VMs (higher value boots first), `skip` to skip",
+							"type": "string"
 						}
 					},
 					{
@@ -1526,9 +1530,10 @@
 					},
 					{
 						"boot.priority": {
+							"default": "`skip`",
 							"longdesc": "",
-							"shortdesc": "Boot priority for VMs (higher value boots first)",
-							"type": "integer"
+							"shortdesc": "Boot priority for VMs (higher value boots first), `skip` to skip",
+							"type": "string"
 						}
 					},
 					{
@@ -1707,10 +1712,11 @@
 					},
 					{
 						"boot.priority": {
+							"default": "`skip`",
 							"longdesc": "",
 							"managed": "no",
-							"shortdesc": "Boot priority for VMs (higher value boots first)",
-							"type": "integer"
+							"shortdesc": "Boot priority for VMs (higher value boots first), `skip` to skip",
+							"type": "string"
 						}
 					},
 					{
@@ -2096,10 +2102,11 @@
 					},
 					{
 						"boot.priority": {
+							"default": "`skip`",
 							"longdesc": "",
 							"managed": "no",
-							"shortdesc": "Boot priority for VMs (higher value boots first)",
-							"type": "integer"
+							"shortdesc": "Boot priority for VMs (higher value boots first), `skip` to skip",
+							"type": "string"
 						}
 					},
 					{
@@ -2650,6 +2657,15 @@
 							"longdesc": "Number of seconds to wait for the instance to shut down before it is force-stopped.",
 							"shortdesc": "How long to wait for the instance to shut down",
 							"type": "integer"
+						}
+					},
+					{
+						"boot.pxe": {
+							"defaultdesc": "no",
+							"liveupdate": "yes",
+							"longdesc": "",
+							"shortdesc": "Whether to enable PXE boot",
+							"type": "bool"
 						}
 					},
 					{
@@ -3418,7 +3434,7 @@
 						"security.nesting": {
 							"defaultdesc": "`false` (containers), `true` (VMs)",
 							"liveupdate": "yes (containers only)",
-							"longdesc": "For containers, this controls whether Incus (nested) can be run inside of the instance.\nFor virtual machines, setting this to `false` disables nested virtualization (turns off the `svm` and `vmx` CPU flags).",
+							"longdesc": "For containers, this controls whether Incus (nested) can be run inside of the instance.\nFor virtual machines, setting this to `false` disables nested virtualization (turns off the `svm` and `vmx` CPU flags).\nExplicitly setting this to `true` on a virtual machine also makes it use non-shared memory (allowing transparent huge pages) unless a device requires shared memory, see {ref}`performance-tuning-vm-memory`.",
 							"shortdesc": "Whether to allow nesting inside of the instance",
 							"type": "bool"
 						}
@@ -5240,7 +5256,7 @@
 						"ipv4.nat.address": {
 							"condition": "IPv4 address",
 							"longdesc": "",
-							"shortdesc": "The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)",
+							"shortdesc": "The source address used for outbound traffic from the network",
 							"type": "string"
 						}
 					},
@@ -5293,7 +5309,7 @@
 						"ipv6.nat.address": {
 							"condition": "IPv6 address",
 							"longdesc": "",
-							"shortdesc": "The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)",
+							"shortdesc": "The source address used for outbound traffic from the network",
 							"type": "string"
 						}
 					},
@@ -6212,7 +6228,7 @@
 					},
 					{
 						"acme.domain": {
-							"longdesc": "",
+							"longdesc": "Comma separated list of domains, wildcard domains (`*.example.com`) require the `DNS-01` challenge.",
 							"scope": "global",
 							"shortdesc": "Domain for which the certificate is issued",
 							"type": "string"
@@ -6654,7 +6670,7 @@
 					{
 						"core.trust_ca_certificates": {
 							"defaultdesc": "`false`",
-							"longdesc": "",
+							"longdesc": "This only applies when a `server.ca` file is present.\nWhen enabled, any valid client certificate issued by the CA and not listed in `ca.crl` is trusted without being added to the trust store.\nSuch certificates get full access to the server unless they are added to the trust store as restricted certificates.\nWhen disabled, certificates issued by the CA still need to be added to the trust store.",
 							"scope": "global",
 							"shortdesc": "Whether to automatically trust clients signed by the CA",
 							"type": "bool"
@@ -7081,7 +7097,7 @@
 				"keys": [
 					{
 						"oidc.audience": {
-							"longdesc": "This value is required by some providers.",
+							"longdesc": "This value is required by some providers.\nOpaque access tokens are rejected when set as the audience can't be verified on those.",
 							"scope": "global",
 							"shortdesc": "Expected audience value for the application",
 							"type": "string"
@@ -7089,7 +7105,7 @@
 					},
 					{
 						"oidc.claim": {
-							"longdesc": "Note that the claim must be contained in the access token.",
+							"longdesc": "Note that the claim must be contained in the access token or, for opaque access tokens, in the ID token.",
 							"scope": "global",
 							"shortdesc": "OpenID Connect claim to use as the username",
 							"type": "string"

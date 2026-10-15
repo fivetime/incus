@@ -159,6 +159,7 @@ iSCSI
 JIT
 jq
 JSON
+JWT
 kB
 kbit
 KiB
@@ -266,9 +267,11 @@ pre
 preselects
 preseed
 proxied
+Proxmox
 proxying
 PTS
 PTY
+PXE
 qdisc
 QEMU
 qgroup
@@ -386,6 +389,7 @@ userspace
 UUID
 vCPU
 vCPUs
+VE
 VDPA
 VFs
 VFS

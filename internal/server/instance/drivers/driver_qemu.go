@@ -698,12 +698,11 @@ func (d *qemu) unmount() error {
 		return err
 	}
 
-	err = pool.UnmountInstance(d, nil)
-	if err != nil {
-		return err
+	if d.IsSnapshot() {
+		return pool.UnmountInstanceSnapshot(d, nil)
 	}
 
-	return nil
+	return pool.UnmountInstance(d, nil)
 }
 
 // generateAgentCert creates the necessary server key and certificate if needed.
@@ -1957,6 +1956,9 @@ func (d *qemu) start(stateful bool, op *operationlock.InstanceOperation) error {
 			return err
 		}
 
+		// Share the guest memory unless the instance prefers transparent huge pages and no device needs it.
+		memoryTopology.Anonymous = !d.sharedMemoryPreferred() && !d.needsSharedMemory(devConfs)
+
 		bs.MemoryTopology = memoryTopology
 	}
 
@@ -2694,7 +2696,7 @@ func (d *qemu) AgentCertificate() *x509.Certificate {
 }
 
 func (d *qemu) architectureSupportsUEFI(arch int) bool {
-	return slices.Contains([]int{osarch.ARCH_64BIT_INTEL_X86, osarch.ARCH_64BIT_ARMV8_LITTLE_ENDIAN}, arch)
+	return slices.Contains([]int{osarch.ARCH_64BIT_INTEL_X86, osarch.ARCH_64BIT_ARMV8_LITTLE_ENDIAN, osarch.ARCH_64BIT_LOONGARCH}, arch)
 }
 
 // firmwarePairs returns the candidate firmware pairs for the instance based on its configuration.
@@ -2905,7 +2907,7 @@ func (d *qemu) setupNvram() error {
 					return fmt.Errorf("Invalid base64 value for %q: %q", k, value)
 				}
 			} else if strings.HasPrefix(k, "initial.secureboot.") {
-				guid, varName = util.ESLGUIDVar(parts[2])
+				guid, varName = uefi.ESLGUIDVar(parts[2])
 				var esl uefi.ESL
 				if varName == "MokList" {
 					v.Attributes = []string{"NON_VOLATILE", "BOOTSERVICE_ACCESS"}
@@ -2985,6 +2987,9 @@ func (d *qemu) qemuArchConfig(arch int) (string, string, error) {
 		bus = "pcie"
 	case osarch.ARCH_64BIT_ARMV8_LITTLE_ENDIAN:
 		qemuCmd = "qemu-system-aarch64"
+		bus = "pcie"
+	case osarch.ARCH_64BIT_LOONGARCH:
+		qemuCmd = "qemu-system-loongarch64"
 		bus = "pcie"
 	case osarch.ARCH_64BIT_POWERPC_LITTLE_ENDIAN:
 		qemuCmd = "qemu-system-ppc64"
@@ -3137,6 +3142,22 @@ func (d *qemu) deviceAttachPath(deviceName string, configCopy map[string]string,
 	monitor, err := d.qmpConnect()
 	if err != nil {
 		return fmt.Errorf("Failed to connect to QMP monitor: %w", err)
+	}
+
+	// virtiofs needs the guest memory to be shared, which is only set up when starting with a directory share.
+	memDevs, err := monitor.GetMemdev()
+	if err != nil {
+		return fmt.Errorf("Failed to query memory backends: %w", err)
+	}
+
+	for _, memDev := range memDevs {
+		if memDev.ID != "mem0" && memDev.ID != qemuDefaultRAMObject(d.architecture) {
+			continue
+		}
+
+		if !memDev.Share {
+			return errors.New("VM is currently running without shared memory, stop the VM before adding a virtiofs share")
+		}
 	}
 
 	monHook, err := d.addDriveDirConfigVirtiofs(nil, nil, mount)
@@ -4356,13 +4377,19 @@ func (d *qemu) deviceBootPriorities(base int) (map[string]int, error) {
 	devices := []devicePrios{}
 
 	for _, dev := range d.expandedDevices.Sorted() {
-		if dev.Config["type"] != "disk" && dev.Config["type"] != "nic" {
+		devType := dev.Config["type"]
+		if devType != "disk" && devType != "nic" {
 			continue
 		}
 
 		bootPrio := uint32(0) // Default to lowest priority.
-		if dev.Config["boot.priority"] != "" {
-			prio, err := strconv.ParseInt(dev.Config["boot.priority"], 10, 32)
+		confPrio := dev.Config["boot.priority"]
+		if confPrio == "skip" || confPrio == "" && devType == "nic" {
+			continue
+		}
+
+		if confPrio != "" {
+			prio, err := strconv.ParseInt(confPrio, 10, 32)
 			if err != nil {
 				return nil, fmt.Errorf("Invalid boot.priority for device %q: %w", dev.Name, err)
 			}
@@ -4981,6 +5008,11 @@ func (d *qemu) generateQemuConfig(bs *qemuBootState, mountInfo *storagePools.Mou
 		}
 	}
 
+	// Add `fw_cfg` configuration.
+	conf = append(conf, qemuFWCfg(&qemuFWCfgOpts{
+		pxe: util.IsTrue(d.localConfig["boot.pxe"]),
+	})...)
+
 	// Allocate 8 PCI slots for hotplug devices.
 	for range 8 {
 		bus.allocate(busFunctionGroupNone)
@@ -5137,6 +5169,34 @@ func (d *qemu) getCPUOpts(cpuInfo *qemuCPUTopology, memSizeBytes int64) (*qemuCP
 	return &cpuOpts, nil
 }
 
+// sharedMemoryPreferred returns whether the guest memory should be shared ahead of any device needing it.
+func (d *qemu) sharedMemoryPreferred() bool {
+	// Nested virtualization suffers the most from shared memory not getting transparent huge pages.
+	if util.IsTrue(d.expandedConfig["security.nesting"]) {
+		return false
+	}
+
+	// Nothing can need shared memory when virtiofs can't be used.
+	_, err := device.DiskVMVirtiofsSupported(d)
+
+	return err == nil
+}
+
+// needsSharedMemory returns whether a device needs the guest memory to be shared with the host (vhost-user).
+func (d *qemu) needsSharedMemory(devConfs []*deviceConfig.RunConfig) bool {
+	for _, runConf := range devConfs {
+		for _, mount := range runConf.Mounts {
+			for _, opt := range mount.Opts {
+				if strings.HasPrefix(opt, device.DiskVirtiofsdSockMountOpt+"=") {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // addCPUMemoryConfig adds the qemu config required for setting the number of virtualised CPUs and memory.
 // If sb is nil then no config is written.
 func (d *qemu) addCPUMemoryConfig(conf *[]cfg.Section, bs *qemuBootState) error {
@@ -5146,6 +5206,7 @@ func (d *qemu) addCPUMemoryConfig(conf *[]cfg.Section, bs *qemuBootState) error 
 	}
 
 	cpuOpts.cpuMaxCpus = bs.MaxCPUs
+	cpuOpts.sharedMemory = !bs.MemoryTopology.Anonymous
 
 	// A fixed topology is written verbatim, either due to CPU pinning or an explicit topology request.
 	cpuFixedTopology := bs.CPUTopology.VCPUs != nil || bs.CPUTopology.Explicit
@@ -5768,7 +5829,7 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 		serialMaxLength = 14
 	}
 
-	qemuDev["serial"] = fmt.Sprintf("%s%s", qemuBlockDevIDPrefix, hashValue(escapedDeviceName, serialMaxLength))
+	qemuDev["serial"] = fmt.Sprintf("%s%s", qemuBlockDevIDPrefix, internalInstance.HashName(escapedDeviceName, serialMaxLength))
 
 	if wwn != "" {
 		wwnID, err := strconv.ParseUint(strings.TrimPrefix(wwn, "0x"), 16, 64)
@@ -7909,6 +7970,10 @@ func (d *qemu) updateMemoryLimit(newLimit string) error {
 				return err
 			}
 
+			if bs.MemoryTopology != nil {
+				memTopology.Anonymous = bs.MemoryTopology.Anonymous
+			}
+
 			bs.MemoryTopology = &memTopology
 
 			err = d.saveBootState(*bs)
@@ -8639,15 +8704,19 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 	offerHeader.IndexHeaderVersion = &indexHeaderVersion
 
 	// For VMs, send block device size hint in offer header so that target can create the volume the same size.
-	blockSize, err := storagePools.InstanceDiskBlockSize(pool, d, d.op)
-	if err != nil {
-		err := fmt.Errorf("Failed getting source disk size: %w", err)
-		op.Done(err)
-		return err
-	}
+	// Skipped on remote cluster moves as the volume is used in place.
+	var blockSize int64
+	if !remoteClusterMove || storageMove {
+		blockSize, err = storagePools.InstanceDiskBlockSize(pool, d, d.op)
+		if err != nil {
+			err := fmt.Errorf("Failed getting source disk size: %w", err)
+			op.Done(err)
+			return err
+		}
 
-	d.logger.Debug("Set migration offer volume size", logger.Ctx{"blockSize": blockSize})
-	offerHeader.VolumeSize = &blockSize
+		d.logger.Debug("Set migration offer volume size", logger.Ctx{"blockSize": blockSize})
+		offerHeader.VolumeSize = &blockSize
+	}
 
 	srcConfig, err := pool.GenerateInstanceBackupConfig(d, args.Snapshots, true, d.op)
 	if err != nil {
@@ -8658,7 +8727,7 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 
 	// On a cluster move the dependent volumes on shared storage are taken over by the target
 	// rather than transferred, so they're kept out of the offer.
-	dependentVolumesOffer, err := storagePools.GenerateDependentVolumesOffer(d.state, srcConfig, d.Project().Name, args.Snapshots, args.Devices, args.SkipDependentVolumes, clusterMove)
+	dependentVolumesOffer, err := storagePools.GenerateDependentVolumesOffer(d.state, srcConfig, d.ExpandedDevices().CloneNative(), d.Project().Name, args.Snapshots, args.Devices, args.SkipDependentVolumes, clusterMove)
 	if err != nil {
 		err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
 		op.Done(err)
@@ -9034,8 +9103,28 @@ func (d *qemu) prepareEphemeralSnapshot(monitor *qmp.Monitor, diskName string, d
 	// by setting the root disk's `size.state` property.
 	snapshotFile := filepath.Join(d.Path(), fmt.Sprintf("%s.qcow2", snapshotDiskName))
 
+	// Find the disk's current top node, the base of the new overlay.
+	blockDevs, err := d.fetchBlockDeviceChain(monitor, diskName)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("Failed fetching block device chain: %w", err)
+	}
+
+	if len(blockDevs) == 0 {
+		return "", "", nil, fmt.Errorf("No block device found for disk %q", diskName)
+	}
+
+	blockDevName := blockDevs[len(blockDevs)-1]
+
+	// A backed overlay must match the size of the node it is backed by.
+	if backed {
+		diskSize, err = monitor.BlockNodeSize(blockDevName)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("Failed fetching size for %q: %w", blockDevName, err)
+		}
+	}
+
 	// Ensure there are no existing migration snapshot files.
-	err := os.Remove(snapshotFile)
+	err = os.Remove(snapshotFile)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", "", nil, err
 	}
@@ -9072,18 +9161,6 @@ func (d *qemu) prepareEphemeralSnapshot(monitor *qmp.Monitor, diskName string, d
 	defer logger.WarnOnError(func() error { return monitor.RemoveFDFromFDSet(snapshotDiskName) }, "Failed to remove FD from FD set")
 
 	_ = snapFile.Close() // Don't prevent clean unmount when instance is stopped.
-
-	// Find the disk's current top node, the base of the new overlay.
-	blockDevs, err := d.fetchBlockDeviceChain(monitor, diskName)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("Failed fetching block device chain: %w", err)
-	}
-
-	if len(blockDevs) == 0 {
-		return "", "", nil, fmt.Errorf("No block device found for disk %q", diskName)
-	}
-
-	blockDevName := blockDevs[len(blockDevs)-1]
 
 	blockDev := map[string]any{
 		"driver":    "qcow2",
@@ -9561,7 +9638,13 @@ func (d *qemu) migrateSendLive(ctx context.Context, pool storagePools.Pool, clus
 				ClusterMove: true,
 			}
 
-			vol := diskPool.GetVolume(storageDrivers.VolumeTypeCustom, storageDrivers.ContentTypeBlock, project.StorageVolume(storageProjectName, dev.Config["source"]), nil)
+			volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
+			dbVol, err := storagePools.VolumeDBGet(diskPool, storageProjectName, volName, storageDrivers.VolumeTypeCustom)
+			if err != nil {
+				return fmt.Errorf("Failed loading custom volume for device %q: %w", dev.Name, err)
+			}
+
+			vol := diskPool.GetVolume(storageDrivers.VolumeTypeCustom, storageDrivers.ContentType(dbVol.ContentType), project.StorageVolume(storageProjectName, volName), dbVol.Config)
 
 			// Call MigrateVolume on the source.
 			err = diskPool.Driver().MigrateVolume(vol, nil, extraSourceArgs, nil)
@@ -10170,7 +10253,13 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 					StoragePool:           args.StoragePool,
 				}
 
-				vol := diskPool.GetVolume(storageDrivers.VolumeTypeCustom, storageDrivers.ContentTypeBlock, project.StorageVolume(storageProjectName, dev.Config["source"]), nil)
+				volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
+				dbVol, err := storagePools.VolumeDBGet(diskPool, storageProjectName, volName, storageDrivers.VolumeTypeCustom)
+				if err != nil {
+					return fmt.Errorf("Failed loading custom volume for device %q: %w", dev.Name, err)
+				}
+
+				vol := diskPool.GetVolume(storageDrivers.VolumeTypeCustom, storageDrivers.ContentType(dbVol.ContentType), project.StorageVolume(storageProjectName, volName), dbVol.Config)
 
 				// Call CreateVolumeFromMigration on the target.
 				err = diskPool.Driver().CreateVolumeFromMigration(vol, nil, extraTargetArgs, nil, nil)
@@ -11186,8 +11275,19 @@ func (d *qemu) DeviceEventHandler(runConf *deviceConfig.RunConfig) error {
 		}
 
 		if mount.Size > 0 {
+			// Resize the active node, which is the top overlay when the disk has snapshots.
+			nodeName := d.blockNodeName(linux.PathNameEncode(mount.DevName))
+			blockDevs, err := d.fetchBlockDeviceChain(m, nodeName)
+			if err != nil {
+				return err
+			}
+
+			if len(blockDevs) > 0 {
+				nodeName = blockDevs[len(blockDevs)-1]
+			}
+
 			// Update the size.
-			err = m.UpdateBlockSize(strings.SplitN(devID, "-", 2)[1], mount.Size)
+			err = m.UpdateBlockSize(nodeName, mount.Size)
 			if err != nil {
 				return fmt.Errorf("Failed updating disk size %q: %w", mount.DevName, err)
 			}
@@ -12063,13 +12163,13 @@ func (d *qemu) deviceDetachUSB(usbDev deviceConfig.USBDeviceItem) error {
 // Block node names may only be up to 31 characters long, so use a hash if longer.
 func (d *qemu) blockNodeName(name string) string {
 	// Apply the prefix.
-	return fmt.Sprintf("%s%s", qemuBlockDevIDPrefix, hashValue(name, 25))
+	return fmt.Sprintf("%s%s", qemuBlockDevIDPrefix, internalInstance.HashName(name, 25))
 }
 
 // Mount tag names may only be up to 31 or 36 characters long, so use a hash if longer.
 func (d *qemu) mountTagName(name string, maxLength int) string {
 	// Apply the prefix.
-	return fmt.Sprintf("%s%s", qemuMountTagPrefix, hashValue(name, maxLength))
+	return fmt.Sprintf("%s%s", qemuMountTagPrefix, internalInstance.HashName(name, maxLength))
 }
 
 func (d *qemu) setCPUs(monitor *qmp.Monitor, count int) error {
@@ -13169,12 +13269,7 @@ func (d *qemu) ConnectNBDAllDisks(reuse bool) (net.Conn, func(), error) {
 			bitmapNames = append(bitmapNames, b.Name)
 		}
 
-		diskSize, err := monitor.BlockNodeSize(nodeName)
-		if err != nil {
-			return nil, nil, fmt.Errorf("Failed fetching size for %q: %w", devName, err)
-		}
-
-		overlayNode, baseNode, removeOverlay, err := d.prepareEphemeralSnapshot(monitor, nodeName, diskSize, true)
+		overlayNode, baseNode, removeOverlay, err := d.prepareEphemeralSnapshot(monitor, nodeName, 0, true)
 		if err != nil {
 			return nil, nil, fmt.Errorf("Failed creating temporary snapshot for %q: %w", devName, err)
 		}

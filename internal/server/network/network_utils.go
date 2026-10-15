@@ -186,8 +186,8 @@ func UsedBy(s *state.State, networkProjectName string, networkID int64, networkN
 		}
 	}
 
-	// Only networks defined in the default project can be used by other networks. Cheapest to do.
-	if networkProjectName == api.ProjectDefaultName {
+	// Only networks in the default project can be used as uplinks and only OVN networks can be parents. Cheapest to do.
+	if networkProjectName == api.ProjectDefaultName || networkType == "ovn" {
 		// Get all managed networks across all projects.
 		var projectNetworks map[string]map[int64]api.Network
 
@@ -207,7 +207,12 @@ func UsedBy(s *state.State, networkProjectName string, networkID int64, networkN
 
 				// The network's config references the network we are searching for. Either by
 				// directly referencing our network or by referencing our interface as its parent.
-				if network.Config["network"] == networkName || network.Config["parent"] == networkName {
+				uplinkUsed := networkProjectName == api.ProjectDefaultName && (network.Config["network"] == networkName || network.Config["parent"] == networkName)
+
+				// OVN child networks reference their parent within the same project.
+				parentUsed := networkType == "ovn" && network.Type == "ovn" && projectName == networkProjectName && network.Config["parent"] == networkName
+
+				if uplinkUsed || parentUsed {
 					usedBy = append(usedBy, api.NewURL().Path(version.APIVersion, "networks", network.Name).Project(projectName).String())
 
 					if firstOnly {
@@ -546,15 +551,16 @@ func UpdateDNSMasqStatic(s *state.State, networkName string) error {
 	for _, network := range networks {
 		entries := entries[network]
 
-		// Skip networks we don't manage (or don't have DHCP enabled).
-		if !util.PathExists(internalUtil.VarPath("networks", network, "dnsmasq.pid")) {
-			continue
-		}
-
 		// Pass api.ProjectDefaultName here, as currently dnsmasq (bridged) networks do not support projects.
 		n, err := LoadByName(s, api.ProjectDefaultName, network)
 		if err != nil {
 			return fmt.Errorf("Failed to load network %q in project %q for dnsmasq update: %w", api.ProjectDefaultName, network, err)
+		}
+
+		// Skip networks that don't use dnsmasq (or haven't been set up on this server yet).
+		bridgeNet, ok := n.(*bridge)
+		if !ok || !bridgeNet.UsesDNSMasq() || !util.PathExists(internalUtil.VarPath("networks", network, "dnsmasq.hosts")) {
+			continue
 		}
 
 		config := n.Config()

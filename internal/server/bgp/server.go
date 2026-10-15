@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -84,7 +86,13 @@ func (s *Server) start(address string, asn uint32, routerID net.IP) error {
 	}
 
 	// Setup the logger.
-	logHandler := logger.NewSlogHandler("bgp:", logger.Warn)
+	logHandler := logger.NewSlogHandler(func(lvl logger.SlogLevel, msg string, ctx, attrs logger.Ctx) {
+		if slices.Contains([]logger.SlogLevel{logger.SlogDebug, logger.SlogInfo}, lvl) {
+			return
+		}
+
+		logger.Warn("bgp: "+msg, ctx)
+	})
 	logLevel := &slog.LevelVar{}
 	logLevel.Set(slog.LevelWarn)
 
@@ -146,11 +154,14 @@ func (s *Server) start(address string, asn uint32, routerID net.IP) error {
 
 	// Add existing peers.
 	s.peers = map[string]peer{}
-	for _, peer := range oldPeers {
+	for peerName, peer := range oldPeers {
 		err := s.addPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdtime)
 		if err != nil {
 			return err
 		}
+
+		// Preserve the reference count for shared peers.
+		s.peers[peerName] = peer
 	}
 
 	// Record the address.
@@ -461,7 +472,7 @@ func (s *Server) removePrefixByUUID(pathUUID string) error {
 		}
 
 		err = s.bgp.DeletePath(bgpAPIutil.DeletePathRequest{UUIDs: []uuid.UUID{nativeUUID}})
-		if err != nil && err.Error() != "can't find a specified path" {
+		if err != nil && !strings.HasPrefix(err.Error(), "can't find a specified path") {
 			return err
 		}
 	}

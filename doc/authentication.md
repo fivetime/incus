@@ -76,6 +76,17 @@ the client certificate's private key.
 The preferred way to add trusted clients is to directly add their certificates to the trust store on the server.
 To do so, copy the client certificate to the server and register it using [`incus config trust add-certificate <file>`](incus_config_trust_add-certificate.md).
 
+(authentication-ca-certs)=
+#### Trusting a certificate authority
+
+Instead of adding every client certificate, you can add a CA certificate to the trust store.
+Any client certificate issued by that CA is then trusted as if the CA entry itself had been presented: the client is identified by the fingerprint of the CA entry and inherits its type, restrictions and projects.
+The client must present any intermediate certificate between its own certificate and the trusted CA, and its certificate must allow the `clientAuth` extended key usage if it specifies any.
+
+This makes it possible to use short-lived client certificates issued by an internal PKI without updating the trust store on every renewal.
+Revocation lists aren't consulted for such certificates, so remove the CA entry from the trust store to revoke all the certificates it issued.
+Certificates that are directly present in the trust store always take precedence over a matching CA entry.
+
 (authentication-token)=
 #### Adding client certificates using tokens
 
@@ -120,6 +131,15 @@ If the server certificate isn't signed by the CA, the connection will simply go 
 If the server certificate is valid and signed by the CA, then the connection continues without prompting the user for the certificate.
 
 Note that the generated certificates are not automatically trusted. You must still add them to the server in one of the ways described in {ref}`authentication-trusted-clients`.
+In that mode, only client certificates issued by the CA can be added to the trust store.
+
+Alternatively, you can set {config:option}`server-core:core.trust_ca_certificates` to `true` to have the server automatically trust any valid client certificate issued by the CA.
+Such certificates don't need to be added to the trust store and get full access to the server, unless they are added to the trust store as restricted certificates.
+Certificates listed in a `ca.crl` file placed in the server's configuration directory are rejected.
+
+```{caution}
+Only enable `core.trust_ca_certificates` with a CA dedicated to Incus, as anyone holding a certificate issued by that CA can then administer the server.
+```
 
 ### Encrypting local keys
 
@@ -160,6 +180,11 @@ To add a remote pointing to an Incus server configured with OIDC authentication,
 You are then prompted to authenticate through your web browser, where you must confirm the device code that Incus uses.
 The Incus client then retrieves and stores the access and refresh tokens and provides those to Incus for all interactions.
 
+Incus verifies JWT access tokens offline using the provider's signing keys.
+Providers that issue opaque access tokens are also supported, in which case Incus verifies the ID token instead and checks that it was issued for the configured client ID.
+The client ID used by Incus must therefore not be shared with any other application registered with the provider.
+Setting `oidc.audience` disables this fallback as the audience can't be verified on an opaque access token.
+
 Incus supports a custom OIDC claim of `incus.allowed_subnets` (list of strings), if the claim is set,
 the user will only be allowed if connecting from an IP address that's part of one of the CIDR subnets listed in the claim.
 
@@ -182,7 +207,9 @@ For `DNS-01`, the relevant {config:option}`server-acme:acme.provider` and {confi
 values can be found directly in the [documentation of `lego`](https://go-acme.github.io/lego/dns/index.html),
 the ACME client that Incus uses behind the scenes.
 
-For `HTTP-01`, Incus will cause `lego` to temporarily listen on port `80` so the the HTTP challenge can go through.
+For `HTTP-01`, Incus will cause `lego` to temporarily listen on port `80` so the HTTP challenge can go through.
+In a cluster, the challenge runs on the leader while the other members temporarily listen on that same port and forward the challenge requests to the leader.
+This allows for a certificate covering the names of all cluster members.
 If your Incus server sits behind a reverse proxy, you'll need that reverse proxy to redirect HTTP traffic to HTTPS.
 
 For ACME services that require External Account Binding (EAB), set both

@@ -687,7 +687,7 @@ func (n *ovn) Validate(config map[string]string, clientType request.ClientType) 
 		//
 		// ---
 		//  type: string
-		//  shortdesc: The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)
+		//  shortdesc: The source address used for outbound traffic from the network
 		//  condition: IPv4 address
 		"ipv4.nat.address": validate.Optional(validate.IsNetworkAddressV4),
 
@@ -705,7 +705,7 @@ func (n *ovn) Validate(config map[string]string, clientType request.ClientType) 
 		// ---
 		//  type: string
 		//  condition: IPv6 address
-		//  shortdesc: The source address used for outbound traffic from the network (requires uplink `ovn.ingress_mode=routed`)
+		//  shortdesc: The source address used for outbound traffic from the network
 		"ipv6.nat.address": validate.Optional(validate.IsNetworkAddressV6),
 
 		// gendoc:generate(entity=network_ovn, group=common, key=ipv4.l3only)
@@ -1100,15 +1100,11 @@ func (n *ovn) Validate(config map[string]string, clientType request.ClientType) 
 		}
 	}
 
-	// Check SNAT addresses specified are allowed to be used based on uplink's ovn.ingress_mode setting.
+	// Check SNAT addresses specified are within the uplink's routes and don't conflict with other networks/NICs.
 	var externalSNATSubnets []*net.IPNet // Subnets to check for conflicts with other networks/NICs.
 	for _, keyPrefix := range []string{"ipv4", "ipv6"} {
 		snatAddressKey := fmt.Sprintf("%s.nat.address", keyPrefix)
 		if config[snatAddressKey] != "" {
-			if uplink.Config["ovn.ingress_mode"] != "routed" {
-				return fmt.Errorf(`Cannot specify %q when uplink ovn.ingress_mode is not "routed"`, snatAddressKey)
-			}
-
 			subnetSize := 128
 			if keyPrefix == "ipv4" {
 				subnetSize = 32
@@ -3747,7 +3743,13 @@ func (n *ovn) setup(update bool) error {
 			})
 		}
 
-		err = n.setupRouterSNAT(update, routerIntPortIPv4Net, routerIntPortIPv6Net, routerExtPortIPv4, routerExtPortIPv6)
+		// The uplink's ingress mode decides whether the NAT addresses are advertised with proxy ARP/NDP.
+		uplinkIngressMode, err := n.uplinkIngressMode()
+		if err != nil {
+			return err
+		}
+
+		err = n.setupRouterSNAT(update, routerIntPortIPv4Net, routerIntPortIPv6Net, routerExtPortIPv4, routerExtPortIPv6, uplinkIngressMode)
 		if err != nil {
 			return err
 		}
@@ -4069,8 +4071,24 @@ func (n *ovn) getDhcpOptionUUIDs() (v4Uuid networkOVN.OVNDHCPOptionsUUID, v6Uuid
 	return v4Uuid, v6Uuid, nil
 }
 
+// uplinkIngressMode returns the ovn.ingress_mode of the uplink network (ours or our parent's).
+func (n *ovn) uplinkIngressMode() (string, error) {
+	uplinkName := n.UplinkName()
+	if uplinkName == "" || uplinkName == "none" {
+		return "", nil
+	}
+
+	// Uplink network must be in default project.
+	uplinkNet, err := LoadByName(n.state, api.ProjectDefaultName, uplinkName)
+	if err != nil {
+		return "", fmt.Errorf("Failed loading uplink network %q: %w", uplinkName, err)
+	}
+
+	return uplinkNet.Config()["ovn.ingress_mode"], nil
+}
+
 // setupRouterSNAT applies the SNAT rules for our own internal subnets to the logical router.
-func (n *ovn) setupRouterSNAT(update bool, intPortIPv4Net *net.IPNet, intPortIPv6Net *net.IPNet, extPortIPv4 net.IP, extPortIPv6 net.IP) error {
+func (n *ovn) setupRouterSNAT(update bool, intPortIPv4Net *net.IPNet, intPortIPv6Net *net.IPNet, extPortIPv4 net.IP, extPortIPv6 net.IP, uplinkIngressMode string) error {
 	// Remove our own SNAT rules, matched on logical IP so the other rules on the router are left alone.
 	if update {
 		err := n.ovnnb.DeleteLogicalRouterNATByLogicalIP(context.TODO(), n.getRouterName(), "snat", intPortIPv4Net, intPortIPv6Net)
@@ -4079,6 +4097,11 @@ func (n *ovn) setupRouterSNAT(update bool, intPortIPv4Net *net.IPNet, intPortIPv
 		}
 	}
 
+	uplinkIsL2Proxy := slices.Contains([]string{"l2proxy", ""}, uplinkIngressMode)
+
+	// NAT addresses to proxy ARP/NDP on the uplink.
+	var arpProxyIPNets []net.IPNet
+
 	if util.IsTrue(n.config["ipv4.nat"]) && intPortIPv4Net != nil && extPortIPv4 != nil {
 		snatIP := extPortIPv4
 
@@ -4086,6 +4109,10 @@ func (n *ovn) setupRouterSNAT(update bool, intPortIPv4Net *net.IPNet, intPortIPv
 			snatIP = net.ParseIP(n.config["ipv4.nat.address"])
 			if snatIP == nil {
 				return fmt.Errorf("Failed parsing %q", "ipv4.nat.address")
+			}
+
+			if uplinkIsL2Proxy {
+				arpProxyIPNets = append(arpProxyIPNets, IPToNet(snatIP))
 			}
 		}
 
@@ -4103,11 +4130,22 @@ func (n *ovn) setupRouterSNAT(update bool, intPortIPv4Net *net.IPNet, intPortIPv
 			if snatIP == nil {
 				return fmt.Errorf("Failed parsing %q", "ipv6.nat.address")
 			}
+
+			if uplinkIsL2Proxy {
+				arpProxyIPNets = append(arpProxyIPNets, IPToNet(snatIP))
+			}
 		}
 
 		err := n.ovnnb.CreateLogicalRouterNAT(context.TODO(), n.getRouterName(), "snat", intPortIPv6Net, snatIP, nil, false, update)
 		if err != nil {
 			return fmt.Errorf("Failed adding router IPv6 SNAT rule: %w", err)
+		}
+	}
+
+	if len(arpProxyIPNets) > 0 {
+		err := n.ovnnb.UpdateLogicalSwitchPortARPProxy(context.TODO(), n.getExtSwitchRouterPortName(), arpProxyIPNets, nil)
+		if err != nil {
+			return fmt.Errorf("Failed advertising NAT address on uplink network: %w", err)
 		}
 	}
 
@@ -4201,6 +4239,44 @@ func (n *ovn) deleteStaleRouterSNAT(oldConfig map[string]string, newConfig map[s
 	}
 
 	return n.ovnnb.DeleteLogicalRouterNATByLogicalIP(context.TODO(), n.getRouterName(), "snat", staleSubnets...)
+}
+
+// deleteStaleRouterNATAddressARPProxy removes any proxy ARP/NDP entry for a NAT address no longer configured.
+func (n *ovn) deleteStaleRouterNATAddressARPProxy(oldConfig map[string]string, newConfig map[string]string) error {
+	var staleIPNets []net.IPNet
+
+	for _, keyPrefix := range []string{"ipv4", "ipv6"} {
+		addressKey := fmt.Sprintf("%s.nat.address", keyPrefix)
+		natKey := fmt.Sprintf("%s.nat", keyPrefix)
+
+		oldAddress := oldConfig[addressKey]
+		if oldAddress == "" {
+			continue
+		}
+
+		// Still advertised under the new config, nothing to remove.
+		if oldAddress == newConfig[addressKey] && util.IsTrue(newConfig[natKey]) {
+			continue
+		}
+
+		ipAddress := net.ParseIP(oldAddress)
+		if ipAddress == nil {
+			continue
+		}
+
+		staleIPNets = append(staleIPNets, IPToNet(ipAddress))
+	}
+
+	if len(staleIPNets) == 0 {
+		return nil
+	}
+
+	err := n.ovnnb.UpdateLogicalSwitchPortARPProxy(context.TODO(), n.getExtSwitchRouterPortName(), nil, staleIPNets)
+	if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
+		return err
+	}
+
+	return nil
 }
 
 // logicalRouterPolicySetup applies the security policy to the logical router (clearing any existing policies).
@@ -4379,14 +4455,69 @@ func (n *ovn) deleteChassisGroupEntry() error {
 	return nil
 }
 
+// deleteExternalInterfaces detaches the external interfaces from the integration bridge, removing those created from the extended syntax.
+func (n *ovn) deleteExternalInterfaces() error {
+	vswitch, err := n.state.OVS()
+	if err != nil {
+		return fmt.Errorf("Failed to connect to OVS: %w", err)
+	}
+
+	integrationBridge := n.state.GlobalConfig.NetworkOVNIntegrationBridge()
+	for entry := range strings.SplitSeq(n.config["bridge.external_interfaces"], ",") {
+		entry = strings.TrimSpace(entry)
+		entryParts := strings.Split(entry, "/")
+		if len(entryParts) == 3 {
+			entry = strings.TrimSpace(entryParts[0])
+		}
+
+		if !InterfaceExists(entry) {
+			continue
+		}
+
+		err = vswitch.DeleteBridgePort(context.TODO(), integrationBridge, entry)
+		if err != nil {
+			return fmt.Errorf("Failed detaching external interface %q: %w", entry, err)
+		}
+
+		if len(entryParts) == 3 {
+			err = InterfaceRemove(entry)
+			if err != nil {
+				return fmt.Errorf("Failed removing external interface %q: %w", entry, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // Delete deletes a network.
 func (n *ovn) Delete(clientType request.ClientType) error {
 	n.logger.Debug("Delete", logger.Ctx{"clientType": clientType})
+
+	// Refuse before touching anything so a refused delete leaves the network running.
+	if clientType == request.ClientTypeNormal && n.parentID == 0 {
+		children, err := n.childNetworks()
+		if err != nil {
+			return err
+		}
+
+		if len(children) > 0 {
+			return fmt.Errorf("Network is the parent of %d other network(s)", len(children))
+		}
+	}
 
 	// Don't fail on stop errors as that would prevent the northbound database cleanup below.
 	err := n.Stop()
 	if err != nil {
 		n.logger.Warn("Failed stopping network during delete, continuing with deletion", logger.Ctx{"err": err})
+	}
+
+	// Detach the external interfaces, removing those created from the extended syntax.
+	if n.config["bridge.external_interfaces"] != "" {
+		err = n.deleteExternalInterfaces()
+		if err != nil {
+			n.logger.Warn("Failed cleaning up external interfaces during delete, continuing with deletion", logger.Ctx{"err": err})
+		}
 	}
 
 	if clientType == request.ClientTypeNormal {
@@ -4397,17 +4528,6 @@ func (n *ovn) Delete(clientType request.ClientType) error {
 				return err
 			}
 		} else {
-			var children []*ovn
-
-			children, err = n.childNetworks()
-			if err != nil {
-				return err
-			}
-
-			if len(children) > 0 {
-				return fmt.Errorf("Network is the parent of %d other network(s)", len(children))
-			}
-
 			// Delete the router and anything tied to it (router ports, static routes, policies, nat, ...).
 			err = n.ovnnb.DeleteLogicalRouter(context.TODO(), n.getRouterName())
 			if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
@@ -4547,6 +4667,24 @@ func (n *ovn) deleteRouterNetworkConfig() error {
 		return err
 	}
 
+	// Remove any NAT address we were advertising via proxy ARP/NDP on this router.
+	var arpProxyIPNets []net.IPNet
+	for _, key := range []string{"ipv4.nat.address", "ipv6.nat.address"} {
+		ipAddress := net.ParseIP(n.config[key])
+		if ipAddress == nil {
+			continue
+		}
+
+		arpProxyIPNets = append(arpProxyIPNets, IPToNet(ipAddress))
+	}
+
+	if len(arpProxyIPNets) > 0 {
+		err = n.ovnnb.UpdateLogicalSwitchPortARPProxy(context.TODO(), n.getExtSwitchRouterPortName(), nil, arpProxyIPNets)
+		if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
+			return err
+		}
+	}
+
 	_, routerIntPortIPv4Net, err := n.parseRouterIntPortIPv4Net()
 	if err != nil {
 		return err
@@ -4646,7 +4784,7 @@ func (n *ovn) chassisEnabled(ctx context.Context, tx *db.ClusterTx, members []db
 	enableChassis := -1
 
 	for _, member := range members {
-		hasRole := slices.Contains(member.Roles, db.ClusterRoleOVNChassis)
+		hasRole := slices.Contains(member.Roles, string(db.ClusterRoleOVNChassis))
 
 		if hasRole {
 			if member.ID == memberID {
@@ -5031,9 +5169,12 @@ func (n *ovn) Update(newNetwork api.NetworkPut, targetNode string, clientType re
 			return err
 		}
 
-		// Remove volatile keys associated with old network in new config.
-		delete(newNetwork.Config, ovnVolatileUplinkIPv4)
-		delete(newNetwork.Config, ovnVolatileUplinkIPv6)
+		// Remove volatile keys associated with old network in new config, unless explicitly changed.
+		for _, key := range []string{ovnVolatileUplinkIPv4, ovnVolatileUplinkIPv6} {
+			if newNetwork.Config[key] == oldNetwork.Config[key] {
+				delete(newNetwork.Config, key)
+			}
+		}
 	}
 
 	// When the parent is changing, detach from the logical router we are attached to
@@ -5103,6 +5244,11 @@ func (n *ovn) Update(newNetwork api.NetworkPut, targetNode string, clientType re
 	// Re-setup the logical network after config applied if needed.
 	if len(changedKeys) > 0 && clientType == request.ClientTypeNormal {
 		err = n.deleteStaleRouterSNAT(oldNetwork.Config, newNetwork.Config)
+		if err != nil {
+			return err
+		}
+
+		err = n.deleteStaleRouterNATAddressARPProxy(oldNetwork.Config, newNetwork.Config)
 		if err != nil {
 			return err
 		}
@@ -7044,6 +7190,25 @@ func (n *ovn) handleDependencyChange(uplinkName string, uplinkConfig map[string]
 		n.logger.Debug("Applying ingress mode changes from uplink network to instance NICs", logger.Ctx{"uplink": uplinkName})
 
 		if slices.Contains([]string{"l2proxy", ""}, uplinkConfig["ovn.ingress_mode"]) {
+			// Re-run network setup to proxy ARP/NDP any configured NAT address.
+			err := n.setup(true)
+			if err != nil {
+				return err
+			}
+
+			// Any child network NATs through our router and may have a NAT address of its own.
+			children, err := n.childNetworks()
+			if err != nil {
+				return err
+			}
+
+			for _, child := range children {
+				err = child.setup(true)
+				if err != nil {
+					return fmt.Errorf("Failed updating child network %q: %w", child.Name(), err)
+				}
+			}
+
 			// Get list of active switch ports (avoids repeated querying of OVN NB).
 			activePorts, err := n.ovnnb.GetLogicalSwitchActivePorts(context.TODO(), n.getIntSwitchName())
 			if err != nil {
@@ -8023,11 +8188,25 @@ func (n *ovn) LoadBalancerUpdate(listenAddress string, req api.NetworkLoadBalanc
 		reverter.Add(func() {
 			// Apply old settings to OVN on failure.
 			portMaps, err := n.loadBalancerValidate(net.ParseIP(curLoadBalancer.ListenAddress), &curLoadBalancer.NetworkLoadBalancerPut)
-			if err == nil {
-				vips := n.loadBalancerFlattenVIPs(net.ParseIP(curLoadBalancer.ListenAddress), portMaps)
-				_ = n.ovnnb.CreateLoadBalancer(context.TODO(), n.getLoadBalancerName(curLoadBalancer.ListenAddress), n.getRouterName(), n.getIntSwitchName(), vips...)
-				_ = n.forwardBGPSetupPrefixes()
+			if err != nil {
+				return
 			}
+
+			vips := n.loadBalancerFlattenVIPs(net.ParseIP(curLoadBalancer.ListenAddress), portMaps)
+
+			healthCheck, err := n.getHealthCheck(curLoadBalancer.NetworkLoadBalancerPut)
+			if err != nil {
+				return
+			}
+
+			if healthCheck != nil {
+				for i := range vips {
+					vips[i].HealthCheck = healthCheck
+				}
+			}
+
+			_ = n.ovnnb.CreateLoadBalancer(context.TODO(), n.getLoadBalancerName(curLoadBalancer.ListenAddress), n.getRouterName(), n.getIntSwitchName(), vips...)
+			_ = n.forwardBGPSetupPrefixes()
 		})
 
 		err = n.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
@@ -9196,13 +9375,13 @@ func (n *ovn) remotePeerDelete(peer *api.NetworkPeer) error {
 		return err
 	}
 
-	// Delete transit switch if empty
+	// Delete transit switch if empty, its local mirror is gone once the transit switch was removed.
 	icSwitch, err := n.ovnnb.GetLogicalSwitch(ctx, tsName)
-	if err != nil {
+	if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
 		return err
 	}
 
-	if len(icSwitch.Ports) == 0 {
+	if icSwitch != nil && len(icSwitch.Ports) == 0 {
 		err = icnb.DeleteTransitSwitch(ctx, string(tsName), false)
 		if err != nil && !errors.Is(err, networkOVN.ErrNotManaged) {
 			return err
@@ -9216,7 +9395,7 @@ func (n *ovn) remotePeerDelete(peer *api.NetworkPeer) error {
 
 		// Release peering addresses.
 		err = icnb.DeleteTransitSwitchAllocation(ctx, string(tsName), azName)
-		if err != nil {
+		if err != nil && !errors.Is(err, networkOVN.ErrNotFound) {
 			return err
 		}
 	}
@@ -9393,7 +9572,7 @@ func (n *ovn) loadBalancerHealthEvent(lb ovnNB.LoadBalancer, listenAddress strin
 
 	// Only fire the event on the current cluster leader so that a health change isn't reported once per member.
 	if n.state.ServerClustered {
-		isLeader, err := n.state.Cluster.IsLeader()
+		isLeader, err := n.state.Cluster.IsLeader(context.TODO())
 		if err != nil || !isLeader {
 			return
 		}

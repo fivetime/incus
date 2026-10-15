@@ -592,6 +592,11 @@ var APIExtensions = []string{
 	"instance_state_disk_counters",
 	"instances_state_tpm",
 	"ovn_nic_security_filtering",
+	"authorization_scriptlet_request",
+	"vm_boot_priority_skip",
+	"network_ovn_nat_address_l2proxy",
+	"oidc_id_token",
+	"certificate_ca_trust",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an
