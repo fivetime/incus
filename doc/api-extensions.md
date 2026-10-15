@@ -4021,3 +4021,14 @@ restoring the original root.
 Interrupted preparation blocks ordinary start until the exact generation is
 restored or completed. Snapshot, copy, migration, backup and rename require
 `unrescue` first. Deletion cleans up rescue before releasing the root volume.
+
+## `migration_criu_sha256`
+Adds `environment.criu_sha256` to the authenticated server information response.
+It identifies the executable resolved as `criu` in the daemon environment on
+each query, rather than the client's PATH or a cached version string. The field
+is empty when the executable is unavailable, invalid or changes during hashing.
+
+This extension exposes binary identity; it does not assert PSI restoration or
+other checkpoint capabilities. Operators must qualify the binary's behavior
+before a migration admission accepts its fingerprint. Nova's PSI refusal
+admission compares this field with explicitly qualified fingerprints.
