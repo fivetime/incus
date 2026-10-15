@@ -25,7 +25,7 @@ type MigrationAttempt struct {
 // GetMigrationAttempt returns the migration attempt with the supplied token.
 func (n *NodeTx) GetMigrationAttempt(ctx context.Context, token string) (*MigrationAttempt, error) {
 	attempt := &MigrationAttempt{}
-	err := n.Tx.QueryRowContext(ctx, `
+	err := n.QueryRowContext(ctx, `
 SELECT token, project, resource_type, resource_name, state, started, finished, operation_uuid,
        idmap_base, idmap_size, daemon_start
 FROM migration_attempts
@@ -52,7 +52,7 @@ WHERE token = ?
 
 // CreateMigrationAttempt creates a new active migration attempt.
 func (n *NodeTx) CreateMigrationAttempt(ctx context.Context, attempt MigrationAttempt) error {
-	_, err := n.Tx.ExecContext(ctx, `
+	_, err := n.ExecContext(ctx, `
 INSERT INTO migration_attempts
     (token, project, resource_type, resource_name, state, started, finished, operation_uuid,
      idmap_base, idmap_size, daemon_start)
@@ -149,7 +149,7 @@ FROM migration_attempts
 
 // BeginMigrationAttempt marks an active attempt as having entered instance creation.
 func (n *NodeTx) BeginMigrationAttempt(ctx context.Context, token string, daemonStart int64) (bool, error) {
-	result, err := n.Tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE migration_attempts
 SET started = 1, daemon_start = ?
 WHERE token = ? AND state = 'active' AND started = 0 AND finished = 0
@@ -163,7 +163,7 @@ WHERE token = ? AND state = 'active' AND started = 0 AND finished = 0
 
 // BindMigrationAttemptOperation records the target operation UUID.
 func (n *NodeTx) BindMigrationAttemptOperation(ctx context.Context, token string, operationUUID string) (bool, error) {
-	result, err := n.Tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE migration_attempts
 SET operation_uuid = ?
 WHERE token = ? AND started = 1 AND finished = 0
@@ -178,7 +178,7 @@ WHERE token = ? AND started = 1 AND finished = 0
 
 // CommitMigrationAttempt atomically wins against an abort fence.
 func (n *NodeTx) CommitMigrationAttempt(ctx context.Context, token string) (bool, error) {
-	result, err := n.Tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE migration_attempts
 SET state = 'committed', finished = 1
 WHERE token = ? AND state = 'active' AND started = 1 AND finished = 0
@@ -192,7 +192,7 @@ WHERE token = ? AND state = 'active' AND started = 1 AND finished = 0
 
 // AbortMigrationAttempt atomically fences an attempt.
 func (n *NodeTx) AbortMigrationAttempt(ctx context.Context, token string) (bool, error) {
-	result, err := n.Tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE migration_attempts
 SET state = 'aborted', finished = CASE WHEN started = 0 THEN 1 ELSE finished END
 WHERE token = ? AND state = 'active' AND finished = 0
@@ -206,7 +206,7 @@ WHERE token = ? AND state = 'active' AND finished = 0
 
 // FinishMigrationAttemptFailure marks cleanup complete without overriding an abort fence.
 func (n *NodeTx) FinishMigrationAttemptFailure(ctx context.Context, token string) (bool, error) {
-	result, err := n.Tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE migration_attempts
 SET state = CASE WHEN state = 'active' THEN 'failed' ELSE state END,
     finished = 1,
@@ -222,7 +222,7 @@ WHERE token = ? AND started = 1 AND finished = 0 AND state IN ('active', 'aborte
 
 // SettleAbortedMigrationAttempt marks an aborted attempt clean after external reconciliation.
 func (n *NodeTx) SettleAbortedMigrationAttempt(ctx context.Context, token string) (bool, error) {
-	result, err := n.Tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE migration_attempts
 SET finished = 1, operation_uuid = ''
 WHERE token = ? AND state = 'aborted' AND finished = 0
@@ -236,7 +236,7 @@ WHERE token = ? AND state = 'aborted' AND finished = 0
 
 // DeleteMigrationAttempt retires a terminal migration attempt while retaining its token tombstone.
 func (n *NodeTx) DeleteMigrationAttempt(ctx context.Context, token string) (bool, error) {
-	result, err := n.Tx.ExecContext(ctx, `
+	result, err := n.ExecContext(ctx, `
 UPDATE migration_attempts
 SET project = '', resource_type = '', resource_name = '',
     state = 'retired', started = 0, operation_uuid = '',
