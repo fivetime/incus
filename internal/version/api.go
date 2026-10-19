@@ -597,6 +597,7 @@ var APIExtensions = []string{
 	"network_ovn_nat_address_l2proxy",
 	"oidc_id_token",
 	"certificate_ca_trust",
+	"network_bgp_communities",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an
