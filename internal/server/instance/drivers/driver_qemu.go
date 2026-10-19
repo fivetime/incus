@@ -3254,6 +3254,12 @@ func (d *qemu) deviceDetachBlockDevice(deviceName string, rawConfig deviceConfig
 		}
 	}
 
+	// Release the data file of the metadata image, if any.
+	err = monitor.RemoveFDFromFDSet(blockDevName + "_raw")
+	if err != nil {
+		return err
+	}
+
 	err = monitor.RemoveDevice(deviceID)
 	if err != nil {
 		return err
@@ -5240,18 +5246,167 @@ func (d *qemu) imageMetadataPath(devName string) string {
 	return filepath.Join(d.imageMetadataDir(), fmt.Sprintf("%s.qcow2", devName))
 }
 
+// isRBDPath checks whether a disk path refers to an RBD image rather than a local device.
+func isRBDPath(path string) bool {
+	return strings.HasPrefix(path, device.RBDFormatPrefix+device.RBDFormatSeparator)
+}
+
+// rbdBlockDev returns the QEMU block device options and keyring secret for an RBD image.
+func rbdBlockDev(rbdPath string) (map[string]any, string, error) {
+	poolName, imageName, opts, err := device.DiskParseRBDFormat(rbdPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("Failed parsing rbd string: %w", err)
+	}
+
+	clusterName := storageDrivers.CephDefaultCluster
+	userName := storageDrivers.CephDefaultUser
+	blockDev := map[string]any{
+		"driver": "rbd",
+		"pool":   poolName,
+		"image":  imageName,
+	}
+
+	// Scan & pass through options.
+	for key, val := range opts {
+		// We use 'id' where qemu uses 'user'.
+		switch key {
+		case "id":
+			blockDev["user"] = val
+			userName = val
+		case "cluster":
+			clusterName = val
+		default:
+			blockDev[key] = val
+		}
+	}
+
+	// Parse the secret (QEMU runs unprivileged and can't read the keyring directly).
+	secret, err := storageDrivers.CephKeyring(clusterName, userName)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return blockDev, secret, nil
+}
+
+// rawImageOpts returns the qemu-img image options of a raw volume, local or RBD.
+func rawImageOpts(rawPath string, prefix string) (string, error) {
+	escape := func(s string) string {
+		return strings.ReplaceAll(s, ",", ",,")
+	}
+
+	if isRBDPath(rawPath) {
+		rbdDev, _, err := rbdBlockDev(rawPath)
+		if err != nil {
+			return "", err
+		}
+
+		imageOpts := []string{}
+		for _, key := range []string{"driver", "pool", "image", "user", "conf"} {
+			val, ok := rbdDev[key].(string)
+			if ok {
+				imageOpts = append(imageOpts, fmt.Sprintf("%s%s=%s", prefix, key, escape(val)))
+			}
+		}
+
+		return strings.Join(imageOpts, ","), nil
+	}
+
+	fInfo, err := os.Stat(rawPath)
+	if err != nil {
+		return "", err
+	}
+
+	rawDriver := "file"
+	if linux.IsBlockdev(fInfo.Mode()) {
+		rawDriver = "host_device"
+	}
+
+	return fmt.Sprintf("%sdriver=%s,%sfilename=%s", prefix, rawDriver, prefix, escape(rawPath)), nil
+}
+
+// rawImageInfo returns the image information of a raw volume, local or RBD.
+func rawImageInfo(rawPath string) (*storageDrivers.ImageInfo, error) {
+	if !isRBDPath(rawPath) {
+		return storageDrivers.Qcow2Info(rawPath)
+	}
+
+	imageOpts, err := rawImageOpts(rawPath, "")
+	if err != nil {
+		return nil, err
+	}
+
+	imgJSON, err := subprocess.RunCommand("qemu-img", "info", "-U", "--output=json", "--image-opts", imageOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	imgInfo := storageDrivers.ImageInfo{}
+	err = json.Unmarshal([]byte(imgJSON), &imgInfo)
+	if err != nil {
+		return nil, fmt.Errorf("Failed unmarshalling image info %q: %w", rawPath, err)
+	}
+
+	return &imgInfo, nil
+}
+
+// rawImageSize returns the size of a raw volume, local or RBD.
+func rawImageSize(rawPath string) (int64, error) {
+	if !isRBDPath(rawPath) {
+		return storageDrivers.BlockDiskSizeBytes(rawPath)
+	}
+
+	imgInfo, err := rawImageInfo(rawPath)
+	if err != nil {
+		return -1, err
+	}
+
+	return int64(imgInfo.VirtualSize), nil
+}
+
+// isDependentDisk checks whether the named device is a dependent disk.
+func (d *qemu) isDependentDisk(devName string) bool {
+	found := false
+	_ = d.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {
+		if dev.Name == devName {
+			found = true
+		}
+
+		return nil
+	})
+
+	return found
+}
+
+// removeImageMetadata deletes a device's metadata image and its persistent bitmaps.
+func (d *qemu) removeImageMetadata(devName string) error {
+	_, err := d.mount()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = d.unmount() }()
+
+	err = os.Remove(d.imageMetadataPath(devName))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	return nil
+}
+
 // ensureMetadataImage creates the metadata file if needed.
 func (d *qemu) ensureMetadataImage(rawPath string, devName string) (string, string, error) {
 	if rawPath == "" {
 		return "", "", errors.New("Raw disk path is empty")
 	}
 
-	isQcow2, err := d.isQCOW2(rawPath)
+	imgInfo, err := rawImageInfo(rawPath)
 	if err != nil {
 		return "", "", err
 	}
 
-	if isQcow2 {
+	if imgInfo.Format == storageDrivers.BlockVolumeTypeQcow2 {
 		// Image is qcow2 already, don't touch anything
 		return rawPath, "", nil
 	}
@@ -5276,7 +5431,7 @@ func (d *qemu) ensureMetadataImage(rawPath string, devName string) (string, stri
 		}
 
 		// Get size of disk block device.
-		blockDiskSize, err := storageDrivers.BlockDiskSizeBytes(rawPath)
+		blockDiskSize, err := rawImageSize(rawPath)
 		if err != nil {
 			return "", "", fmt.Errorf("Error getting block device size %q: %w", rawPath, err)
 		}
@@ -5301,7 +5456,7 @@ func (d *qemu) ensureMetadataImage(rawPath string, devName string) (string, stri
 	// and use it.
 
 	// Get size of disk block device.
-	blockDiskSize, err := storageDrivers.BlockDiskSizeBytes(rawPath)
+	blockDiskSize, err := rawImageSize(rawPath)
 	if err != nil {
 		return "", "", fmt.Errorf("Error getting block device size %q: %w", rawPath, err)
 	}
@@ -5341,17 +5496,12 @@ func (d *qemu) resizeMetadataImage(qcow2Path string, rawPath string, newSize int
 	args := []string{"resize"}
 
 	if newSize < oldSize {
-		fInfo, err := os.Stat(rawPath)
+		rawOpts, err := rawImageOpts(rawPath, "data-file.")
 		if err != nil {
 			return err
 		}
 
-		rawDriver := "file"
-		if linux.IsBlockdev(fInfo.Mode()) {
-			rawDriver = "host_device"
-		}
-
-		args = append(args, "--shrink", "--image-opts", fmt.Sprintf("driver=qcow2,file.filename=%s,data-file.driver=%s,data-file.filename=%s", escape(qcow2Path), rawDriver, escape(rawPath)))
+		args = append(args, "--shrink", "--image-opts", fmt.Sprintf("driver=qcow2,file.filename=%s,%s", escape(qcow2Path), rawOpts))
 	} else {
 		// Growing preallocates metadata up to the end of the last cluster which
 		// may lie past the end of a disk that's not 64KiB aligned. As qcow2
@@ -5423,7 +5573,14 @@ func (d *qemu) addRootDriveConfig(qemuDev map[string]any, mountInfo *storagePool
 			}
 
 			rbdImageName := storageDrivers.CephGetRBDImageName(vol, "", false)
-			driveConf.DevPath = device.DiskGetRBDFormat(clusterName, userName, config["ceph.osd.pool_name"], rbdImageName)
+			rbdPath := device.DiskGetRBDFormat(clusterName, userName, config["ceph.osd.pool_name"], rbdImageName)
+
+			// Keep the metadata image and point its data file at the RBD image.
+			if driveConf.DataFilePath != "" {
+				driveConf.DataFilePath = rbdPath
+			} else {
+				driveConf.DevPath = rbdPath
+			}
 		}
 	}
 
@@ -5605,12 +5762,28 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 	media := "disk"
 	isRBDImage := strings.HasPrefix(driveConf.DevPath, device.RBDFormatPrefix)
 
+	// Dependent disks on RBD get a metadata image like the root disk so they can hold persistent bitmaps.
+	if isRBDImage && d.isDependentDisk(driveConf.DevName) && driveConf.FSType != "iso9660" && !slices.Contains(driveConf.Opts, "ro") {
+		qcow2Path, dataFilePath, err := d.ensureMetadataImage(driveConf.DevPath, driveConf.DevName)
+		if err != nil {
+			return nil, err
+		}
+
+		if dataFilePath != "" {
+			driveConf.DevPath = qcow2Path
+			driveConf.DataFilePath = dataFilePath
+			isRBDImage = false
+		}
+	}
+
 	// Use io_uring over native for added performance when supported by QEMU.
 	info := DriverStatuses()[instancetype.VM].Info
 	_, ioUring := info.Features["io_uring"]
 	if slices.Contains(driveConf.Opts, device.DiskIOUring) && ioUring {
 		aioMode = "io_uring"
 	}
+
+	defaultAioMode := aioMode
 
 	var isBlockDev bool
 	var srcDevPath string
@@ -5643,51 +5816,42 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 			}
 
 			driveConf.DevPath = fmt.Sprintf("/proc/self/fd/%d", fd)
-		} else if driveConf.TargetPath != "/" {
-			// Only the root disk device is allowed to pass local devices to us without using an FD.
+
+			// Dependent disks get a metadata image like the root disk so they can hold persistent bitmaps.
+			if d.isDependentDisk(driveConf.DevName) && driveConf.FSType != "iso9660" && !slices.Contains(driveConf.Opts, "ro") {
+				qcow2Path, dataFilePath, err := d.ensureMetadataImage(srcDevPath, driveConf.DevName)
+				if err != nil {
+					return nil, err
+				}
+
+				if dataFilePath != "" {
+					driveConf.DevPath = qcow2Path
+					driveConf.DataFilePath = dataFilePath
+					srcDevPath = qcow2Path
+				}
+			}
+		} else if driveConf.TargetPath != "/" && driveConf.DataFilePath == "" {
+			// Only the root disk and metadata images are allowed to be passed as local paths without an FD.
 			return nil, fmt.Errorf("Invalid device path format %q", driveConf.DevPath)
 		}
 
-		srcDevPathInfo, err := os.Stat(srcDevPath)
+		var err error
+
+		isBlockDev, aioMode, cacheMode, err = d.driveIOMode(driveConf, srcDevPath, aioMode, cacheMode)
 		if err != nil {
-			return nil, fmt.Errorf("Invalid source path %q: %w", srcDevPath, err)
+			return nil, err
 		}
+	}
 
-		isBlockDev = linux.IsBlockdev(srcDevPathInfo.Mode())
+	// The data file of a metadata image lives on different storage than the image, so probe it on its own.
+	dataAioMode := defaultAioMode
+	dataCacheMode := "none"
+	if driveConf.DataFilePath != "" && !isRBDPath(driveConf.DataFilePath) {
+		var err error
 
-		// Handle I/O mode configuration.
-		if !isBlockDev {
-			// Disk dev path is a file, check what the backing filesystem is.
-			fsType, err := linux.DetectFilesystem(srcDevPath)
-			if err != nil {
-				return nil, fmt.Errorf("Failed detecting filesystem type of %q: %w", srcDevPath, err)
-			}
-
-			// If backing FS is ZFS or BTRFS, avoid using direct I/O and use host page cache only.
-			// We've seen ZFS lock up and BTRFS checksum issues when using direct I/O on image files.
-			if fsType == "zfs" || fsType == "btrfs" {
-				aioMode = "threads"
-				cacheMode = "writeback" // Use host cache, with neither O_DSYNC nor O_DIRECT semantics.
-			} else {
-				// Use host cache, with neither O_DSYNC nor O_DIRECT semantics if filesystem
-				// doesn't support Direct I/O.
-				f, err := os.OpenFile(srcDevPath, unix.O_DIRECT|unix.O_RDONLY, 0)
-				if err != nil {
-					cacheMode = "writeback"
-				} else {
-					_ = f.Close() // Don't leak FD.
-				}
-			}
-
-			if cacheMode == "writeback" && driveConf.FSType != "iso9660" {
-				// Only warn about using writeback cache if the drive image is writable.
-				d.logger.Warn("Using writeback cache I/O", logger.Ctx{"device": driveConf.DevName, "devPath": srcDevPath, "fsType": fsType})
-			}
-		} else if !slices.Contains(driveConf.Opts, device.DiskDirectIO) {
-			// If drive config indicates we need to use unsafe I/O then use it.
-			d.logger.Warn("Using unsafe cache I/O", logger.Ctx{"device": driveConf.DevName, "devPath": srcDevPath})
-			aioMode = "threads"
-			cacheMode = "unsafe" // Use host cache, but ignore all sync requests from guest.
+		_, dataAioMode, dataCacheMode, err = d.driveIOMode(driveConf, driveConf.DataFilePath, dataAioMode, dataCacheMode)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -5714,6 +5878,7 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 		}
 
 		cacheMode = strings.TrimPrefix(opt, "cache=")
+		dataCacheMode = cacheMode
 		break
 	}
 
@@ -5729,18 +5894,9 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 	}
 
 	// QMP uses two separate values for the cache.
-	directCache := true   // Bypass host cache, use O_DIRECT semantics by default.
-	noFlushCache := false // Don't ignore any flush requests for the device.
-
-	switch cacheMode {
-	case "unsafe":
-		aioMode = "threads"
-		directCache = false
-		noFlushCache = true
-	case "writeback":
-		aioMode = "threads"
-		directCache = false
-	}
+	var directCache, noFlushCache, dataDirectCache, dataNoFlushCache bool
+	aioMode, directCache, noFlushCache = qemuCacheFlags(cacheMode, aioMode)
+	dataAioMode, dataDirectCache, dataNoFlushCache = qemuCacheFlags(dataCacheMode, dataAioMode)
 
 	escapedDeviceName := linux.PathNameEncode(driveConf.DevName)
 
@@ -5763,37 +5919,13 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 	if isBlockDev {
 		blockDev["driver"] = "host_device"
 	} else if isRBDImage {
-		blockDev["driver"] = "rbd"
-
-		poolName, imageName, opts, err := device.DiskParseRBDFormat(driveConf.DevPath)
-		if err != nil {
-			return nil, fmt.Errorf("Failed parsing rbd string: %w", err)
-		}
-
-		// Scan & pass through options.
-		clusterName := storageDrivers.CephDefaultCluster
-		userName := storageDrivers.CephDefaultUser
-
-		blockDev["pool"] = poolName
-		blockDev["image"] = imageName
-		for key, val := range opts {
-			// We use 'id' where qemu uses 'user'.
-			switch key {
-			case "id":
-				blockDev["user"] = val
-				userName = val
-			case "cluster":
-				clusterName = val
-			default:
-				blockDev[key] = val
-			}
-		}
-
-		// Parse the secret (QEMU runs unprivileged and can't read the keyring directly).
-		rbdSecret, err = storageDrivers.CephKeyring(clusterName, userName)
+		rbdDev, secret, err := rbdBlockDev(driveConf.DevPath)
 		if err != nil {
 			return nil, err
 		}
+
+		maps.Copy(blockDev, rbdDev)
+		rbdSecret = secret
 
 		// The aio option isn't available when using the rbd driver.
 		delete(blockDev, "aio")
@@ -5897,15 +6029,7 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 
 			blockDev["key-secret"] = secretID
 		} else {
-			permissions := unix.O_RDWR
-
-			if readonly {
-				permissions = unix.O_RDONLY
-			}
-
-			if directCache {
-				permissions |= unix.O_DIRECT
-			}
+			permissions := driveOpenFlags(readonly, directCache)
 
 			f, err := os.OpenFile(driveConf.DevPath, permissions, 0)
 			if err != nil {
@@ -5981,8 +6105,29 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 
 				// If the qcow2 has data-file set, add that file to the FD set and
 				// configure the qcow2 blockdev to use /dev/fdset/<x> path.
-				if driveConf.DataFilePath != "" {
-					dataDev, err := buildDataFileInfo(nodeName, m, driveConf, permissions, readonly, aioMode, directCache, noFlushCache)
+				if isRBDPath(driveConf.DataFilePath) {
+					dataDev, secret, err := rbdBlockDev(driveConf.DataFilePath)
+					if err != nil {
+						return err
+					}
+
+					secretID := fmt.Sprintf("pool_%s_%s", dataDev["pool"], dataDev["user"])
+					err = m.AddSecret(secretID, secret)
+					if err != nil {
+						return err
+					}
+
+					dataDev["key-secret"] = secretID
+
+					// Let the system-configured rbd cache take effect.
+					dataDev["cache"] = map[string]any{
+						"direct":   false,
+						"no-flush": dataNoFlushCache,
+					}
+
+					blockDev["data-file"] = dataDev
+				} else if driveConf.DataFilePath != "" {
+					dataDev, err := buildDataFileInfo(nodeName, m, driveConf, driveOpenFlags(readonly, dataDirectCache), readonly, dataAioMode, dataDirectCache, dataNoFlushCache)
 					if err != nil {
 						return err
 					}
@@ -7570,6 +7715,23 @@ func (d *qemu) Update(args db.InstanceArgs, userRequested bool) error {
 	err = d.devicesUpdate(d, removeDevices, addDevices, updateDevices, oldExpandedDevices, isRunning, userRequested)
 	if err != nil {
 		return err
+	}
+
+	// Drop the metadata image of removed volumes so a reused device name starts without bitmaps.
+	for name, oldConf := range removeDevices {
+		if oldConf["type"] != "disk" || oldConf["path"] == "/" || oldConf["pool"] == "" {
+			continue
+		}
+
+		newConf, replaced := addDevices[name]
+		if replaced && newConf["pool"] == oldConf["pool"] && newConf["source"] == oldConf["source"] {
+			continue
+		}
+
+		err = d.removeImageMetadata(name)
+		if err != nil {
+			return err
+		}
 	}
 
 	if isRunning {
@@ -13177,12 +13339,24 @@ func (d *qemu) ConnectNBDAllDisks(reuse bool) (net.Conn, func(), error) {
 		nodeSet[n] = struct{}{}
 	}
 
-	deviceNames := []string{}
-	for devName, devConf := range d.ExpandedDevices() {
-		if devConf["type"] != "disk" {
-			continue
-		}
+	// Only export the root and dependent disks, independent volumes have their own endpoint.
+	rootDiskName, _, err := internalInstance.GetRootDiskDevice(d.ExpandedDevices().CloneNative())
+	if err != nil {
+		return nil, nil, fmt.Errorf("Failed getting instance root disk: %w", err)
+	}
 
+	candidates := []string{rootDiskName}
+	err = d.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {
+		candidates = append(candidates, dev.Name)
+
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	deviceNames := []string{}
+	for _, devName := range candidates {
 		// Only block-backed disks have a matching QEMU block node, this filters out filesystem
 		// shares (e.g. virtiofs) which can't be exported over NBD.
 		nodeName := d.blockNodeName(linux.PathNameEncode(devName))
@@ -13489,6 +13663,85 @@ func (d *qemu) selinuxLabelFiles(contextIsNew bool) error {
 }
 
 // buildDataFileInfo builds the "data-file" field for block device options.
+// driveIOMode probes a disk path and returns whether it's a block device and the aio and cache modes to use.
+func (d *qemu) driveIOMode(driveConf deviceConfig.MountEntryItem, devPath string, aioMode string, cacheMode string) (bool, string, string, error) {
+	devPathInfo, err := os.Stat(devPath)
+	if err != nil {
+		return false, "", "", fmt.Errorf("Invalid source path %q: %w", devPath, err)
+	}
+
+	isBlockDev := linux.IsBlockdev(devPathInfo.Mode())
+
+	// The metadata image only holds bitmaps, the guest data lives in its data file.
+	isMetadataImage := driveConf.DataFilePath != "" && devPath != driveConf.DataFilePath
+
+	// Handle I/O mode configuration.
+	if !isBlockDev {
+		// Disk dev path is a file, check what the backing filesystem is.
+		fsType, err := linux.DetectFilesystem(devPath)
+		if err != nil {
+			return false, "", "", fmt.Errorf("Failed detecting filesystem type of %q: %w", devPath, err)
+		}
+
+		// If backing FS is ZFS or BTRFS, avoid using direct I/O and use host page cache only.
+		// We've seen ZFS lock up and BTRFS checksum issues when using direct I/O on image files.
+		if fsType == "zfs" || fsType == "btrfs" {
+			aioMode = "threads"
+			cacheMode = "writeback" // Use host cache, with neither O_DSYNC nor O_DIRECT semantics.
+		} else {
+			// Use host cache, with neither O_DSYNC nor O_DIRECT semantics if filesystem
+			// doesn't support Direct I/O.
+			f, err := os.OpenFile(devPath, unix.O_DIRECT|unix.O_RDONLY, 0)
+			if err != nil {
+				cacheMode = "writeback"
+			} else {
+				_ = f.Close() // Don't leak FD.
+			}
+		}
+
+		if cacheMode == "writeback" && driveConf.FSType != "iso9660" && !isMetadataImage {
+			// Only warn about using writeback cache if the drive image is writable.
+			d.logger.Warn("Using writeback cache I/O", logger.Ctx{"device": driveConf.DevName, "devPath": devPath, "fsType": fsType})
+		}
+	} else if !slices.Contains(driveConf.Opts, device.DiskDirectIO) {
+		// If drive config indicates we need to use unsafe I/O then use it.
+		d.logger.Warn("Using unsafe cache I/O", logger.Ctx{"device": driveConf.DevName, "devPath": devPath})
+		aioMode = "threads"
+		cacheMode = "unsafe" // Use host cache, but ignore all sync requests from guest.
+	}
+
+	return isBlockDev, aioMode, cacheMode, nil
+}
+
+// qemuCacheFlags converts a cache mode into the aio mode and the QMP cache flags.
+func qemuCacheFlags(cacheMode string, aioMode string) (string, bool, bool) {
+	switch cacheMode {
+	case "unsafe":
+		// Use host cache, but ignore all sync requests from guest.
+		return "threads", false, true
+	case "writeback":
+		// Use host cache, with neither O_DSYNC nor O_DIRECT semantics.
+		return "threads", false, false
+	}
+
+	// Bypass host cache, use O_DIRECT semantics by default.
+	return aioMode, true, false
+}
+
+// driveOpenFlags returns the flags to open a drive file with.
+func driveOpenFlags(readonly bool, directCache bool) int {
+	flags := unix.O_RDWR
+	if readonly {
+		flags = unix.O_RDONLY
+	}
+
+	if directCache {
+		flags |= unix.O_DIRECT
+	}
+
+	return flags
+}
+
 func buildDataFileInfo(nodeName string, m *qmp.Monitor, driveConf deviceConfig.MountEntryItem, permissions int, readonly bool, aioMode string, directCache bool, noFlushCache bool) (map[string]any, error) {
 	if driveConf.DataFilePath == "" {
 		return nil, nil
