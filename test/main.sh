@@ -258,6 +258,7 @@ run_standalone_core() {
     run_test test_tls_jwt "JWT authentication"
     run_test test_tls_restrictions "TLS restrictions"
     run_test test_warnings "Warnings"
+    run_test test_warnings_forced_stop "Warnings on forced stops"
 }
 
 # Tests related to storage and storage drivers (will be run on all drivers).
@@ -356,6 +357,7 @@ run_standalone_network() {
     run_test test_remote_admin "remote administration"
     run_test test_remote_url "remote url handling"
     run_test test_remote_usage "remote usage"
+    run_test test_remote_keepalive "remote keepalive proxy"
     run_test test_list_all_remotes "list all remotes"
     run_test test_syslog_socket "Syslog socket"
 }

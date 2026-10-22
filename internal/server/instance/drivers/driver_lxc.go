@@ -6610,7 +6610,7 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 		return err
 	}
 
-	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, respHeader.DependentVolumes, args.Snapshots, nil, true, clusterMove)
+	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, respHeader, args.Snapshots, nil, true, clusterMove)
 	if err != nil {
 		err := fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 		op.Done(err)
@@ -6618,9 +6618,17 @@ func (d *lxc) MigrateSend(args instance.MigrateSendArgs) error {
 	}
 
 	d.logger.Debug("Generate dependent volumes args")
+	_, srcSnapName, _ := api.GetParentAndSnapshotName(d.name)
 	dependentVolumes := []localMigration.DependentVolumeArgs{}
 	for _, volWithType := range volumesWithTypes {
-		dependentVolumes = append(dependentVolumes, localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], nil))
+		vol := localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], nil)
+
+		// Copying from an instance snapshot, send the matching volume snapshots.
+		if d.IsSnapshot() {
+			vol.Name = fmt.Sprintf("%s/%s", vol.Name, srcSnapName)
+		}
+
+		dependentVolumes = append(dependentVolumes, vol)
 	}
 
 	volSourceArgs := &localMigration.VolumeSourceArgs{
@@ -7494,7 +7502,7 @@ func (d *lxc) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	respHeader.Criu = criuType
 
 	localDevices := d.LocalDevices().CloneNative()
-	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, offerHeader.DependentVolumes, args.Snapshots, localDevices, false, clusterMove)
+	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, offerHeader, args.Snapshots, localDevices, false, clusterMove)
 	if err != nil {
 		return fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 	}
