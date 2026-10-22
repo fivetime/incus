@@ -6093,6 +6093,20 @@ func (d *qemu) addDriveConfig(qemuDev map[string]any, bootIndexes map[string]int
 					"file":      blockDevFile,
 				}
 
+				// Images stored directly on a block device must stay within their fully allocated size.
+				if isBlockDev && driveConf.DataFilePath == "" {
+					// Keep discarded clusters allocated so that fragmentation can't grow the image.
+					blockDev["discard-no-unref"] = true
+
+					// Let QEMU rebuild the refcounts after a crash rather than leak clusters.
+					if !imgInfo.FormatSpecific.Data.LazyRefcounts && !readonly && !d.IsLiveMigration() {
+						err = storageDrivers.Qcow2EnableLazyRefcounts(srcDevPath)
+						if err != nil {
+							d.logger.Warn("Failed enabling lazy refcounts on disk device", logger.Ctx{"device": driveConf.DevName, "err": err})
+						}
+					}
+				}
+
 				// If there are any children, load block information about them.
 				if len(driveConf.BackingPath) > 0 {
 					backingBlockDev, err := d.qcow2BlockDev(m, nodeName, aioMode, directCache, noFlushCache, permissions, readonly, driveConf.BackingPath, 0)
@@ -9028,16 +9042,24 @@ func (d *qemu) MigrateSend(args instance.MigrateSendArgs) error {
 		return err
 	}
 
-	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, respHeader.DependentVolumes, args.Snapshots, nil, true, clusterMove)
+	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, respHeader, args.Snapshots, nil, true, clusterMove)
 	if err != nil {
 		err := fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 		op.Done(err)
 		return err
 	}
 
+	_, srcSnapName, _ := api.GetParentAndSnapshotName(d.name)
 	dependentVolumes := []localMigration.DependentVolumeArgs{}
 	for _, volWithType := range volumesWithTypes {
-		dependentVolumes = append(dependentVolumes, localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], nil))
+		vol := localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], nil)
+
+		// Copying from an instance snapshot, send the matching volume snapshots.
+		if d.IsSnapshot() {
+			vol.Name = fmt.Sprintf("%s/%s", vol.Name, srcSnapName)
+		}
+
+		dependentVolumes = append(dependentVolumes, vol)
 	}
 
 	volSourceArgs := &localMigration.VolumeSourceArgs{
@@ -10077,7 +10099,7 @@ func (d *qemu) MigrateReceive(args instance.MigrateReceiveArgs) error {
 	respHeader.Refresh = &args.Refresh
 
 	localDevices := d.localDevices.CloneNative()
-	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, offerHeader.DependentVolumes, args.Snapshots, localDevices, false, clusterMove)
+	volumesWithTypes, err := storagePools.DependentVolumesMatchMigrationType(d.state, offerHeader, args.Snapshots, localDevices, false, clusterMove)
 	if err != nil {
 		return fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 	}
@@ -12842,10 +12864,11 @@ func (d *qemu) CreateQcow2Snapshot(devPath string, devName string, snapshotName 
 	reverter.Add(func() { _ = monitor.RemoveFDFromFDSet(nextOverlayName) })
 
 	blockDev := map[string]any{
-		"driver":    "qcow2",
-		"discard":   "unmap", // Forward as an unmap request. This is the same as `discard=on` in the qemu config file.
-		"node-name": nextOverlayName,
-		"read-only": false,
+		"driver":           "qcow2",
+		"discard":          "unmap", // Forward as an unmap request. This is the same as `discard=on` in the qemu config file.
+		"discard-no-unref": true,    // Keep discarded clusters allocated so that fragmentation can't grow the image.
+		"node-name":        nextOverlayName,
+		"read-only":        false,
 		"file": map[string]any{
 			"driver":   "host_device",
 			"filename": fmt.Sprintf("/dev/fdset/%d", info.ID),
@@ -13072,10 +13095,11 @@ func (d *qemu) qcow2BlockDev(m *qmp.Monitor, nodeName string, aioMode string, di
 	}
 
 	blockDev := map[string]any{
-		"driver":    "qcow2",
-		"discard":   "unmap", // Forward as an unmap request. This is the same as `discard=on` in the qemu config file.
-		"node-name": backingNodeName,
-		"read-only": false,
+		"driver":           "qcow2",
+		"discard":          "unmap", // Forward as an unmap request. This is the same as `discard=on` in the qemu config file.
+		"discard-no-unref": true,    // Keep discarded clusters allocated so that fragmentation can't grow the image.
+		"node-name":        backingNodeName,
+		"read-only":        false,
 		"file": map[string]any{
 			"driver":   "host_device",
 			"filename": fmt.Sprintf("/dev/fdset/%d", info.ID),

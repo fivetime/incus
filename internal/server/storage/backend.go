@@ -1385,7 +1385,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 			}
 		}
 
-		volumesWithTypes, err := DependentVolumesMatchMigrationType(b.state, dependentVolumesOffer, depSnapshots, newDevices, false, false)
+		volumesWithTypes, err := DependentVolumesMatchMigrationType(b.state, &migration.MigrationHeader{DependentVolumes: dependentVolumesOffer}, depSnapshots, newDevices, false, false)
 		if err != nil {
 			err := fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 			return err
@@ -1979,7 +1979,7 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 			return err
 		}
 
-		volumesWithTypes, err := DependentVolumesMatchMigrationType(b.state, dependentVolumesOffer, snapshots, newDevices, false, false)
+		volumesWithTypes, err := DependentVolumesMatchMigrationType(b.state, &migration.MigrationHeader{DependentVolumes: dependentVolumesOffer}, snapshots, newDevices, false, false)
 		if err != nil {
 			err := fmt.Errorf("Failed to negotiate migration types for dependent volumes: %w", err)
 			return err
@@ -10332,8 +10332,9 @@ func (b *backend) qcow2MigrateVolume(s *state.State, vol drivers.Volume, project
 	}
 
 	_, volName := project.StorageVolumeParts(vol.Name())
+	parentVolName, _, _ := api.GetParentAndSnapshotName(volName)
 
-	inst, diskName, err := InstanceByVolumeName(b.state, vol.Pool(), projectName, volName, volumeDbType)
+	inst, diskName, err := InstanceByVolumeName(b.state, vol.Pool(), projectName, parentVolName, volumeDbType)
 	if err != nil && !errors.Is(err, ErrVolumeNotAttachedToRunningInstance) {
 		return err
 	}
@@ -10366,6 +10367,9 @@ func (b *backend) qcow2MigrateVolume(s *state.State, vol drivers.Volume, project
 
 		return err
 	}
+
+	// Compress block volumes if negotiated with the target.
+	compress := slices.Contains(volSrcArgs.MigrationType.Features, migration.BlockFeatureCompress)
 
 	// Define function to send a block volume.
 	sendBlockVol := func(vol drivers.Volume, conn io.ReadWriteCloser, blockIndex int) error {
@@ -10425,10 +10429,20 @@ func (b *backend) qcow2MigrateVolume(s *state.State, vol drivers.Volume, project
 			}
 		}
 
-		b.logger.Debug("Sending block volume", logger.Ctx{"volName": vol.Name(), "path": nbdPath})
-		_, err = util.SafeCopy(conn, fromPipe)
+		b.logger.Debug("Sending block volume", logger.Ctx{"volName": vol.Name(), "path": nbdPath, "compress": compress})
+		to, err := migration.NewBlockWriter(conn, compress)
+		if err != nil {
+			return err
+		}
+
+		_, err = util.SafeCopy(to, fromPipe)
 		if err != nil {
 			return fmt.Errorf("Error copying %q to migration connection: %w", nbdPath, err)
+		}
+
+		err = to.Close()
+		if err != nil {
+			return fmt.Errorf("Error completing transfer of %q: %w", nbdPath, err)
 		}
 
 		err = from.Close()
@@ -10437,6 +10451,40 @@ func (b *backend) qcow2MigrateVolume(s *state.State, vol drivers.Volume, project
 		}
 
 		return nil
+	}
+
+	// Send a snapshot on its own, read through its backing chain.
+	if vol.IsSnapshot() {
+		parentName, _, _ := api.GetParentAndSnapshotName(vol.Name())
+		parentVol := b.GetVolume(vol.Type(), vol.ContentType(), parentName, vol.Config())
+
+		volSnaps, err := VolumeDBSnapshotsGet(b, projectName, parentVolName, vol.Type())
+		if err != nil {
+			return err
+		}
+
+		snapIndex := slices.IndexFunc(volSnaps, func(snap db.StorageVolumeArgs) bool { return snap.Name == volName })
+		if snapIndex < 0 {
+			return fmt.Errorf("Snapshot %q not found", volName)
+		}
+
+		return parentVol.MountWithSnapshotsTask(func(_ string, snapshotMountPaths map[string]string, op *operations.Operation) error {
+			if vol.ContentType() != drivers.ContentTypeBlock || vol.Type() != drivers.VolumeTypeCustom {
+				err := sendFSVol(vol, conn, snapshotMountPaths[vol.Name()])
+				if err != nil {
+					return err
+				}
+			}
+
+			if vol.IsVMBlock() || (vol.ContentType() == drivers.ContentTypeBlock && vol.Type() == drivers.VolumeTypeCustom) {
+				err := sendBlockVol(vol, conn, snapIndex)
+				if err != nil {
+					return err
+				}
+			}
+
+			return nil
+		}, op)
 	}
 
 	// blockIndex identifies the block device by position rather than name.
@@ -10559,6 +10607,9 @@ func (b *backend) qcow2CreateVolumeFromMigration(vol drivers.Volume, projectName
 		return rsync.Recv(path, conn, wrapper, volTargetArgs.MigrationType.Features)
 	}
 
+	// Block volumes are compressed if negotiated with the source.
+	compress := slices.Contains(volTargetArgs.MigrationType.Features, migration.BlockFeatureCompress)
+
 	recvBlockVol := func(volName string, conn io.ReadWriteCloser, path string) error {
 		var wrapper *ioprogress.ProgressTracker
 		if volTargetArgs.TrackProgress {
@@ -10588,7 +10639,7 @@ func (b *backend) qcow2CreateVolumeFromMigration(vol drivers.Volume, projectName
 		defer logger.WarnOnErrorExcept(to.Close, []error{os.ErrClosed}, "Failed to close destination file")
 
 		// Setup progress tracker.
-		fromPipe := io.ReadCloser(conn)
+		fromPipe := migration.NewBlockReader(conn, compress)
 		if wrapper != nil {
 			fromPipe = &ioprogress.ProgressReader{
 				ReadCloser: fromPipe,
@@ -10596,7 +10647,7 @@ func (b *backend) qcow2CreateVolumeFromMigration(vol drivers.Volume, projectName
 			}
 		}
 
-		b.logger.Debug("Receiving block volume started", logger.Ctx{"volName": volName, "path": path})
+		b.logger.Debug("Receiving block volume started", logger.Ctx{"volName": volName, "path": path, "compress": compress})
 		defer b.logger.Debug("Receiving block volume stopped", logger.Ctx{"volName": volName, "path": path})
 
 		toPipe := io.Writer(to)
