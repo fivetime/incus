@@ -7,6 +7,7 @@
 #include <asm/unistd.h>
 #include <errno.h>
 #include <linux/kcmp.h>
+#include <linux/types.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
