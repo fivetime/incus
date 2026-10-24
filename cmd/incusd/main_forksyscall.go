@@ -341,18 +341,48 @@ static void setxattr_emulate(void)
 // How long the FUSE server of a fuseblk mount may take to answer INIT.
 #define FUSEBLK_INIT_TIMEOUT 120
 
+// Exit codes of the child waiting for INIT.
+#define FUSEBLK_PROBE_OK 0
+#define FUSEBLK_PROBE_FAILED 1
+#define FUSEBLK_PROBE_WRONG_DEVICE 2
+
 // fuseblk_create_tree creates the fuseblk superblock for the caller's block
 // device on the host, starts the FUSE server inside the container on it,
 // waits for the server to answer INIT and returns the detached mount idmapped
 // to the container's user namespace. It must run as host root before joining
 // any of the container's namespaces: a fuseblk superblock can't be created
 // from a user namespace, and /proc/<pid>/root and /dev/fuse must be the host's.
+//
+// The kernel resolves the "source" of a fuseblk mount when the superblock is
+// created, against the calling process' root, and shows that string as the
+// mount's source. So that the guest sees the path it asked for (and umount,
+// mount -a and monitoring find the mount by it), the superblock is created
+// while chrooted to the caller's root rather than from the host through
+// /proc/self/fd/<fd>. Chrooting keeps this process in the host's mount
+// namespace, so /proc and /dev stay the host's, and resolves the path against
+// the same root as the checks before it, even for a caller that is itself
+// chrooted within the container; joining the container's mount namespace
+// would resolve it against that namespace's root instead. The path is only
+// used this way when it holds no symlink; otherwise /proc/self/fd/<fd> is
+// kept as the source.
+//
+// The guest can still replace the node between the checks and the creation.
+// It can't create block devices and only sees its own, so it can at most
+// swap in another of its own devices, and the device the superblock was
+// created on is checked once the server answers INIT, before the mount is
+// idmapped or attached: the superblock's s_dev is the block device's number
+// and is filled into st_dev by the kernel, not by the server.
+//
+// This runs in the single-threaded forksyscall process, so chrooting doesn't
+// affect any other thread.
 static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 			       uid_t uid, gid_t gid, uid_t fsuid, gid_t fsgid,
 			       const char *helper, const char *source, const char *opts,
 			       unsigned long flags, unsigned int dev_major, unsigned int dev_minor)
 {
-	__do_close int root_fd = -EBADF, dev_fd = -EBADF, fuse_fd = -EBADF, fs_fd = -EBADF;
+	__do_close int root_fd = -EBADF, dev_fd = -EBADF, fuse_fd = -EBADF, fs_fd = -EBADF,
+		       src_fd = -EBADF, host_root_fd = -EBADF, host_cwd_fd = -EBADF;
+	bool guest_source = false;
 	int fd_tree, ret, status;
 	unsigned int attrs = 0;
 	char buf[PATH_MAX];
@@ -367,6 +397,10 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 	struct incus_open_how how = {
 	    .flags		= O_PATH | O_CLOEXEC | O_NOFOLLOW,
 	    .resolve		= RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS,
+	};
+	struct incus_open_how how_nosymlinks = {
+	    .flags		= O_PATH | O_CLOEXEC | O_NOFOLLOW,
+	    .resolve		= RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS,
 	};
 
 	caps = cap_get_pid(pid);
@@ -396,6 +430,13 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 	if (!S_ISBLK(st.st_mode) || major(st.st_rdev) != dev_major || minor(st.st_rdev) != dev_minor)
 		die_errno(EPERM, "error: fuseblk source is not the expected block device");
 
+	// Only give the kernel the guest's path when it resolves without
+	// symlinks to the same device.
+	src_fd = incus_openat2(root_fd, source, &how_nosymlinks, sizeof(how_nosymlinks));
+	if (src_fd >= 0 && fstat(src_fd, &st) == 0 && S_ISBLK(st.st_mode) &&
+	    major(st.st_rdev) == dev_major && minor(st.st_rdev) == dev_minor)
+		guest_source = true;
+
 	fuse_fd = open("/dev/fuse", O_RDWR | O_CLOEXEC);
 	if (fuse_fd < 0)
 		die("error: failed to open /dev/fuse");
@@ -403,11 +444,6 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 	fs_fd = incus_fsopen("fuseblk", FSOPEN_CLOEXEC);
 	if (fs_fd < 0)
 		die("error: failed to create fuseblk mount: fsopen");
-
-	snprintf(buf, sizeof(buf), "/proc/self/fd/%d", dev_fd);
-	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "source", buf, 0);
-	if (ret < 0)
-		die("error: failed to create fuseblk mount: fsconfig source");
 
 	snprintf(buf, sizeof(buf), "%d", fuse_fd);
 	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "fd", buf, 0);
@@ -438,9 +474,40 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 	if (ret < 0)
 		die("error: failed to create fuseblk mount: fsconfig default_permissions");
 
-	ret = incus_fsconfig(fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0);
-	if (ret < 0)
-		die("error: failed to create fuseblk mount: fsconfig create");
+	if (guest_source) {
+		host_root_fd = open("/", O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (host_root_fd < 0)
+			die("error: failed to open host root");
+
+		host_cwd_fd = open(".", O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (host_cwd_fd < 0)
+			die("error: failed to open current directory");
+
+		if (fchdir(root_fd) || chroot("."))
+			die("error: failed to change to container root");
+
+		// Nothing but the source and the creation may happen while
+		// chrooted to the caller's root.
+		ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "source", source, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig source");
+
+		ret = incus_fsconfig(fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig create");
+
+		if (fchdir(host_root_fd) || chroot(".") || fchdir(host_cwd_fd))
+			die("error: failed to change back to host root");
+	} else {
+		snprintf(buf, sizeof(buf), "/proc/self/fd/%d", dev_fd);
+		ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "source", buf, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig source");
+
+		ret = incus_fsconfig(fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig create");
+	}
 
 	// Flags without a mount attribute are dropped: remounts, bind and move
 	// mounts never get here.
@@ -484,16 +551,21 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 
 	// Idmapping a FUSE mount needs the server's INIT reply, which a request
 	// waits for. Wait in a child: once interrupted, that wait only answers
-	// fatal signals, so a timer can't bring the caller back.
+	// fatal signals, so a timer can't bring the caller back. The child also
+	// checks the device the superblock was created on, as any later stat
+	// waits on the guest's server as well.
 	pid_probe = fork();
 	if (pid_probe < 0)
 		die("error: failed to fork FUSE INIT probe");
 
 	if (pid_probe == 0) {
 		if (fstatat(fd_tree, "", &st, AT_EMPTY_PATH))
-			_exit(EXIT_FAILURE);
+			_exit(FUSEBLK_PROBE_FAILED);
 
-		_exit(EXIT_SUCCESS);
+		if (st.st_dev != makedev(dev_major, dev_minor))
+			_exit(FUSEBLK_PROBE_WRONG_DEVICE);
+
+		_exit(FUSEBLK_PROBE_OK);
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &deadline);
@@ -512,7 +584,10 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 
 		ret = waitpid(pid_probe, &status, WNOHANG);
 		if (ret == pid_probe) {
-			if (!WIFEXITED(status) || WEXITSTATUS(status))
+			if (WIFEXITED(status) && WEXITSTATUS(status) == FUSEBLK_PROBE_WRONG_DEVICE)
+				die_errno(EPERM, "error: fuseblk mount was created on another device");
+
+			if (!WIFEXITED(status) || WEXITSTATUS(status) != FUSEBLK_PROBE_OK)
 				die_errno(ENOTCONN, "error: FUSE helper did not answer INIT: status=%d", status);
 
 			break;
