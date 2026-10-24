@@ -3664,6 +3664,25 @@
 						}
 					},
 					{
+						"security.syscalls.intercept.mount.fuseblk": {
+							"condition": "container",
+							"defaultdesc": "`false`",
+							"liveupdate": "yes",
+							"longdesc": "When a FUSE-redirected mount names a block device that belongs to one of the instance's own\n`unix-block` devices, create the superblock on the host as `fuseblk`, serve it with the FUSE\nimplementation running inside the instance and attach it as an idmapped mount. Unmounting such\na mount only returns after the FUSE implementation has flushed and acknowledged `DESTROY`, as it\ndoes for a kernel block file system. The FUSE implementation must support being handed the\n`/dev/fuse` descriptor as `/dev/fd/N` and must negotiate `FUSE_ALLOW_IDMAP`; sources that are not\nan owned block device keep using the plain FUSE mount.",
+							"shortdesc": "Whether to mount owned block devices as host-created `fuseblk` superblocks",
+							"type": "bool"
+						}
+					},
+					{
+						"security.syscalls.intercept.mount.fuseblk.options": {
+							"condition": "container",
+							"liveupdate": "yes",
+							"longdesc": "Specify a comma-separated list of options appended to the FUSE implementation's `-o` argument when the\nmount is created as `fuseblk` (for example, `kernel,noexcl` for `fuse4fs`).",
+							"shortdesc": "Options appended for the FUSE implementation of `fuseblk` mounts",
+							"type": "string"
+						}
+					},
+					{
 						"security.syscalls.intercept.mount.shift": {
 							"condition": "container",
 							"defaultdesc": "`false`",
