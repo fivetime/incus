@@ -90,6 +90,33 @@ the kernel attack surface and so is generally considered to be safe,
 though you should keep in mind that any kind of system call interception
 makes for an easy way to overload the host system.
 
+A FUSE mount created this way is a plain `fuse` mount, and unmounting it
+returns before the FUSE implementation has written its final changes:
+the kernel only waits for the `DESTROY` reply of a `fuseblk` mount, which
+an unprivileged container cannot create. When the file system lives on a
+block device that belongs to one of the instance's own `unix-block`
+devices, `security.syscalls.intercept.mount.fuseblk` makes Incus create
+the superblock on the host as `fuseblk` instead, hand the `/dev/fuse`
+descriptor to the FUSE implementation started inside the instance as
+`/dev/fd/N`, map the mount to the instance's ID map and attach it at the
+requested target. The FUSE implementation still runs as the caller inside
+the instance and still parses the file system in user space; the kernel
+only holds the block device. Unmounting then returns after the FUSE
+implementation has flushed and acknowledged `DESTROY`, as it does for a
+kernel block file system.
+
+The caller must hold `CAP_SYS_ADMIN` in the instance, the source must be
+a block device matching one of the instance's `unix-block` devices, and
+the resulting mount is always `nodev,nosuid`. Remounts, bind mounts and
+sources that are not such a block device keep using the plain FUSE
+mount. The FUSE implementation must accept its mount point as `/dev/fd/N`
+(libfuse 3.3 or later) and must negotiate `FUSE_ALLOW_IDMAP` (libfuse
+3.19 or later with `default_permissions`); `fuse4fs` does so with
+`-o kernel`, and `security.syscalls.intercept.mount.fuseblk.options` is
+appended to its options for that purpose (for example `kernel,noexcl`,
+since the kernel already holds the device and an exclusive open would
+fail).
+
 ### `sched_setscheduler`
 
 The `sched_setscheduler` system call is used to manage process priority.
