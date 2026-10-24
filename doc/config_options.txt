@@ -3312,6 +3312,30 @@ Specify a comma-separated list of file systems that are safe to mount for proces
 Specify the mounts of a given file system that should be redirected to their FUSE implementation (for example, `ext4=fuse2fs`).
 ```
 
+```{config:option} security.syscalls.intercept.mount.fuseblk instance-security
+:condition: "container"
+:defaultdesc: "`false`"
+:liveupdate: "yes"
+:shortdesc: "Whether to mount owned block devices as host-created `fuseblk` superblocks"
+:type: "bool"
+When a FUSE-redirected mount names a block device that belongs to one of the instance's own
+`unix-block` devices, create the superblock on the host as `fuseblk`, serve it with the FUSE
+implementation running inside the instance and attach it as an idmapped mount. Unmounting such
+a mount only returns after the FUSE implementation has flushed and acknowledged `DESTROY`, as it
+does for a kernel block file system. The FUSE implementation must support being handed the
+`/dev/fuse` descriptor as `/dev/fd/N` and must negotiate `FUSE_ALLOW_IDMAP`; sources that are not
+an owned block device keep using the plain FUSE mount.
+```
+
+```{config:option} security.syscalls.intercept.mount.fuseblk.options instance-security
+:condition: "container"
+:liveupdate: "yes"
+:shortdesc: "Options appended for the FUSE implementation of `fuseblk` mounts"
+:type: "string"
+Specify a comma-separated list of options appended to the FUSE implementation's `-o` argument when the
+mount is created as `fuseblk` (for example, `kernel,noexcl` for `fuse4fs`).
+```
+
 ```{config:option} security.syscalls.intercept.mount.shift instance-security
 :condition: "container"
 :defaultdesc: "`false`"

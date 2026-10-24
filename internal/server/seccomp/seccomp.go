@@ -615,6 +615,7 @@ type Instance interface {
 	Name() string
 	Project() api.Project
 	ExpandedConfig() map[string]string
+	ExpandedDevices() deviceConfig.Devices
 	IsPrivileged() bool
 	Architecture() int
 	RootfsPath() string
@@ -2160,24 +2161,61 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 		ctx["fuse_source"] = fuseSource
 		ctx["fuse_target"] = args.target
 		ctx["fuse_opts"] = fuseOpts
-		_, _, err = subprocess.RunCommandSplit(
-			context.TODO(),
-			nil,
-			[]*os.File{pidFd},
-			localUtil.GetExecPath(),
-			"forksyscall",
-			"mount",
-			fmt.Sprintf("%d", args.pid),
-			fmt.Sprintf("%d", pidFdNr),
-			fmt.Sprintf("%d", 1),
-			fmt.Sprintf("%d", args.nsuid),
-			fmt.Sprintf("%d", args.nsgid),
-			fmt.Sprintf("%d", args.nsfsuid),
-			fmt.Sprintf("%d", args.nsfsgid),
-			fuseSource,
-			args.target,
-			fuseOpts,
-		)
+
+		major, minor, fuseblk := srv.mountSyscallFuseblkDevice(c, &args)
+		if fuseblk {
+			fuseblkOpts := mountFuseblkOpts(fuseOpts, c.ExpandedConfig()["security.syscalls.intercept.mount.fuseblk.options"])
+			ctx["fuseblk_device"] = fmt.Sprintf("%d:%d", major, minor)
+			ctx["fuseblk_opts"] = fuseblkOpts
+			var stderr string
+			_, stderr, err = subprocess.RunCommandSplit(
+				context.TODO(),
+				nil,
+				[]*os.File{pidFd},
+				localUtil.GetExecPath(),
+				"forksyscall",
+				"mount",
+				fmt.Sprintf("%d", args.pid),
+				fmt.Sprintf("%d", pidFdNr),
+				fmt.Sprintf("%d", 2),
+				fmt.Sprintf("%d", args.nsuid),
+				fmt.Sprintf("%d", args.nsgid),
+				fmt.Sprintf("%d", args.nsfsuid),
+				fmt.Sprintf("%d", args.nsfsgid),
+				fuseBinary,
+				args.source,
+				args.target,
+				fuseblkOpts,
+				fmt.Sprintf("%d", args.flags),
+				fmt.Sprintf("%d", major),
+				fmt.Sprintf("%d", minor),
+			)
+			if err != nil {
+				// A refused fuseblk mount leaves the guest with the kernel's own
+				// answer to its mount call, so record why here.
+				ctx["fuseblk_stderr"] = strings.TrimSpace(stderr)
+				logger.Warn("Failed to create fuseblk mount for syscall interception", ctx)
+			}
+		} else {
+			_, _, err = subprocess.RunCommandSplit(
+				context.TODO(),
+				nil,
+				[]*os.File{pidFd},
+				localUtil.GetExecPath(),
+				"forksyscall",
+				"mount",
+				fmt.Sprintf("%d", args.pid),
+				fmt.Sprintf("%d", pidFdNr),
+				fmt.Sprintf("%d", 1),
+				fmt.Sprintf("%d", args.nsuid),
+				fmt.Sprintf("%d", args.nsgid),
+				fmt.Sprintf("%d", args.nsfsuid),
+				fmt.Sprintf("%d", args.nsfsgid),
+				fuseSource,
+				args.target,
+				fuseOpts,
+			)
+		}
 	} else {
 		_, _, err = subprocess.RunCommandSplit(
 			context.TODO(),
@@ -2388,6 +2426,89 @@ func (srv *Server) MountSyscallValid(c Instance, args *MountArgs) (bool, string)
 	}
 
 	return false, ""
+}
+
+// mountFuseblkOpts appends the configured fuseblk helper options to the options derived from the guest's mount call.
+func mountFuseblkOpts(fuseOpts string, extraOpts string) string {
+	extraOpts = strings.Trim(extraOpts, ",")
+	if fuseOpts == "" {
+		return extraOpts
+	}
+
+	if extraOpts == "" {
+		return fuseOpts
+	}
+
+	return fmt.Sprintf("%s,%s", fuseOpts, extraOpts)
+}
+
+// unixBlockDeviceNumbers returns the host major and minor numbers of a unix-block device entry.
+func unixBlockDeviceNumbers(dev deviceConfig.Device) (uint32, uint32, bool) {
+	if dev["major"] != "" && dev["minor"] != "" {
+		major, err := strconv.ParseUint(dev["major"], 10, 32)
+		if err != nil {
+			return 0, 0, false
+		}
+
+		minor, err := strconv.ParseUint(dev["minor"], 10, 32)
+		if err != nil {
+			return 0, 0, false
+		}
+
+		return uint32(major), uint32(minor), true
+	}
+
+	source := dev["source"]
+	if source == "" {
+		source = dev["path"]
+	}
+
+	var st unix.Stat_t
+	err := unix.Stat(source, &st)
+	if err != nil || st.Mode&unix.S_IFMT != unix.S_IFBLK {
+		return 0, 0, false
+	}
+
+	return unix.Major(uint64(st.Rdev)), unix.Minor(uint64(st.Rdev)), true
+}
+
+// mountSyscallFuseblkDevice reports whether a FUSE-redirected mount should be created as a host-side
+// fuseblk superblock: the instance must enable it, the call must create a new mount from an absolute
+// path, and that path must be a block device whose numbers match one of the instance's own unix-block
+// devices. It returns the device numbers the host side must find again when it opens the source.
+func (srv *Server) mountSyscallFuseblkDevice(c Instance, args *MountArgs) (uint32, uint32, bool) {
+	if !util.IsTrue(c.ExpandedConfig()["security.syscalls.intercept.mount.fuseblk"]) {
+		return 0, 0, false
+	}
+
+	if args.flags&(C.MS_REMOUNT|C.MS_BIND|C.MS_MOVE) != 0 {
+		return 0, 0, false
+	}
+
+	if !filepath.IsAbs(args.source) {
+		return 0, 0, false
+	}
+
+	var st unix.Stat_t
+	err := unix.Lstat(filepath.Join(fmt.Sprintf("/proc/%d/root/", args.pid), args.source), &st)
+	if err != nil || st.Mode&unix.S_IFMT != unix.S_IFBLK {
+		return 0, 0, false
+	}
+
+	major := unix.Major(uint64(st.Rdev))
+	minor := unix.Minor(uint64(st.Rdev))
+	for _, dev := range c.ExpandedDevices() {
+		if dev["type"] != "unix-block" {
+			continue
+		}
+
+		devMajor, devMinor, ok := unixBlockDeviceNumbers(dev)
+		if ok && devMajor == major && devMinor == minor {
+			return major, minor, true
+		}
+	}
+
+	return 0, 0, false
 }
 
 // MountSyscallShift checks whether this mount syscall needs shifting.

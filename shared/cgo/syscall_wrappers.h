@@ -7,6 +7,7 @@
 #include <asm/unistd.h>
 #include <errno.h>
 #include <linux/kcmp.h>
+#include <linux/types.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -131,6 +132,38 @@ static int kcmp(pid_t pid1, pid_t pid2, int type, unsigned long idx1,
 static inline bool filetable_shared(pid_t pid1, pid_t pid2)
 {
 	return kcmp(pid1, pid2, KCMP_FILES, -EBADF, -EBADF) == 0;
+}
+
+/* Same layout as struct open_how from linux/openat2.h, which older headers lack. */
+struct incus_open_how {
+	__u64 flags;
+	__u64 mode;
+	__u64 resolve;
+};
+
+#ifndef RESOLVE_NO_XDEV
+#define RESOLVE_NO_XDEV 0x01
+#endif
+
+#ifndef RESOLVE_NO_MAGICLINKS
+#define RESOLVE_NO_MAGICLINKS 0x02
+#endif
+
+#ifndef RESOLVE_NO_SYMLINKS
+#define RESOLVE_NO_SYMLINKS 0x04
+#endif
+
+#ifndef RESOLVE_BENEATH
+#define RESOLVE_BENEATH 0x08
+#endif
+
+#ifndef RESOLVE_IN_ROOT
+#define RESOLVE_IN_ROOT 0x10
+#endif
+
+static inline int incus_openat2(int dfd, const char *filename, struct incus_open_how *how, size_t size)
+{
+	return syscall(__NR_openat2, dfd, filename, how, size);
 }
 
 #endif /* __INCUS_SYSCALL_WRAPPER_H */

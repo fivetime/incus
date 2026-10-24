@@ -267,7 +267,7 @@ static int lxc_safe_uint(const char *numstr, unsigned int *converted)
 	return 0;
 }
 
-static int mnt_attributes_new(unsigned int old_flags, unsigned int *new_flags)
+int mnt_attributes_new(unsigned int old_flags, unsigned int *new_flags)
 {
 	unsigned int flags = 0;
 

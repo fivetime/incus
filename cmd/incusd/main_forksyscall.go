@@ -7,6 +7,7 @@ package main
 #include <fcntl.h>
 #include <libgen.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,10 +16,12 @@ package main
 #include <sys/fsuid.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/vfs.h>
 #include <sys/wait.h>
 #include <sys/xattr.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "../../shared/cgo/macro.h"
@@ -33,6 +36,7 @@ extern int pidfd_nsfd(int pidfd, pid_t pid);
 extern int preserve_ns(pid_t pid, int ns_fd, const char *ns);
 extern bool change_namespaces(int pidfd, int nsfd, unsigned int flags);
 extern int mount_detach_idmap(const char *path, int fd_userns);
+extern int mnt_attributes_new(unsigned int old_flags, unsigned int *new_flags);
 
 static bool chdirchroot_in_mntns(int cwd_fd, int root_fd)
 {
@@ -334,12 +338,322 @@ static void setxattr_emulate(void)
 	}
 }
 
+// How long the FUSE server of a fuseblk mount may take to answer INIT.
+#define FUSEBLK_INIT_TIMEOUT 120
+
+// Exit codes of the child waiting for INIT.
+#define FUSEBLK_PROBE_OK 0
+#define FUSEBLK_PROBE_FAILED 1
+#define FUSEBLK_PROBE_WRONG_DEVICE 2
+
+// fuseblk_create_tree creates the fuseblk superblock for the caller's block
+// device on the host, starts the FUSE server inside the container on it,
+// waits for the server to answer INIT and returns the detached mount idmapped
+// to the container's user namespace. It must run as host root before joining
+// any of the container's namespaces: a fuseblk superblock can't be created
+// from a user namespace, and /proc/<pid>/root and /dev/fuse must be the host's.
+//
+// The kernel resolves the "source" of a fuseblk mount when the superblock is
+// created, against the calling process' root, and shows that string as the
+// mount's source. So that the guest sees the path it asked for (and umount,
+// mount -a and monitoring find the mount by it), the superblock is created
+// while chrooted to the caller's root rather than from the host through
+// /proc/self/fd/<fd>. Chrooting keeps this process in the host's mount
+// namespace, so /proc and /dev stay the host's, and resolves the path against
+// the same root as the checks before it, even for a caller that is itself
+// chrooted within the container; joining the container's mount namespace
+// would resolve it against that namespace's root instead. The path is only
+// used this way when it holds no symlink; otherwise /proc/self/fd/<fd> is
+// kept as the source.
+//
+// The guest can still replace the node between the checks and the creation.
+// It can't create block devices and only sees its own, so it can at most
+// swap in another of its own devices, and the device the superblock was
+// created on is checked once the server answers INIT, before the mount is
+// idmapped or attached: the superblock's s_dev is the block device's number
+// and is filled into st_dev by the kernel, not by the server.
+//
+// This runs in the single-threaded forksyscall process, so chrooting doesn't
+// affect any other thread.
+static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
+			       uid_t uid, gid_t gid, uid_t fsuid, gid_t fsgid,
+			       const char *helper, const char *source, const char *opts,
+			       unsigned long flags, unsigned int dev_major, unsigned int dev_minor)
+{
+	__do_close int root_fd = -EBADF, dev_fd = -EBADF, fuse_fd = -EBADF, fs_fd = -EBADF,
+		       src_fd = -EBADF, host_root_fd = -EBADF, host_cwd_fd = -EBADF;
+	bool guest_source = false;
+	int fd_tree, ret, status;
+	unsigned int attrs = 0;
+	char buf[PATH_MAX];
+	struct stat st;
+	struct timespec deadline, now;
+	cap_t caps;
+	cap_flag_value_t flag;
+	pid_t pid_helper, pid_probe;
+	struct lxc_mount_attr attr = {
+	    .attr_set		= MOUNT_ATTR_IDMAP,
+	};
+	struct incus_open_how how = {
+	    .flags		= O_PATH | O_CLOEXEC | O_NOFOLLOW,
+	    .resolve		= RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS,
+	};
+	struct incus_open_how how_nosymlinks = {
+	    .flags		= O_PATH | O_CLOEXEC | O_NOFOLLOW,
+	    .resolve		= RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS,
+	};
+
+	caps = cap_get_pid(pid);
+	if (!caps)
+		die("error: failed to get caller capabilities");
+
+	if (cap_get_flag(caps, CAP_SYS_ADMIN, CAP_EFFECTIVE, &flag) != 0 || flag != CAP_SET)
+		die_errno(EPERM, "error: caller lacks CAP_SYS_ADMIN");
+
+	cap_free(caps);
+
+	// Resolve the source as the caller would, inside the container's root.
+	// The device is only checked here, so a node swapped in after the
+	// caller's arguments were checked can't block the open or be used.
+	snprintf(buf, sizeof(buf), "/proc/%d/root", pid);
+	root_fd = open(buf, O_PATH | O_DIRECTORY | O_CLOEXEC);
+	if (root_fd < 0)
+		die("error: failed to open container root");
+
+	dev_fd = incus_openat2(root_fd, source, &how, sizeof(how));
+	if (dev_fd < 0)
+		die("error: failed to open fuseblk source");
+
+	if (fstat(dev_fd, &st))
+		die("error: failed to stat fuseblk source");
+
+	if (!S_ISBLK(st.st_mode) || major(st.st_rdev) != dev_major || minor(st.st_rdev) != dev_minor)
+		die_errno(EPERM, "error: fuseblk source is not the expected block device");
+
+	// Only give the kernel the guest's path when it resolves without
+	// symlinks to the same device.
+	src_fd = incus_openat2(root_fd, source, &how_nosymlinks, sizeof(how_nosymlinks));
+	if (src_fd >= 0 && fstat(src_fd, &st) == 0 && S_ISBLK(st.st_mode) &&
+	    major(st.st_rdev) == dev_major && minor(st.st_rdev) == dev_minor)
+		guest_source = true;
+
+	fuse_fd = open("/dev/fuse", O_RDWR | O_CLOEXEC);
+	if (fuse_fd < 0)
+		die("error: failed to open /dev/fuse");
+
+	fs_fd = incus_fsopen("fuseblk", FSOPEN_CLOEXEC);
+	if (fs_fd < 0)
+		die("error: failed to create fuseblk mount: fsopen");
+
+	snprintf(buf, sizeof(buf), "%d", fuse_fd);
+	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "fd", buf, 0);
+	if (ret < 0)
+		die("error: failed to create fuseblk mount: fsconfig fd");
+
+	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "rootmode", "40000", 0);
+	if (ret < 0)
+		die("error: failed to create fuseblk mount: fsconfig rootmode");
+
+	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "user_id", "0", 0);
+	if (ret < 0)
+		die("error: failed to create fuseblk mount: fsconfig user_id");
+
+	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "group_id", "0", 0);
+	if (ret < 0)
+		die("error: failed to create fuseblk mount: fsconfig group_id");
+
+	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "blksize", "4096", 0);
+	if (ret < 0)
+		die("error: failed to create fuseblk mount: fsconfig blksize");
+
+	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_FLAG, "allow_other", NULL, 0);
+	if (ret < 0)
+		die("error: failed to create fuseblk mount: fsconfig allow_other");
+
+	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_FLAG, "default_permissions", NULL, 0);
+	if (ret < 0)
+		die("error: failed to create fuseblk mount: fsconfig default_permissions");
+
+	if (guest_source) {
+		host_root_fd = open("/", O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (host_root_fd < 0)
+			die("error: failed to open host root");
+
+		host_cwd_fd = open(".", O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (host_cwd_fd < 0)
+			die("error: failed to open current directory");
+
+		if (fchdir(root_fd) || chroot("."))
+			die("error: failed to change to container root");
+
+		// Nothing but the source and the creation may happen while
+		// chrooted to the caller's root.
+		ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "source", source, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig source");
+
+		ret = incus_fsconfig(fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig create");
+
+		if (fchdir(host_root_fd) || chroot(".") || fchdir(host_cwd_fd))
+			die("error: failed to change back to host root");
+	} else {
+		snprintf(buf, sizeof(buf), "/proc/self/fd/%d", dev_fd);
+		ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "source", buf, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig source");
+
+		ret = incus_fsconfig(fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0);
+		if (ret < 0)
+			die("error: failed to create fuseblk mount: fsconfig create");
+	}
+
+	// Flags without a mount attribute are dropped: remounts, bind and move
+	// mounts never get here.
+	mnt_attributes_new(flags, &attrs);
+	attrs |= MOUNT_ATTR_NODEV | MOUNT_ATTR_NOSUID;
+	fd_tree = incus_fsmount(fs_fd, FSMOUNT_CLOEXEC, attrs);
+	if (fd_tree < 0)
+		die("error: failed to create fuseblk mount: fsmount");
+
+	pid_helper = fork();
+	if (pid_helper < 0)
+		die("error: failed to fork FUSE helper");
+
+	if (pid_helper == 0) {
+		ret = fcntl(fuse_fd, F_GETFD);
+		if (ret < 0 || fcntl(fuse_fd, F_SETFD, ret & ~FD_CLOEXEC) < 0)
+			die("error: failed to pass /dev/fuse to the FUSE helper");
+
+		attach_userns_fd(ns_fd);
+
+		// Attach to pid namespace so that the fuse daemon belongs to
+		// the correct pid namespace and dies with the container.
+		if (!change_namespaces(pidfd, ns_fd, CLONE_NEWPID))
+			die("error: failed to change to target pid namespace");
+
+		if (!acquire_basic_creds(pid, pidfd, ns_fd, NULL, NULL))
+			die("error: failed to acquire basic creds");
+
+		if (!acquire_final_creds(pid, uid, gid, fsuid, fsgid))
+			die("error: failed to acquire final creds");
+
+		snprintf(buf, sizeof(buf), "/dev/fd/%d", fuse_fd);
+		if (strcmp(opts, "") == 0)
+			execlp(helper, helper, source, buf, (char *) NULL);
+		else
+			execlp(helper, helper, source, buf, "-o", opts, (char *) NULL);
+		die("error: failed to execute FUSE helper %s", helper);
+	}
+
+	close_prot_errno_disarm(fuse_fd);
+
+	// Idmapping a FUSE mount needs the server's INIT reply, which a request
+	// waits for. Wait in a child: once interrupted, that wait only answers
+	// fatal signals, so a timer can't bring the caller back. The child also
+	// checks the device the superblock was created on, as any later stat
+	// waits on the guest's server as well.
+	pid_probe = fork();
+	if (pid_probe < 0)
+		die("error: failed to fork FUSE INIT probe");
+
+	if (pid_probe == 0) {
+		if (fstatat(fd_tree, "", &st, AT_EMPTY_PATH))
+			_exit(FUSEBLK_PROBE_FAILED);
+
+		if (st.st_dev != makedev(dev_major, dev_minor))
+			_exit(FUSEBLK_PROBE_WRONG_DEVICE);
+
+		_exit(FUSEBLK_PROBE_OK);
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &deadline);
+	deadline.tv_sec += FUSEBLK_INIT_TIMEOUT;
+	for (;;) {
+		if (pid_helper > 0) {
+			ret = waitpid(pid_helper, &status, WNOHANG);
+			if (ret == pid_helper) {
+				pid_helper = -1;
+				if (!WIFEXITED(status) || WEXITSTATUS(status)) {
+					kill(pid_probe, SIGKILL);
+					die_errno(ECHILD, "error: FUSE helper failed: status=%d", status);
+				}
+			}
+		}
+
+		ret = waitpid(pid_probe, &status, WNOHANG);
+		if (ret == pid_probe) {
+			if (WIFEXITED(status) && WEXITSTATUS(status) == FUSEBLK_PROBE_WRONG_DEVICE)
+				die_errno(EPERM, "error: fuseblk mount was created on another device");
+
+			if (!WIFEXITED(status) || WEXITSTATUS(status) != FUSEBLK_PROBE_OK)
+				die_errno(ENOTCONN, "error: FUSE helper did not answer INIT: status=%d", status);
+
+			break;
+		}
+
+		if (ret < 0)
+			die("error: failed to wait for FUSE INIT probe");
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec > deadline.tv_sec ||
+		    (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) {
+			// Destroying the superblock makes the helper exit.
+			kill(pid_probe, SIGKILL);
+			waitpid(pid_probe, NULL, 0);
+			close(fd_tree);
+			die_errno(ETIMEDOUT, "error: FUSE helper did not answer INIT in %ds", FUSEBLK_INIT_TIMEOUT);
+		}
+
+		usleep(10000);
+	}
+
+	attr.userns_fd = fd_userns;
+	ret = incus_mount_setattr(fd_tree, "", AT_EMPTY_PATH, &attr, sizeof(attr));
+	if (ret < 0)
+		die("error: failed to create detached idmapped mount");
+
+	return fd_tree;
+}
+
+// attach_detached_mount attaches a detached mount created in the host's mount
+// namespace to the target path in the container, as the caller.
+static void attach_detached_mount(int fd_tree, int fd_mntns, pid_t pid, int pidfd, int ns_fd,
+				  int root_fd, int cwd_fd, uid_t nsuid, gid_t nsgid,
+				  uid_t nsfsuid, gid_t nsfsgid, const char *target)
+{
+	int ret;
+
+	ret = setns(fd_mntns, CLONE_NEWNS);
+	if (ret)
+		die("error: failed to attach to old mount namespace");
+
+	attach_userns_fd(ns_fd);
+
+	if (!change_namespaces(pidfd, ns_fd, CLONE_NEWUSER))
+		die("error: failed to change to target user namespace");
+
+	if (!reacquire_basic_creds(pidfd, ns_fd, root_fd, cwd_fd))
+		die("error: failed to acquire basic creds");
+
+	if (!acquire_final_creds(pid, nsuid, nsgid, nsfsuid, nsfsgid))
+		die("error: failed to acquire final creds");
+
+	ret = incus_move_mount(fd_tree, "", -EBADF, target, MOVE_MOUNT_F_EMPTY_PATH);
+	if (ret)
+		die("error: failed to attach detached mount");
+}
+
 static void mount_emulate(void)
 {
 	__do_close int fd_mntns = -EBADF, fd_userns = -EBADF, pidfd = -EBADF,
 		       ns_fd = -EBADF, root_fd = -EBADF, cwd_fd = -EBADF;
 	char *source = NULL, *shift = NULL, *target = NULL, *fstype = NULL;
-	bool use_fuse;
+	char *helper = NULL, *opts = NULL;
+	bool use_fuse, use_fuseblk;
+	unsigned int dev_major = 0, dev_minor = 0;
+	int fd_tree = -EBADF;
 	uid_t nsuid = -1, uid = -1, nsfsuid = -1, fsuid = -1;
 	gid_t nsgid = -1, gid = -1, nsfsgid = -1, fsgid = -1;
 	int ret;
@@ -355,8 +669,10 @@ static void mount_emulate(void)
 		_exit(EXIT_FAILURE);
 	}
 
-	use_fuse = (atoi(advance_arg(true)) == 1);
-	if (!use_fuse) {
+	ret = atoi(advance_arg(true));
+	use_fuse = (ret == 1);
+	use_fuseblk = (ret == 2);
+	if (!use_fuse && !use_fuseblk) {
 		source = advance_arg(true);
 		target = advance_arg(true);
 		fstype = advance_arg(true);
@@ -368,7 +684,15 @@ static void mount_emulate(void)
 	gid = atoi(advance_arg(true));
 	fsuid = atoi(advance_arg(true));
 	fsgid = atoi(advance_arg(true));
-	if (!use_fuse) {
+	if (use_fuseblk) {
+		helper = advance_arg(true);
+		source = advance_arg(true);
+		target = advance_arg(true);
+		opts = advance_arg(true);
+		flags = atoi(advance_arg(true));
+		dev_major = strtoul(advance_arg(true), NULL, 10);
+		dev_minor = strtoul(advance_arg(true), NULL, 10);
+	} else if (!use_fuse) {
 		nsuid = atoi(advance_arg(true));
 		nsgid = atoi(advance_arg(true));
 		nsfsuid = atoi(advance_arg(true));
@@ -388,6 +712,11 @@ static void mount_emulate(void)
 		_exit(EXIT_FAILURE);
 	}
 
+	if (use_fuseblk)
+		fd_tree = fuseblk_create_tree(pid, pidfd, ns_fd, fd_userns,
+					      uid, gid, fsuid, fsgid, helper, source, opts,
+					      flags, dev_major, dev_minor);
+
 	if (use_fuse) {
 		attach_userns_fd(ns_fd);
 
@@ -402,12 +731,17 @@ static void mount_emulate(void)
 		_exit(EXIT_FAILURE);
 	}
 
-	if (!acquire_final_creds(pid, uid, gid, fsuid, fsgid)) {
+	// The fuseblk IDs are the caller's namespace IDs, taken on once the
+	// mount is attached from within the container's user namespace.
+	if (!use_fuseblk && !acquire_final_creds(pid, uid, gid, fsuid, fsgid)) {
 		fprintf(stderr, "mount: failed to acquire final credentials: %d", errno);
 		_exit(EXIT_FAILURE);
 	}
 
-	if (use_fuse) {
+	if (use_fuseblk) {
+		attach_detached_mount(fd_tree, fd_mntns, pid, pidfd, ns_fd, root_fd, cwd_fd,
+				      uid, gid, fsuid, fsgid, target);
+	} else if (use_fuse) {
 		int status;
 		pid_t pid_fuse;
 
@@ -438,7 +772,6 @@ static void mount_emulate(void)
 			_exit(EXIT_FAILURE);
 		}
 	} else if (strcmp(shift, "idmapped") == 0) {
-		int fd_tree;
 		int fs_fd = -EBADF;
 
 		struct lxc_mount_attr attr = {
@@ -498,24 +831,8 @@ static void mount_emulate(void)
 		if (ret < 0)
 			die("error: failed to create detached idmapped mount");
 
-		ret = setns(fd_mntns, CLONE_NEWNS);
-		if (ret)
-			die("error: failed to attach to old mount namespace");
-
-		attach_userns_fd(ns_fd);
-
-		if (!change_namespaces(pidfd, ns_fd, CLONE_NEWUSER))
-			die("error: failed to change to target user namespace");
-
-		if (!reacquire_basic_creds(pidfd, ns_fd, root_fd, cwd_fd))
-			die("error: failed to acquire basic creds");
-
-		if (!acquire_final_creds(pid, nsuid, nsgid, nsfsuid, nsfsgid))
-			die("error: failed to acquire final creds");
-
-		ret = incus_move_mount(fd_tree, "", -EBADF, target, MOVE_MOUNT_F_EMPTY_PATH);
-		if (ret)
-			die("error: failed to attach detached mount");
+		attach_detached_mount(fd_tree, fd_mntns, pid, pidfd, ns_fd, root_fd, cwd_fd,
+				      nsuid, nsgid, nsfsuid, nsfsgid, target);
 	} else {
 		if (mount(source, target, fstype, flags, data) < 0)
 			_exit(EXIT_FAILURE);
