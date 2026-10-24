@@ -4068,3 +4068,13 @@ This extension exposes binary identity; it does not assert PSI restoration or
 other checkpoint capabilities. Operators must qualify the binary's behavior
 before a migration admission accepts its fingerprint. Nova's PSI refusal
 admission compares this field with explicitly qualified fingerprints.
+
+## `container_syscall_intercept_mount_fuseblk`
+Adds the `security.syscalls.intercept.mount.fuseblk` and
+`security.syscalls.intercept.mount.fuseblk.options` instance configuration
+keys. When a mount redirected through `security.syscalls.intercept.mount.fuse`
+names a block device that belongs to one of the instance's own `unix-block`
+devices, the superblock is created on the host as `fuseblk`, served by the
+FUSE implementation running inside the instance on a pre-opened `/dev/fuse`
+descriptor and attached as an idmapped mount. Unmounting such a mount returns
+only after the FUSE implementation has flushed and acknowledged `DESTROY`.

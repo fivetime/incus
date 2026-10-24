@@ -616,6 +616,7 @@ var APIExtensions = []string{
 	"migration_checkpoint_restore",
 	"container_rescue",
 	"migration_criu_sha256",
+	"container_syscall_intercept_mount_fuseblk",
 }
 
 // APIExtensionsCount returns the number of available API extensions.
