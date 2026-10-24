@@ -1269,6 +1269,32 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	//  shortdesc: File system that should be redirected to FUSE implementation
 	"security.syscalls.intercept.mount.fuse": validate.IsAny,
 
+	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.mount.fuseblk)
+	// When a FUSE-redirected mount names a block device that belongs to one of the instance's own
+	// `unix-block` devices, create the superblock on the host as `fuseblk`, serve it with the FUSE
+	// implementation running inside the instance and attach it as an idmapped mount. Unmounting such
+	// a mount only returns after the FUSE implementation has flushed and acknowledged `DESTROY`, as it
+	// does for a kernel block file system. The FUSE implementation must support being handed the
+	// `/dev/fuse` descriptor as `/dev/fd/N` and must negotiate `FUSE_ALLOW_IDMAP`; sources that are not
+	// an owned block device keep using the plain FUSE mount.
+	// ---
+	//  type: bool
+	//  defaultdesc: `false`
+	//  liveupdate: yes
+	//  condition: container
+	//  shortdesc: Whether to mount owned block devices as host-created `fuseblk` superblocks
+	"security.syscalls.intercept.mount.fuseblk": validate.Optional(validate.IsBool),
+
+	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.mount.fuseblk.options)
+	// Specify a comma-separated list of options appended to the FUSE implementation's `-o` argument when the
+	// mount is created as `fuseblk` (for example, `kernel,noexcl` for `fuse4fs`).
+	// ---
+	//  type: string
+	//  liveupdate: yes
+	//  condition: container
+	//  shortdesc: Options appended for the FUSE implementation of `fuseblk` mounts
+	"security.syscalls.intercept.mount.fuseblk.options": validate.IsAny,
+
 	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.mount.shift)
 	//
 	// ---

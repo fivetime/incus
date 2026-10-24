@@ -1167,6 +1167,8 @@ var allowableIntercept = []string{
 	"security.syscalls.intercept.mknod",
 	"security.syscalls.intercept.mount",
 	"security.syscalls.intercept.mount.fuse",
+	"security.syscalls.intercept.mount.fuseblk",
+	"security.syscalls.intercept.mount.fuseblk.options",
 	"security.syscalls.intercept.setxattr",
 	"security.syscalls.intercept.sysinfo",
 }
