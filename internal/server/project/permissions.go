@@ -1164,6 +1164,7 @@ var allRestrictions = map[string]string{
 var allowableIntercept = []string{
 	"security.syscalls.intercept.bpf",
 	"security.syscalls.intercept.bpf.devices",
+	"security.syscalls.intercept.ioctl.resize_fs",
 	"security.syscalls.intercept.mknod",
 	"security.syscalls.intercept.mount",
 	"security.syscalls.intercept.mount.fuse",

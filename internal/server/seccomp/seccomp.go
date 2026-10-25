@@ -99,6 +99,7 @@ struct incus_seccomp_data_arch {
 	int nr_bpf;
 	int nr_sched_setscheduler;
 	int nr_sysinfo;
+	int nr_ioctl;
 };
 
 #define INCUS_SECCOMP_NOTIFY_MKNOD    0
@@ -108,69 +109,70 @@ struct incus_seccomp_data_arch {
 #define INCUS_SECCOMP_NOTIFY_BPF 4
 #define INCUS_SECCOMP_NOTIFY_SCHED_SETSCHEDULER 5
 #define INCUS_SECCOMP_NOTIFY_SYSINFO 6
+#define INCUS_SECCOMP_NOTIFY_IOCTL 7
 
 // ordered by likelihood of usage...
 static const struct incus_seccomp_data_arch seccomp_notify_syscall_table[] = {
-	{ -1, INCUS_SECCOMP_NOTIFY_MKNOD, INCUS_SECCOMP_NOTIFY_MKNODAT, INCUS_SECCOMP_NOTIFY_SETXATTR, INCUS_SECCOMP_NOTIFY_MOUNT, INCUS_SECCOMP_NOTIFY_BPF, INCUS_SECCOMP_NOTIFY_SCHED_SETSCHEDULER, INCUS_SECCOMP_NOTIFY_SYSINFO},
+	{ -1, INCUS_SECCOMP_NOTIFY_MKNOD, INCUS_SECCOMP_NOTIFY_MKNODAT, INCUS_SECCOMP_NOTIFY_SETXATTR, INCUS_SECCOMP_NOTIFY_MOUNT, INCUS_SECCOMP_NOTIFY_BPF, INCUS_SECCOMP_NOTIFY_SCHED_SETSCHEDULER, INCUS_SECCOMP_NOTIFY_SYSINFO, INCUS_SECCOMP_NOTIFY_IOCTL},
 #ifdef AUDIT_ARCH_X86_64
-	{ AUDIT_ARCH_X86_64,      133, 259, 188, 165, 321, 144, 99 },
+	{ AUDIT_ARCH_X86_64,      133, 259, 188, 165, 321, 144, 99, 16 },
 #endif
 #ifdef AUDIT_ARCH_I386
-	{ AUDIT_ARCH_I386,         14, 297, 226,  21, 357, 156, 116 },
+	{ AUDIT_ARCH_I386,         14, 297, 226,  21, 357, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_AARCH64
-	{ AUDIT_ARCH_AARCH64,      -1,  33,   5,  40, 280, 119, 179 },
+	{ AUDIT_ARCH_AARCH64,      -1,  33,   5,  40, 280, 119, 179, 29 },
 #endif
 #ifdef AUDIT_ARCH_ARM
-	{ AUDIT_ARCH_ARM,          14, 324, 226,  21, 386, 156, 116 },
+	{ AUDIT_ARCH_ARM,          14, 324, 226,  21, 386, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_ARMEB
-	{ AUDIT_ARCH_ARMEB,        14, 324, 226,  21, 386, 156, 116 },
+	{ AUDIT_ARCH_ARMEB,        14, 324, 226,  21, 386, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_S390
-	{ AUDIT_ARCH_S390,         14, 290, 224,  21, 351, 156, 116 },
+	{ AUDIT_ARCH_S390,         14, 290, 224,  21, 351, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_S390X
-	{ AUDIT_ARCH_S390X,        14, 290, 224,  21, 351, 156, 116 },
+	{ AUDIT_ARCH_S390X,        14, 290, 224,  21, 351, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_PPC
-	{ AUDIT_ARCH_PPC,          14, 288, 209,  21, 361, 156, 116 },
+	{ AUDIT_ARCH_PPC,          14, 288, 209,  21, 361, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_PPC64
-	{ AUDIT_ARCH_PPC64,        14, 288, 209,  21, 361, 156, 116 },
+	{ AUDIT_ARCH_PPC64,        14, 288, 209,  21, 361, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_PPC64LE
-	{ AUDIT_ARCH_PPC64LE,      14, 288, 209,  21, 361, 156, 116 },
+	{ AUDIT_ARCH_PPC64LE,      14, 288, 209,  21, 361, 156, 116, 54 },
 #endif
 #ifdef AUDIT_ARCH_RISCV64
-	{ AUDIT_ARCH_RISCV64,      -1,  33,   5,  40, 280, 119, 179 },
+	{ AUDIT_ARCH_RISCV64,      -1,  33,   5,  40, 280, 119, 179, 29 },
 #endif
 #ifdef AUDIT_ARCH_SPARC
-	{ AUDIT_ARCH_SPARC,        14, 286, 169, 167, 349, 243, 214 },
+	{ AUDIT_ARCH_SPARC,        14, 286, 169, 167, 349, 243, 214, 54 },
 #endif
 #ifdef AUDIT_ARCH_SPARC64
-	{ AUDIT_ARCH_SPARC64,      14, 286, 169, 167, 349, 243, 214 },
+	{ AUDIT_ARCH_SPARC64,      14, 286, 169, 167, 349, 243, 214, 54 },
 #endif
 #ifdef AUDIT_ARCH_MIPS
-	{ AUDIT_ARCH_MIPS,         14, 290, 224,  21,  -1, 141, 4116 },
+	{ AUDIT_ARCH_MIPS,         14, 290, 224,  21,  -1, 141, 4116, 4054 },
 #endif
 #ifdef AUDIT_ARCH_MIPSEL
-	{ AUDIT_ARCH_MIPSEL,       14, 290, 224,  21,  -1, 141, 4116 },
+	{ AUDIT_ARCH_MIPSEL,       14, 290, 224,  21,  -1, 141, 4116, 4054 },
 #endif
 #ifdef AUDIT_ARCH_MIPS64
-	{ AUDIT_ARCH_MIPS64,      131, 249, 180, 160,  -1, 141, 5097 },
+	{ AUDIT_ARCH_MIPS64,      131, 249, 180, 160,  -1, 141, 5097, 5054 },
 #endif
 #ifdef AUDIT_ARCH_MIPS64N32
-	{ AUDIT_ARCH_MIPS64N32,   131, 253, 180, 160,  -1, 141, 4116 },
+	{ AUDIT_ARCH_MIPS64N32,   131, 253, 180, 160,  -1, 141, 4116, 6054 },
 #endif
 #ifdef AUDIT_ARCH_MIPSEL64
-	{ AUDIT_ARCH_MIPSEL64,    131, 249, 180, 160,  -1, 141, 5097 },
+	{ AUDIT_ARCH_MIPSEL64,    131, 249, 180, 160,  -1, 141, 5097, 5054 },
 #endif
 #ifdef AUDIT_ARCH_MIPSEL64N32
-	{ AUDIT_ARCH_MIPSEL64N32, 131, 253, 180, 160,  -1, 141, 4116 },
+	{ AUDIT_ARCH_MIPSEL64N32, 131, 253, 180, 160,  -1, 141, 4116, 6054 },
 #endif
 #ifdef AUDIT_ARCH_LOONGARCH64
-	{ AUDIT_ARCH_LOONGARCH64, -1,  33,   5,  40, 280, 119, 179 },
+	{ AUDIT_ARCH_LOONGARCH64, -1,  33,   5,  40, 280, 119, 179, 29 },
 #endif
 };
 
@@ -211,11 +213,20 @@ static int seccomp_notify_get_syscall(struct seccomp_notif *req,
 		if (entry->nr_sysinfo == req->data.nr)
 			return INCUS_SECCOMP_NOTIFY_SYSINFO;
 
+		if (entry->nr_ioctl == req->data.nr)
+			return INCUS_SECCOMP_NOTIFY_IOCTL;
+
 		break;
 	}
 
 	errno = EINVAL;
 	return -EINVAL;
+}
+
+// Whether the task that sent the notification is still waiting for the answer.
+static int seccomp_notify_id_valid(int notify_fd, struct seccomp_notif *req)
+{
+	return ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_ID_VALID, &req->id);
 }
 
 static void seccomp_notify_update_response(struct seccomp_notif_resp *resp,
@@ -492,7 +503,14 @@ const (
 	incusSeccompNotifyBpf               = C.INCUS_SECCOMP_NOTIFY_BPF
 	incusSeccompNotifySchedSetscheduler = C.INCUS_SECCOMP_NOTIFY_SCHED_SETSCHEDULER
 	incusSeccompNotifySysinfo           = C.INCUS_SECCOMP_NOTIFY_SYSINFO
+	incusSeccompNotifyIoctl             = C.INCUS_SECCOMP_NOTIFY_IOCTL
 )
+
+// ext4IocResizeFs is EXT4_IOC_RESIZE_FS, _IOW('f', 16, __u64), the only ioctl we intercept.
+const ext4IocResizeFs = 0x40086610
+
+// capSysResource is CAP_SYS_RESOURCE, which the kernel requires for EXT4_IOC_RESIZE_FS.
+const capSysResource = 24
 
 const seccompHeader = `2
 `
@@ -567,6 +585,10 @@ const seccompNotifyMount = `mount notify [3,0,SCMP_CMP_MASKED_EQ,184467440704224
 // 5 == BPF_PROG_LOAD
 // 8 == BPF_PROG_ATTACH
 // 9 == BPF_PROG_DETACH .
+// Only EXT4_IOC_RESIZE_FS is notified, every other ioctl goes straight through.
+const seccompNotifyIoctlResizeFs = `ioctl notify [1,1074292240,SCMP_CMP_EQ]
+`
+
 const seccompNotifyBpf = `bpf notify [0,5,SCMP_CMP_EQ]
 bpf notify [0,8,SCMP_CMP_EQ]
 bpf notify [0,9,SCMP_CMP_EQ]
@@ -663,6 +685,7 @@ func InstanceNeedsPolicy(c Instance) bool {
 		"security.syscalls.intercept.sysinfo",
 		"security.syscalls.intercept.mount",
 		"security.syscalls.intercept.bpf",
+		"security.syscalls.intercept.ioctl.resize_fs",
 	}
 
 	for _, k := range keys {
@@ -705,6 +728,7 @@ func InstanceNeedsIntercept(s *state.State, c Instance) (bool, error) {
 		"security.syscalls.intercept.sysinfo",
 		"security.syscalls.intercept.mount",
 		"security.syscalls.intercept.bpf",
+		"security.syscalls.intercept.ioctl.resize_fs",
 	}
 
 	for _, key := range keys {
@@ -805,6 +829,10 @@ func seccompGetPolicyContent(s *state.State, c Instance) (string, error) {
 
 		if util.IsTrue(config["security.syscalls.intercept.bpf"]) {
 			policy += seccompNotifyBpf
+		}
+
+		if util.IsTrue(config["security.syscalls.intercept.ioctl.resize_fs"]) {
+			policy += seccompNotifyIoctlResizeFs
 		}
 	}
 
@@ -1682,6 +1710,129 @@ func (srv *Server) HandleSchedSetschedulerSyscall(c Instance, siov *Iovec) int {
 	return 0
 }
 
+// taskCapEff returns the effective capability set of a task from /proc.
+func taskCapEff(tid int) (uint64, error) {
+	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", tid))
+	if err != nil {
+		return 0, err
+	}
+
+	for line := range strings.SplitSeq(string(status), "\n") {
+		value, ok := strings.CutPrefix(line, "CapEff:")
+		if !ok {
+			continue
+		}
+
+		return strconv.ParseUint(strings.TrimSpace(value), 16, 64)
+	}
+
+	return 0, fmt.Errorf("No CapEff in /proc/%d/status", tid)
+}
+
+// taskUserNS identifies the user namespace of a task by the (device, inode) of its /proc/<pid>/ns/user.
+func taskUserNS(pid int) (uint64, uint64, error) {
+	var st unix.Stat_t
+
+	err := unix.Stat(fmt.Sprintf("/proc/%d/ns/user", pid), &st)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return uint64(st.Dev), uint64(st.Ino), nil
+}
+
+// HandleIoctlSyscall handles the ioctl syscalls we intercept, which is only
+// EXT4_IOC_RESIZE_FS: it lets the request through to the file system, i.e.
+// to the fuse4fs serving the instance's fuseblk mount, when the caller may
+// resize, and refuses it with EPERM otherwise.
+//
+// The kernel's ext4 asks for CAP_SYS_RESOURCE with capable(), in the initial
+// user namespace, which nobody in an unprivileged container has; taken
+// literally that would refuse the instance's root as well and make online
+// resizing useless. What the check means is "the administrator of this file
+// system", and in a container that is CAP_SYS_RESOURCE in the container's own
+// user namespace, which is what ns_capable() would test: the thread has the
+// capability in its effective set and lives in the instance's user namespace
+// itself. The second condition matters: a root inside a nested container
+// (a child user namespace, as nesting instances create) has the bit set too,
+// but holds the capability only in its own namespace, not in the instance's.
+// That matches what a guest expects from a VM, where its root resizes its
+// own disks and a container inside the guest does not.
+//
+// The decision is made on the thread's credentials, not on anything the
+// request points to, so the syscall continuing in the kernel after the check
+// leaves no window: the thread sits in the syscall until we answer and its
+// capabilities and namespace can't change meanwhile. The credentials are
+// read first and the notification validated after, so that a thread that
+// died and had its id reused is refused rather than judged by its successor.
+func (srv *Server) HandleIoctlSyscall(c Instance, siov *Iovec) int {
+	ctx := logger.Ctx{
+		"container":             c.Name(),
+		"project":               c.Project().Name,
+		"syscall_number":        siov.req.data.nr,
+		"audit_architecture":    siov.req.data.arch,
+		"seccomp_notify_id":     siov.req.id,
+		"seccomp_notify_flags":  siov.req.flags,
+		"seccomp_notify_pid":    siov.req.pid,
+		"seccomp_notify_fd":     siov.notifyFd,
+		"seccomp_notify_mem_fd": siov.memFd,
+	}
+
+	defer logger.Debug("Handling ioctl syscall", ctx)
+
+	ctx["ioctl_cmd"] = fmt.Sprintf("%#x", uint32(siov.req.data.args[1]))
+
+	// The policy only notifies EXT4_IOC_RESIZE_FS; anything else isn't ours to judge.
+	if uint32(siov.req.data.args[1]) != ext4IocResizeFs || !util.IsTrue(c.ExpandedConfig()["security.syscalls.intercept.ioctl.resize_fs"]) {
+		ctx["syscall_continue"] = "true"
+		C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+		return 0
+	}
+
+	caps, err := taskCapEff(int(siov.req.pid))
+	if err != nil {
+		ctx["err"] = err
+		logger.Warn("Refusing EXT4_IOC_RESIZE_FS: cannot read the caller's capabilities", ctx)
+		return int(-C.EPERM)
+	}
+
+	callerDev, callerIno, err := taskUserNS(int(siov.req.pid))
+	if err != nil {
+		ctx["err"] = err
+		logger.Warn("Refusing EXT4_IOC_RESIZE_FS: cannot read the caller's user namespace", ctx)
+		return int(-C.EPERM)
+	}
+
+	initDev, initIno, err := taskUserNS(int(siov.msg.init_pid))
+	if err != nil {
+		ctx["err"] = err
+		logger.Warn("Refusing EXT4_IOC_RESIZE_FS: cannot read the instance's user namespace", ctx)
+		return int(-C.EPERM)
+	}
+
+	// Everything above was read from /proc by pid; only now do we know it was about the caller.
+	if siov.notifyFd < 0 || C.seccomp_notify_id_valid(C.int(siov.notifyFd), siov.req) != 0 {
+		ctx["err"] = "the seccomp notification is no longer valid, or no notify fd was received"
+		logger.Warn("Refusing EXT4_IOC_RESIZE_FS: cannot confirm the caller", ctx)
+		return int(-C.EPERM)
+	}
+
+	if callerDev != initDev || callerIno != initIno {
+		logger.Info("Refusing EXT4_IOC_RESIZE_FS from a nested user namespace", ctx)
+		return int(-C.EPERM)
+	}
+
+	ctx["caller_cap_eff"] = fmt.Sprintf("%#x", caps)
+	if caps&(1<<capSysResource) == 0 {
+		logger.Info("Refusing EXT4_IOC_RESIZE_FS from a caller without CAP_SYS_RESOURCE", ctx)
+		return int(-C.EPERM)
+	}
+
+	ctx["syscall_continue"] = "true"
+	C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+	return 0
+}
+
 // HandleSysinfoSyscall handles sysinfo syscalls.
 func (srv *Server) HandleSysinfoSyscall(c Instance, siov *Iovec) int {
 	l := logger.AddContext(logger.Ctx{
@@ -2158,13 +2309,16 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 			fuseOpts = addOpts
 		}
 
+		// The guest doesn't get to authorize its own resizes.
+		fuseOpts = stripMountOption(fuseOpts, fuseblkHostAuthorizedResize)
+
 		ctx["fuse_source"] = fuseSource
 		ctx["fuse_target"] = args.target
 		ctx["fuse_opts"] = fuseOpts
 
 		major, minor, fuseblk := srv.mountSyscallFuseblkDevice(c, &args)
 		if fuseblk {
-			fuseblkOpts := mountFuseblkOpts(fuseOpts, c.ExpandedConfig()["security.syscalls.intercept.mount.fuseblk.options"])
+			fuseblkOpts := mountFuseblkOpts(fuseOpts, c.ExpandedConfig()["security.syscalls.intercept.mount.fuseblk.options"], util.IsTrue(c.ExpandedConfig()["security.syscalls.intercept.ioctl.resize_fs"]))
 			ctx["fuseblk_device"] = fmt.Sprintf("%d:%d", major, minor)
 			ctx["fuseblk_opts"] = fuseblkOpts
 			var stderr string
@@ -2325,6 +2479,8 @@ func (srv *Server) handleSyscall(c Instance, siov *Iovec) int {
 		return srv.HandleBpfSyscall(c, siov)
 	case incusSeccompNotifySchedSetscheduler:
 		return srv.HandleSchedSetschedulerSyscall(c, siov)
+	case incusSeccompNotifyIoctl:
+		return srv.HandleIoctlSyscall(c, siov)
 	case incusSeccompNotifySysinfo:
 		return srv.HandleSysinfoSyscall(c, siov)
 	}
@@ -2428,18 +2584,52 @@ func (srv *Server) MountSyscallValid(c Instance, args *MountArgs) (bool, string)
 	return false, ""
 }
 
-// mountFuseblkOpts appends the configured fuseblk helper options to the options derived from the guest's mount call.
-func mountFuseblkOpts(fuseOpts string, extraOpts string) string {
-	extraOpts = strings.Trim(extraOpts, ",")
-	if fuseOpts == "" {
-		return extraOpts
+// fuseblkHostAuthorizedResize is the fuse4fs option that lets an online resize request
+// through although the kernel withholds the caller's uid on an idmapped mount: it tells
+// fuse4fs that the host checks the callers itself.
+const fuseblkHostAuthorizedResize = "host_authorized_resize"
+
+// stripMountOption removes every entry named key (bare or key=value) from a comma-separated option list.
+func stripMountOption(opts string, key string) string {
+	kept := []string{}
+	for opt := range strings.SplitSeq(opts, ",") {
+		if opt == "" {
+			continue
+		}
+
+		name, _, _ := strings.Cut(opt, "=")
+		if name == key {
+			continue
+		}
+
+		kept = append(kept, opt)
 	}
 
-	if extraOpts == "" {
-		return fuseOpts
+	return strings.Join(kept, ",")
+}
+
+// mountFuseblkOpts appends the configured fuseblk helper options to the options derived
+// from the guest's mount call. The host_authorized_resize option is Incus' to give: it is
+// added when the EXT4_IOC_RESIZE_FS interception checks the callers and dropped from both
+// the guest's and the configured options otherwise, so that neither the guest nor the
+// configuration alone can open the resize to everyone in the instance.
+func mountFuseblkOpts(fuseOpts string, extraOpts string, authorizeResize bool) string {
+	opts := []string{}
+	fuseOpts = stripMountOption(fuseOpts, fuseblkHostAuthorizedResize)
+	if fuseOpts != "" {
+		opts = append(opts, fuseOpts)
 	}
 
-	return fmt.Sprintf("%s,%s", fuseOpts, extraOpts)
+	extraOpts = stripMountOption(extraOpts, fuseblkHostAuthorizedResize)
+	if extraOpts != "" {
+		opts = append(opts, extraOpts)
+	}
+
+	if authorizeResize {
+		opts = append(opts, fuseblkHostAuthorizedResize)
+	}
+
+	return strings.Join(opts, ",")
 }
 
 // unixBlockDeviceNumbers returns the host major and minor numbers of a unix-block device entry.
