@@ -4078,3 +4078,13 @@ devices, the superblock is created on the host as `fuseblk`, served by the
 FUSE implementation running inside the instance on a pre-opened `/dev/fuse`
 descriptor and attached as an idmapped mount. Unmounting such a mount returns
 only after the FUSE implementation has flushed and acknowledged `DESTROY`.
+
+## `container_syscall_intercept_ioctl_resize_fs`
+
+Adds `security.syscalls.intercept.ioctl.resize_fs`, which intercepts the
+`EXT4_IOC_RESIZE_FS` ioctl (an online grow, as `resize2fs` issues it on a
+mounted file system) and lets it through to the file system only from a
+caller with `CAP_SYS_RESOURCE` in the instance's user namespace, the
+container equivalent of the kernel's own check. With
+`security.syscalls.intercept.mount.fuseblk`, the FUSE implementation is told
+with `host_authorized_resize` that the callers have been checked.

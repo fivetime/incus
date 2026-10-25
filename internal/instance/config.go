@@ -1231,6 +1231,21 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	//  shortdesc: Whether to allow BPF programs
 	"security.syscalls.intercept.bpf.devices": validate.Optional(validate.IsBool),
 
+	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.ioctl.resize_fs)
+	// Let the instance grow a mounted file system online with `EXT4_IOC_RESIZE_FS`
+	// (what `resize2fs` issues on a mounted file system). Only that ioctl is intercepted;
+	// a caller with `CAP_SYS_RESOURCE` in the instance's user namespace is let through to
+	// the file system, anyone else gets `EPERM`. With `security.syscalls.intercept.mount.fuseblk`,
+	// the `host_authorized_resize` option is passed to the FUSE implementation so that it
+	// accepts the request although the kernel does not tell it who the caller is.
+	// ---
+	//  type: bool
+	//  defaultdesc: `false`
+	//  liveupdate: no
+	//  condition: container
+	//  shortdesc: Whether to handle the `EXT4_IOC_RESIZE_FS` ioctl
+	"security.syscalls.intercept.ioctl.resize_fs": validate.Optional(validate.IsBool),
+
 	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.mknod)
 	// These system calls allow creation of a limited subset of char/block devices.
 	// ---
