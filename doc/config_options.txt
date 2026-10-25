@@ -3278,6 +3278,20 @@ On other architectures, the option is ignored.
 This option controls whether to allow BPF programs for the devices cgroup in the unified hierarchy to be loaded.
 ```
 
+```{config:option} security.syscalls.intercept.ioctl.resize_fs instance-security
+:condition: "container"
+:defaultdesc: "`false`"
+:liveupdate: "no"
+:shortdesc: "Whether to handle the `EXT4_IOC_RESIZE_FS` ioctl"
+:type: "bool"
+Let the instance grow a mounted file system online with `EXT4_IOC_RESIZE_FS`
+(what `resize2fs` issues on a mounted file system). Only that ioctl is intercepted;
+a caller with `CAP_SYS_RESOURCE` in the instance's user namespace is let through to
+the file system, anyone else gets `EPERM`. With `security.syscalls.intercept.mount.fuseblk`,
+the `host_authorized_resize` option is passed to the FUSE implementation so that it
+accepts the request although the kernel does not tell it who the caller is.
+```
+
 ```{config:option} security.syscalls.intercept.mknod instance-security
 :condition: "container"
 :defaultdesc: "`false`"

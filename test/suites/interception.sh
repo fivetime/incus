@@ -71,6 +71,18 @@ test_interception() {
     [ "$(incus exec c1 -- stat --format=%u:%g /mnt)" = "0:0" ]
     incus exec c1 -- umount /mnt
 
+    echo "==> Testing EXT4_IOC_RESIZE_FS interception"
+    incus config set c1 security.syscalls.intercept.ioctl.resize_fs=true
+    incus restart c1 -f
+    incus exec c1 -- mount /dev/sda /mnt
+    # The instance's root reaches the file system, which (fuse2fs) doesn't implement the ioctl.
+    incus exec c1 -- resize2fs /dev/sda 2>&1 | grep -q "does not support" || false
+    # A root in a nested user namespace has the capability only there: refused by Incus.
+    if incus exec c1 -- unshare -U -r true 2>/dev/null; then
+        incus exec c1 -- unshare -U -r resize2fs /dev/sda 2>&1 | grep -q "Permission denied" || false
+    fi
+    incus exec c1 -- umount /mnt
+
     incus delete -f c1
     rm "${TEST_DIR}/dev/loopdisk"
     # shellcheck disable=SC2154

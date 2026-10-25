@@ -117,6 +117,33 @@ appended to its options for that purpose (for example `kernel,noexcl`,
 since the kernel already holds the device and an exclusive open would
 fail).
 
+### `ioctl` (`EXT4_IOC_RESIZE_FS`)
+
+`EXT4_IOC_RESIZE_FS` is the ioctl `resize2fs` issues on a mounted file system
+to grow it without unmounting. The kernel's ext4 allows it only with
+`CAP_SYS_RESOURCE` in the initial user namespace, which an unprivileged
+container never has, so a guest could not grow its disks online at all.
+
+With `security.syscalls.intercept.ioctl.resize_fs` set to `true`, only this
+one ioctl is intercepted (every other ioctl goes through unchanged). A caller
+whose thread has `CAP_SYS_RESOURCE` in the instance's user namespace, which
+is what `ns_capable()` would check and what the instance's root has, is let
+through to the file system; anyone else gets `EPERM`. That gives a container
+what a virtual machine gives its guest: root can grow its own disks. Incus
+reads nothing from the caller and performs nothing on its behalf; it only
+decides whether the request continues. The decision rests on the thread's
+credentials, which cannot change while the thread waits in the syscall, so
+continuing the syscall after the check opens no window.
+
+The file system has to support the request: a `fuseblk` mount created
+through `security.syscalls.intercept.mount.fuseblk` is served by the FUSE
+implementation inside the instance, and on an idmapped mount the kernel does
+not tell it who the caller is. Incus therefore adds the `host_authorized_resize`
+option to the `fuseblk` helper options when this interception is on, which
+tells `fuse4fs` that the callers have been checked, and strips it from
+`security.syscalls.intercept.mount.fuseblk.options` when it is off, so that
+the configuration alone cannot open the resize to everyone in the instance.
+
 ### `sched_setscheduler`
 
 The `sched_setscheduler` system call is used to manage process priority.
