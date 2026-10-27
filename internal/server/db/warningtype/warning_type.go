@@ -62,6 +62,13 @@ const (
 	InstanceForcedStop
 )
 
+// Codes kept away from the sequence above, so that types added there upstream
+// can't take a code already stored in the database for one of these.
+const (
+	// ProcLXCFSOverlayFailed represents a proc mount inside an instance that couldn't be overlaid with LXCFS.
+	ProcLXCFSOverlayFailed Type = 1000
+)
+
 // TypeNames associates a warning code to its name.
 var TypeNames = map[Type]string{
 	Undefined:                         "Undefined warning",
@@ -90,6 +97,7 @@ var TypeNames = map[Type]string{
 	UnableToUpdateClusterCertificate:  "Unable to update cluster certificate",
 	SELinuxNotAvailable:               "SELinux support has been disabled",
 	InstanceForcedStop:                "Instance forcefully stopped",
+	ProcLXCFSOverlayFailed:            "Couldn't overlay LXCFS on a proc mount",
 }
 
 // Severity returns the severity of the warning type.
@@ -145,6 +153,8 @@ func (t Type) Severity() Severity {
 		return SeverityLow
 	case SELinuxNotAvailable:
 		return SeverityLow
+	case ProcLXCFSOverlayFailed:
+		return SeverityModerate
 	}
 
 	return SeverityLow
