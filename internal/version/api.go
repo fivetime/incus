@@ -618,6 +618,7 @@ var APIExtensions = []string{
 	"migration_criu_sha256",
 	"container_syscall_intercept_mount_fuseblk",
 	"container_syscall_intercept_ioctl_resize_fs",
+	"container_syscall_intercept_mount_lxcfs",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

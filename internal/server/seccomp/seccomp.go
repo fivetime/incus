@@ -468,6 +468,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -481,6 +482,9 @@ import (
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/netutils"
 	"github.com/lxc/incus/v7/internal/server/cgroup"
+	"github.com/lxc/incus/v7/internal/server/db"
+	"github.com/lxc/incus/v7/internal/server/db/cluster"
+	"github.com/lxc/incus/v7/internal/server/db/warningtype"
 	deviceConfig "github.com/lxc/incus/v7/internal/server/device/config"
 	"github.com/lxc/incus/v7/internal/server/project"
 	"github.com/lxc/incus/v7/internal/server/state"
@@ -634,6 +638,7 @@ stub_x32_execveat errno 38
 // Instance is a seccomp specific instance interface.
 // This is used rather than instance.Instance to avoid import loops.
 type Instance interface {
+	ID() int
 	Name() string
 	Project() api.Project
 	ExpandedConfig() map[string]string
@@ -2252,11 +2257,25 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 		return 0
 	}
 
-	ok, fuseBinary := srv.MountSyscallValid(c, &args)
-	if !ok {
+	fuseBinary := ""
+	lxcfsDir, lxcfsWanted := srv.mountSyscallLXCFS(c, &args)
+	if lxcfsWanted && lxcfsDir == "" {
 		ctx["syscall_continue"] = "true"
+		logger.Warn("No LXCFS to overlay on intercepted proc mount", ctx)
+		go srv.warnProcLXCFS(c, fmt.Sprintf("Mounted a plain proc on %q: LXCFS isn't mounted on the host", args.target))
 		C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
 		return 0
+	}
+
+	if lxcfsDir == "" {
+		var ok bool
+
+		ok, fuseBinary = srv.MountSyscallValid(c, &args)
+		if !ok {
+			ctx["syscall_continue"] = "true"
+			C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+			return 0
+		}
 	}
 
 	idmapset, err := c.CurrentIdmap()
@@ -2292,7 +2311,43 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 		return 0
 	}
 
-	if fuseBinary != "" {
+	if lxcfsDir != "" {
+		ctx["lxcfs_dir"] = lxcfsDir
+		var stderr string
+		_, stderr, err = subprocess.RunCommandSplit(
+			context.TODO(),
+			nil,
+			[]*os.File{pidFd},
+			localUtil.GetExecPath(),
+			"forksyscall",
+			"mount",
+			fmt.Sprintf("%d", args.pid),
+			fmt.Sprintf("%d", pidFdNr),
+			fmt.Sprintf("%d", 3),
+			fmt.Sprintf("%d", args.nsuid),
+			fmt.Sprintf("%d", args.nsgid),
+			fmt.Sprintf("%d", args.nsfsuid),
+			fmt.Sprintf("%d", args.nsfsgid),
+			args.source,
+			args.target,
+			fmt.Sprintf("%d", args.flags),
+			lxcfsDir,
+			args.data,
+		)
+		if err != nil {
+			// The kernel then mounts a plain proc, as without the option.
+			// Mounts left to it on purpose (see procLXCFSSkipped) aren't
+			// failures; anything else is one the operator must be able to see.
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == procLXCFSSkipped {
+				ctx["lxcfs_skipped"] = "true"
+			} else {
+				ctx["lxcfs_stderr"] = strings.TrimSpace(stderr)
+				logger.Warn("Failed to overlay LXCFS on intercepted proc mount", ctx)
+				go srv.warnProcLXCFS(c, fmt.Sprintf("Mounted a plain proc on %q: %s", args.target, strings.TrimSpace(stderr)))
+			}
+		}
+	} else if fuseBinary != "" {
 		// Record ignored flags for debugging purposes
 		flags := C.ulong(args.flags)
 		ctx["fuse_ignored_flags"] = fmt.Sprintf("%x", (flags &^ (knownFlagsRecursive | C.MS_MGC_MSK)))
@@ -2582,6 +2637,50 @@ func (srv *Server) MountSyscallValid(c Instance, args *MountArgs) (bool, string)
 	}
 
 	return false, ""
+}
+
+// lxcfsProcDirs are where the system LXCFS may be mounted, as the LXC driver looks for it.
+var lxcfsProcDirs = []string{"/var/lib/lxcfs/proc", "/var/lib/incus-lxcfs/proc"}
+
+// procLXCFSSkipped is the forksyscall exit code for a proc mount it deliberately left to the
+// kernel: the caller lacks CAP_SYS_ADMIN, is in a user namespace nested below the instance's,
+// names a /proc/self target other than one of its descriptors, or passed a target or options
+// that make the mount fail, which the kernel then reports to it.
+const procLXCFSSkipped = 3
+
+// mountSyscallLXCFS reports whether this mount is a new proc file system the instance wants
+// overlaid with LXCFS and, if so, the LXCFS proc directory to use (empty if none is mounted).
+func (srv *Server) mountSyscallLXCFS(c Instance, args *MountArgs) (string, bool) {
+	if args.fstype != "proc" || !util.IsTrue(c.ExpandedConfig()["security.syscalls.intercept.mount.lxcfs"]) {
+		return "", false
+	}
+
+	if args.flags&(C.MS_REMOUNT|C.MS_BIND|C.MS_MOVE) != 0 {
+		return "", false
+	}
+
+	for _, dir := range lxcfsProcDirs {
+		if util.PathExists(filepath.Join(dir, "meminfo")) {
+			return dir, true
+		}
+	}
+
+	return "", true
+}
+
+// warnProcLXCFS records a warning on the instance for a proc mount that was left without the
+// LXCFS overlay, so that software in it sizing itself from the host's resources can be traced.
+func (srv *Server) warnProcLXCFS(c Instance, message string) {
+	if srv.s == nil || srv.s.DB.Cluster == nil || c.ID() <= 0 {
+		return
+	}
+
+	err := srv.s.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
+		return tx.UpsertWarning(ctx, srv.s.ServerName, c.Project().Name, cluster.TypeInstance, c.ID(), warningtype.ProcLXCFSOverlayFailed, message)
+	})
+	if err != nil {
+		logger.Warn("Failed to record LXCFS overlay warning", logger.Ctx{"project": c.Project().Name, "instance": c.Name(), "err": err})
+	}
 }
 
 // fuseblkHostAuthorizedResize is the fuse4fs option that lets an online resize request

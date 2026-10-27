@@ -1310,6 +1310,19 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	//  shortdesc: Options appended for the FUSE implementation of `fuseblk` mounts
 	"security.syscalls.intercept.mount.fuseblk.options": validate.IsAny,
 
+	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.mount.lxcfs)
+	// When a process inside the instance mounts a new `proc` file system (as a nested container
+	// runtime does for each container), mount it on its behalf and bind the files LXCFS provides
+	// (such as `meminfo`, `cpuinfo` and `stat`) over it, so that nested containers see the
+	// instance's resource limits rather than the host's. Requires `security.syscalls.intercept.mount`.
+	// ---
+	//  type: bool
+	//  defaultdesc: `false`
+	//  liveupdate: yes
+	//  condition: container
+	//  shortdesc: Whether to overlay LXCFS on `proc` mounted inside the instance
+	"security.syscalls.intercept.mount.lxcfs": validate.Optional(validate.IsBool),
+
 	// gendoc:generate(entity=instance, group=security, key=security.syscalls.intercept.mount.shift)
 	//
 	// ---
