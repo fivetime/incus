@@ -83,6 +83,23 @@ test_interception() {
     fi
     incus exec c1 -- umount /mnt
 
+    echo "==> Testing LXCFS overlay on proc mounts"
+    incus config set c1 limits.memory=512MiB security.syscalls.intercept.mount.lxcfs=true
+    incus restart c1 -f
+    # Only meaningful where LXCFS covers the instance's own /proc.
+    if incus exec c1 -- grep -q " /proc/meminfo fuse.lxcfs " /proc/self/mounts; then
+        [ "$(incus exec c1 -- unshare -p -f --mount-proc grep MemTotal /proc/meminfo)" = "$(incus exec c1 -- grep MemTotal /proc/meminfo)" ]
+        incus exec c1 -- unshare -p -f --mount-proc grep -q " /proc/meminfo fuse.lxcfs " /proc/self/mounts
+
+        # A nested user namespace is left to the kernel.
+        if incus exec c1 -- unshare -U -r true 2>/dev/null; then
+            ! incus exec c1 -- unshare -U -r -p -f --mount-proc grep -q " /proc/meminfo fuse.lxcfs " /proc/self/mounts || false
+        fi
+
+        incus config set c1 security.syscalls.intercept.mount.lxcfs=false
+        ! incus exec c1 -- unshare -p -f --mount-proc grep -q " /proc/meminfo fuse.lxcfs " /proc/self/mounts || false
+    fi
+
     incus delete -f c1
     rm "${TEST_DIR}/dev/loopdisk"
     # shellcheck disable=SC2154

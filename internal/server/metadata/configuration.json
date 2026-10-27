@@ -3693,6 +3693,16 @@
 						}
 					},
 					{
+						"security.syscalls.intercept.mount.lxcfs": {
+							"condition": "container",
+							"defaultdesc": "`false`",
+							"liveupdate": "yes",
+							"longdesc": "When a process inside the instance mounts a new `proc` file system (as a nested container\nruntime does for each container), mount it on its behalf and bind the files LXCFS provides\n(such as `meminfo`, `cpuinfo` and `stat`) over it, so that nested containers see the\ninstance's resource limits rather than the host's. Requires `security.syscalls.intercept.mount`.",
+							"shortdesc": "Whether to overlay LXCFS on `proc` mounted inside the instance",
+							"type": "bool"
+						}
+					},
+					{
 						"security.syscalls.intercept.mount.shift": {
 							"condition": "container",
 							"defaultdesc": "`false`",

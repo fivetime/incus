@@ -6,6 +6,8 @@ package main
 #endif
 #include <fcntl.h>
 #include <libgen.h>
+#include <limits.h>
+#include <linux/nsfs.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -14,6 +16,7 @@ package main
 #include <string.h>
 #include <sys/capability.h>
 #include <sys/fsuid.h>
+#include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -645,6 +648,287 @@ static void attach_detached_mount(int fd_tree, int fd_mntns, pid_t pid, int pidf
 		die("error: failed to attach detached mount");
 }
 
+// set_final_creds takes on the caller's IDs and the capabilities read from it
+// earlier, like acquire_final_creds for a caller whose PID can't be resolved
+// any more.
+static bool set_final_creds(cap_t caps, uid_t uid, gid_t gid, uid_t fsuid, gid_t fsgid)
+{
+	if (prctl(PR_SET_KEEPCAPS, 1))
+		return false;
+
+	if (setegid(gid))
+		return false;
+
+	setfsgid(fsgid);
+	if (setfsgid(-1) != fsgid)
+		return false;
+
+	if (seteuid(uid))
+		return false;
+
+	setfsuid(fsuid);
+	if (setfsuid(-1) != fsuid)
+		return false;
+
+	return cap_set_proc(caps) == 0;
+}
+
+// fsconfig_set_options passes comma-separated mount options to a file system
+// context, as mount(2) would pass its data argument.
+static bool fsconfig_set_options(int fs_fd, const char *data)
+{
+	__do_free char *buf = NULL;
+	char *cur, *tok, *val;
+	int ret;
+
+	buf = strdup(data);
+	if (!buf)
+		return false;
+
+	for (cur = buf; (tok = strsep(&cur, ",")); ) {
+		if (*tok == '\0')
+			continue;
+
+		val = strchr(tok, '=');
+		if (val)
+			*val++ = '\0';
+
+		if (val && *val != '\0')
+			ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, tok, val, 0);
+		else
+			ret = incus_fsconfig(fs_fd, FSCONFIG_SET_FLAG, tok, NULL, 0);
+		if (ret < 0)
+			return false;
+	}
+
+	return true;
+}
+
+// Exit code of a proc_lxcfs_mount that left the mount to the kernel.
+#define PROC_LXCFS_SKIPPED 3
+
+// userns_is_child reports whether the user namespace in ns_fd is a direct
+// child of this process' user namespace, as the instance's own is.
+static bool userns_is_child(int ns_fd)
+{
+	__do_close int fd_userns = -EBADF, fd_parent = -EBADF, fd_self = -EBADF;
+	struct stat st_parent, st_self;
+
+	fd_userns = openat(ns_fd, "user", O_RDONLY | O_CLOEXEC);
+	if (fd_userns < 0)
+		return false;
+
+	fd_parent = ioctl(fd_userns, NS_GET_PARENT);
+	if (fd_parent < 0)
+		return false;
+
+	fd_self = open("/proc/self/ns/user", O_RDONLY | O_CLOEXEC);
+	if (fd_self < 0)
+		return false;
+
+	if (fstat(fd_parent, &st_parent) || fstat(fd_self, &st_self))
+		return false;
+
+	return st_parent.st_dev == st_self.st_dev && st_parent.st_ino == st_self.st_ino;
+}
+
+// The LXCFS files bound over a proc mounted with
+// security.syscalls.intercept.mount.lxcfs, the same ones LXC binds over the
+// instance's own /proc.
+static const char *proc_lxcfs_files[] = {
+	"cpuinfo", "diskstats", "loadavg", "meminfo", "pressure",
+	"slabinfo", "stat", "swaps", "uptime",
+};
+
+// proc_lxcfs_mount mounts a new proc file system for the caller and binds the
+// LXCFS files over it. LXCFS answers each read from the reading process'
+// cgroup, so a nested container sees the instance's limits (or its own, if
+// lower) instead of the host's memory and CPUs.
+//
+// The files are cloned while still in the host's mount namespace, where LXCFS
+// is mounted. proc shows the PID namespace of the task that mounts it, so the
+// mount is made from a child forked after joining the caller's user and PID
+// namespaces, with the caller's root, working directory and credentials: the
+// kernel applies to it the same checks it applies to the caller's own mount.
+static void proc_lxcfs_mount(pid_t pid, int pidfd, int ns_fd)
+{
+	__do_close int lxcfs_fd = -EBADF, root_fd = -EBADF, cwd_fd = -EBADF, target_fd = -EBADF;
+	int fds[ARRAY_SIZE(proc_lxcfs_files)];
+	char buf[PATH_MAX];
+	const char *source, *target, *lxcfs_dir, *data;
+	unsigned long flags;
+	unsigned int attrs = 0;
+	uid_t nsuid, nsfsuid;
+	gid_t nsgid, nsfsgid;
+	cap_t caps;
+	cap_flag_value_t flag;
+	pid_t pid_mount;
+	int ret, status;
+
+	nsuid = atoi(advance_arg(true));
+	nsgid = atoi(advance_arg(true));
+	nsfsuid = atoi(advance_arg(true));
+	nsfsgid = atoi(advance_arg(true));
+	source = advance_arg(true);
+	target = advance_arg(true);
+	flags = strtoul(advance_arg(true), NULL, 10);
+	lxcfs_dir = advance_arg(true);
+	data = advance_arg(false);
+	if (data && *data == '\0')
+		data = NULL;
+
+	// The IDs are the caller's in the instance's user namespace. A caller in
+	// a user namespace nested below it (a rootless runtime, unshare -U) is
+	// left to the kernel.
+	if (!userns_is_child(ns_fd))
+		_exit(PROC_LXCFS_SKIPPED);
+
+	// Read before joining the caller's PID namespace, where its host PID means nothing.
+	caps = cap_get_pid(pid);
+	if (!caps)
+		die("error: failed to get caller capabilities");
+
+	// The kernel refuses such a caller itself; that's no failure to record.
+	if (cap_get_flag(caps, CAP_SYS_ADMIN, CAP_EFFECTIVE, &flag) != 0 || flag != CAP_SET)
+		_exit(PROC_LXCFS_SKIPPED);
+
+	// Runtimes such as runc mount on /proc/self/fd/N or /proc/thread-self/fd/N,
+	// which name the caller's descriptors, not this process'. Open exactly
+	// that descriptor through the host's /proc (the caller's thread ID is
+	// what the notification carries) and mount on it instead. No other
+	// /proc/self path is resolved here, as host root; those are left to the
+	// kernel.
+	if (strncmp(target, "/proc/self/", 11) == 0 || strncmp(target, "/proc/thread-self/", 18) == 0) {
+		const char *fd_str = strchr(target + 6, '/') + 1;
+		char *end = NULL;
+		long fd_nr;
+
+		if (strncmp(fd_str, "fd/", 3) != 0)
+			_exit(PROC_LXCFS_SKIPPED);
+
+		errno = 0;
+		fd_nr = strtol(fd_str + 3, &end, 10);
+		if (errno || end == fd_str + 3 || *end != '\0' || fd_nr < 0 || fd_nr > INT_MAX)
+			_exit(PROC_LXCFS_SKIPPED);
+
+		snprintf(buf, sizeof(buf), "/proc/%d/fd/%ld", pid, fd_nr);
+		target_fd = open(buf, O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (target_fd < 0)
+			_exit(PROC_LXCFS_SKIPPED);
+	}
+
+	// The magic number old callers put in the high bits carries no flags.
+	if ((flags & MS_MGC_MSK) == MS_MGC_VAL)
+		flags &= ~MS_MGC_MSK;
+
+	if (mnt_attributes_new(flags & ~(MS_SILENT | MS_REC), &attrs))
+		_exit(PROC_LXCFS_SKIPPED);
+
+	lxcfs_fd = open(lxcfs_dir, O_PATH | O_DIRECTORY | O_CLOEXEC);
+	if (lxcfs_fd < 0)
+		die("error: failed to open %s", lxcfs_dir);
+
+	for (int i = 0; i < ARRAY_SIZE(proc_lxcfs_files); i++) {
+		fds[i] = incus_open_tree(lxcfs_fd, proc_lxcfs_files[i],
+					 OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC | AT_SYMLINK_NOFOLLOW);
+		if (fds[i] < 0 && errno != ENOENT)
+			die("error: failed to clone %s/%s", lxcfs_dir, proc_lxcfs_files[i]);
+	}
+
+	// Through the host's /proc, before joining the caller's namespaces.
+	snprintf(buf, sizeof(buf), "/proc/%d/root", pid);
+	root_fd = open(buf, O_PATH | O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (root_fd < 0)
+		die("error: failed to open caller's root");
+
+	snprintf(buf, sizeof(buf), "/proc/%d/cwd", pid);
+	cwd_fd = open(buf, O_PATH | O_RDONLY | O_CLOEXEC);
+	if (cwd_fd < 0)
+		die("error: failed to open caller's working directory");
+
+	// Not traceable from the instance once in its namespaces.
+	if (prctl(PR_SET_DUMPABLE, 0))
+		die("error: failed to make the mount process undumpable");
+
+	attach_userns_fd(ns_fd);
+
+	if (!change_namespaces(pidfd, ns_fd, CLONE_NEWPID))
+		die("error: failed to change to caller's PID namespace");
+
+	pid_mount = fork();
+	if (pid_mount < 0)
+		die("error: failed to fork");
+
+	if (pid_mount == 0) {
+		__do_close int fs_fd = -EBADF, mnt_fd = -EBADF;
+
+		if (!reacquire_basic_creds(pidfd, ns_fd, root_fd, cwd_fd))
+			die("error: failed to acquire basic creds");
+
+		if (!set_final_creds(caps, nsuid, nsgid, nsfsuid, nsfsgid))
+			die("error: failed to acquire final creds");
+
+		// This process is now visible in the caller's PID namespace and
+		// holds descriptors opened as host root; keep the instance from
+		// tracing it. Changing the IDs above reset the flag, so set it here.
+		if (prctl(PR_SET_DUMPABLE, 0))
+			die("error: failed to make the mount process undumpable");
+
+		// The new file system takes the PID and user namespaces of the
+		// process creating it, i.e. the caller's.
+		fs_fd = incus_fsopen("proc", FSOPEN_CLOEXEC);
+		if (fs_fd < 0)
+			die("error: failed to create proc file system: fsopen");
+
+		// Failures that follow from the caller's own arguments (source,
+		// options, target) are left to the kernel, which answers the
+		// caller's mount with its own error; they aren't for the operator.
+		ret = incus_fsconfig(fs_fd, FSCONFIG_SET_STRING, "source", source, 0);
+		if (ret < 0)
+			_exit(PROC_LXCFS_SKIPPED);
+
+		if (data && !fsconfig_set_options(fs_fd, data))
+			_exit(PROC_LXCFS_SKIPPED);
+
+		ret = incus_fsconfig(fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0);
+		if (ret < 0)
+			_exit(PROC_LXCFS_SKIPPED);
+
+		mnt_fd = incus_fsmount(fs_fd, FSMOUNT_CLOEXEC, attrs);
+		if (mnt_fd < 0)
+			die("error: failed to create proc mount");
+
+		if (target_fd >= 0)
+			ret = incus_move_mount(mnt_fd, "", target_fd, "",
+					       MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH);
+		else
+			ret = incus_move_mount(mnt_fd, "", AT_FDCWD, target, MOVE_MOUNT_F_EMPTY_PATH);
+		if (ret)
+			_exit(PROC_LXCFS_SKIPPED);
+
+		// mnt_fd keeps naming the root of the now attached mount.
+		for (int i = 0; i < ARRAY_SIZE(proc_lxcfs_files); i++) {
+			if (fds[i] < 0)
+				continue;
+
+			// A proc mounted with subset=pid has no such file to cover.
+			ret = incus_move_mount(fds[i], "", mnt_fd, proc_lxcfs_files[i],
+					       MOVE_MOUNT_F_EMPTY_PATH);
+			if (ret && errno != ENOENT)
+				die("error: failed to bind LXCFS %s", proc_lxcfs_files[i]);
+		}
+
+		_exit(EXIT_SUCCESS);
+	}
+
+	ret = waitpid(pid_mount, &status, 0);
+	if (ret == pid_mount && WIFEXITED(status) && WEXITSTATUS(status) == PROC_LXCFS_SKIPPED)
+		_exit(PROC_LXCFS_SKIPPED);
+
+	if (ret != pid_mount || !WIFEXITED(status) || WEXITSTATUS(status))
+		_exit(EXIT_FAILURE);
+}
+
 static void mount_emulate(void)
 {
 	__do_close int fd_mntns = -EBADF, fd_userns = -EBADF, pidfd = -EBADF,
@@ -670,6 +954,11 @@ static void mount_emulate(void)
 	}
 
 	ret = atoi(advance_arg(true));
+	if (ret == 3) {
+		proc_lxcfs_mount(pid, pidfd, ns_fd);
+		return;
+	}
+
 	use_fuse = (ret == 1);
 	use_fuseblk = (ret == 2);
 	if (!use_fuse && !use_fuseblk) {

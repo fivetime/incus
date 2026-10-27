@@ -1170,6 +1170,7 @@ var allowableIntercept = []string{
 	"security.syscalls.intercept.mount.fuse",
 	"security.syscalls.intercept.mount.fuseblk",
 	"security.syscalls.intercept.mount.fuseblk.options",
+	"security.syscalls.intercept.mount.lxcfs",
 	"security.syscalls.intercept.setxattr",
 	"security.syscalls.intercept.sysinfo",
 }

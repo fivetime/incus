@@ -3350,6 +3350,18 @@ Specify a comma-separated list of options appended to the FUSE implementation's 
 mount is created as `fuseblk` (for example, `kernel,noexcl` for `fuse4fs`).
 ```
 
+```{config:option} security.syscalls.intercept.mount.lxcfs instance-security
+:condition: "container"
+:defaultdesc: "`false`"
+:liveupdate: "yes"
+:shortdesc: "Whether to overlay LXCFS on `proc` mounted inside the instance"
+:type: "bool"
+When a process inside the instance mounts a new `proc` file system (as a nested container
+runtime does for each container), mount it on its behalf and bind the files LXCFS provides
+(such as `meminfo`, `cpuinfo` and `stat`) over it, so that nested containers see the
+instance's resource limits rather than the host's. Requires `security.syscalls.intercept.mount`.
+```
+
 ```{config:option} security.syscalls.intercept.mount.shift instance-security
 :condition: "container"
 :defaultdesc: "`false`"
