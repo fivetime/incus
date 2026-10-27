@@ -117,6 +117,32 @@ appended to its options for that purpose (for example `kernel,noexcl`,
 since the kernel already holds the device and an exclusive open would
 fail).
 
+Incus binds the files LXCFS provides (`meminfo`, `cpuinfo`, `stat` and
+the like) over the instance's own `/proc`, but a nested container
+runtime mounts a new `proc` file system for each container it starts, and
+that one shows the host's memory and CPUs. Software in a nested container
+that sizes itself from `/proc/meminfo` or the CPU list then exceeds the
+instance's limits. With `security.syscalls.intercept.mount.lxcfs` set to
+`true` (in addition to `security.syscalls.intercept.mount`), Incus
+creates such a `proc` mount on the caller's behalf, in its user, PID and
+mount namespaces and with its root, working directory and credentials,
+and binds the LXCFS files over it before answering. LXCFS answers each
+read from the reading process' control group, so a nested container sees
+the instance's limits, or its own if they are lower. A target of the form
+`/proc/self/fd/N` or `/proc/thread-self/fd/N`, as `runc` uses, is
+resolved to the caller's descriptor.
+
+A caller in a user namespace nested below the instance's (a rootless
+runtime, `unshare -U`) is left to the kernel and gets a plain `proc`, as
+is any other `/proc/self` target; so are a caller without `CAP_SYS_ADMIN`
+and a mount that the caller's own target or options make fail, which the
+kernel then answers with its own error. If the overlay fails, or LXCFS isn't
+mounted on the host, the kernel mounts a plain `proc` as well, so that
+the container still starts, and a warning is recorded on the instance.
+This doesn't hide the host from a determined guest: the caller may
+unmount the bound files, and the CPU model, `/proc/zoneinfo` and other
+interfaces LXCFS doesn't cover still show the host.
+
 ### `ioctl` (`EXT4_IOC_RESIZE_FS`)
 
 `EXT4_IOC_RESIZE_FS` is the ioctl `resize2fs` issues on a mounted file system

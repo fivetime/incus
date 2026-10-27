@@ -4088,3 +4088,11 @@ caller with `CAP_SYS_RESOURCE` in the instance's user namespace, the
 container equivalent of the kernel's own check. With
 `security.syscalls.intercept.mount.fuseblk`, the FUSE implementation is told
 with `host_authorized_resize` that the callers have been checked.
+
+## `container_syscall_intercept_mount_lxcfs`
+
+Adds `security.syscalls.intercept.mount.lxcfs`. A new `proc` file system
+mounted inside the instance, as a nested container runtime mounts one for
+each container, is created by Incus on the caller's behalf and the LXCFS
+files are bound over it, so that nested containers see the instance's
+memory and CPU limits rather than the host's.
