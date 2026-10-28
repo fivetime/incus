@@ -514,8 +514,16 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 
 	// Flags without a mount attribute are dropped: remounts, bind and move
 	// mounts never get here.
+	//
+	// The superblock belongs to the host's user namespace, so the kernel
+	// doesn't add the nodev it gives a mount created in the instance and
+	// any device node the guest writes would open: always force it. The
+	// caller's nosuid is kept as asked. Set-user-ID and file capabilities
+	// only apply through the instance's ID map attached below, which the
+	// mount never goes without, so they stay within the instance's own
+	// user namespace as on any FUSE mount it creates itself.
 	mnt_attributes_new(flags, &attrs);
-	attrs |= MOUNT_ATTR_NODEV | MOUNT_ATTR_NOSUID;
+	attrs |= MOUNT_ATTR_NODEV;
 	fd_tree = incus_fsmount(fs_fd, FSMOUNT_CLOEXEC, attrs);
 	if (fd_tree < 0)
 		die("error: failed to create fuseblk mount: fsmount");
