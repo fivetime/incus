@@ -783,6 +783,13 @@ test_clustering_storage() {
         # The container can't be moved if it's running
         ! INCUS_DIR="${INCUS_TWO_DIR}" incus move foo --target node1 || false
 
+        # Copying the running container to node1 goes through node2 rather than mounting its volume twice
+        INCUS_DIR="${INCUS_ONE_DIR}" incus copy foo bar --target node1 --stateless
+        INCUS_DIR="${INCUS_TWO_DIR}" incus info bar | grep -q "Location: node1"
+        INCUS_DIR="${INCUS_TWO_DIR}" incus start bar
+        INCUS_DIR="${INCUS_ONE_DIR}" incus exec bar -- ls / | grep -qxF proc
+        INCUS_DIR="${INCUS_ONE_DIR}" incus delete -f bar
+
         # Stop the container and create a snapshot
         INCUS_DIR="${INCUS_ONE_DIR}" incus stop foo --force
         INCUS_DIR="${INCUS_ONE_DIR}" incus snapshot create foo snap-test
@@ -2908,6 +2915,13 @@ test_clustering_image_refresh() {
     echo 'select images.fingerprint from images join projects on images.project_id=projects.id where projects.name="bar"' | INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global - | grep "${new_fingerprint}"
     [ "$(INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global 'select images.fingerprint from images' | grep -c "${new_fingerprint}")" -eq 2 ] || false
 
+    # Project foo still uses the old image so its files must stay next to the new ones.
+    ls "${INCUS_ONE_DIR}/images/${old_fingerprint}"* > /dev/null
+    ls "${INCUS_ONE_DIR}/images/${new_fingerprint}"* > /dev/null
+    for incus_dir in "${INCUS_TWO_DIR}" "${INCUS_THREE_DIR}"; do
+        ! ls "${incus_dir}/images/${new_fingerprint}"* > /dev/null 2>&1 || ls "${incus_dir}/images/${old_fingerprint}"* > /dev/null
+    done
+
     pids=""
 
     # Trigger image refresh on all nodes. This shouldn't do anything as the image
@@ -2931,6 +2945,7 @@ test_clustering_image_refresh() {
     [ "$(INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global 'select images.fingerprint from images' | grep -c "${new_fingerprint}")" -eq 2 ] || false
 
     # Modify public testimage
+    mid_fingerprint="${new_fingerprint}"
     dd if=/dev/urandom count=32 | INCUS_DIR="${INCUS_REMOTE_DIR}" incus file push - c1/foo
     INCUS_DIR="${INCUS_REMOTE_DIR}" incus publish c1 --alias testimage --reuse --public
     new_fingerprint="$(INCUS_DIR="${INCUS_REMOTE_DIR}" incus image ls testimage -c f --format csv)"
@@ -2957,6 +2972,13 @@ test_clustering_image_refresh() {
     echo 'select images.fingerprint from images join projects on images.project_id=projects.id where projects.name="default"' | INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global - | grep "${new_fingerprint}"
     echo 'select images.fingerprint from images join projects on images.project_id=projects.id where projects.name="bar"' | INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global - | grep "${new_fingerprint}"
     [ "$(INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global 'select images.fingerprint from images' | grep -c "${new_fingerprint}")" -eq 2 ] || false
+
+    # Nothing uses the intermediate image anymore so its files must be gone from every member.
+    for incus_dir in "${INCUS_ONE_DIR}" "${INCUS_TWO_DIR}" "${INCUS_THREE_DIR}"; do
+        ! ls "${incus_dir}/images/${mid_fingerprint}"* > /dev/null 2>&1 || false
+    done
+    ls "${INCUS_ONE_DIR}/images/${old_fingerprint}"* > /dev/null
+    ls "${INCUS_ONE_DIR}/images/${new_fingerprint}"* > /dev/null
 
     # Clean up everything
     for project in default foo bar; do
@@ -4036,6 +4058,88 @@ test_clustering_openfga() {
     rm -f "${INCUS_ONE_DIR}/unix.socket"
     rm -f "${INCUS_TWO_DIR}/unix.socket"
     rm -f "${INCUS_THREE_DIR}/unix.socket"
+
+    teardown_clustering_netns
+    teardown_clustering_bridge
+
+    kill_incus "${INCUS_ONE_DIR}"
+    kill_incus "${INCUS_TWO_DIR}"
+    kill_incus "${INCUS_THREE_DIR}"
+}
+
+test_clustering_healing() {
+    # shellcheck disable=2039,3043
+    local INCUS_DIR
+
+    setup_clustering_bridge
+    prefix="inc$$"
+    bridge="${prefix}"
+
+    setup_clustering_netns 1
+    INCUS_ONE_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+    chmod +x "${INCUS_ONE_DIR}"
+    ns1="${prefix}1"
+    spawn_incus_and_bootstrap_cluster "${ns1}" "${bridge}" "${INCUS_ONE_DIR}"
+
+    cert=$(sed ':a;N;$!ba;s/\n/\n\n/g' "${INCUS_ONE_DIR}/cluster.crt")
+
+    setup_clustering_netns 2
+    INCUS_TWO_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+    chmod +x "${INCUS_TWO_DIR}"
+    ns2="${prefix}2"
+    spawn_incus_and_join_cluster "${ns2}" "${bridge}" "${cert}" 2 1 "${INCUS_TWO_DIR}" "${INCUS_ONE_DIR}"
+
+    setup_clustering_netns 3
+    INCUS_THREE_DIR=$(mktemp -d -p "${TEST_DIR}" XXX)
+    chmod +x "${INCUS_THREE_DIR}"
+    ns3="${prefix}3"
+    spawn_incus_and_join_cluster "${ns3}" "${bridge}" "${cert}" 3 1 "${INCUS_THREE_DIR}" "${INCUS_ONE_DIR}"
+
+    INCUS_DIR="${INCUS_ONE_DIR}" incus cluster list
+    INCUS_DIR="${INCUS_ONE_DIR}" incus config set cluster.offline_threshold=11 cluster.healing_threshold=11 cluster.healing_delay=30
+
+    # Watch the lifecycle events from the leader, the default CLI timeout is shorter than this test.
+    (INCUS_CLI_TIMEOUT=600 INCUS_DIR="${INCUS_ONE_DIR}" stdbuf -oL incus monitor --type=lifecycle --format=json > "${TEST_DIR}/events.log" 2>&1) &
+    MONITOR=$!
+    sleep 2
+
+    # Cut the network of the third member while its daemon keeps running.
+    ip link set "v${ns3}1" down
+    echo "==> Network cut at $(date +%T)"
+
+    for _ in $(seq 240); do
+        grep -q cluster-member-offline "${TEST_DIR}/events.log" && break
+        sleep 1
+    done
+    grep cluster-member-offline "${TEST_DIR}/events.log"
+    OFFLINE=$(date +%s)
+    echo "==> Offline event at $(date +%T)"
+    grep cluster-member-offline "${TEST_DIR}/events.log" | grep -q '"healing_delay": *30'
+    grep cluster-member-offline "${TEST_DIR}/events.log" | grep -q 'members/node3'
+    ! grep -q cluster-member-healed "${TEST_DIR}/events.log" || false
+    INCUS_DIR="${INCUS_ONE_DIR}" incus cluster list -f csv | grep node3 | grep -q OFFLINE
+
+    # The evacuation only starts once the delay has elapsed.
+    for _ in $(seq 240); do
+        grep -q cluster-member-healed "${TEST_DIR}/events.log" && break
+        sleep 1
+    done
+    grep cluster-member-healed "${TEST_DIR}/events.log"
+    HEALED=$(date +%s)
+    echo "==> Healed event at $(date +%T), $((HEALED - OFFLINE))s after the offline event"
+    [ "$((HEALED - OFFLINE))" -ge 25 ]
+    INCUS_DIR="${INCUS_ONE_DIR}" incus cluster list -f csv | grep node3 | grep -q EVACUATED
+
+    kill "${MONITOR}" || true
+    ip link set "v${ns3}1" up
+
+    INCUS_DIR="${INCUS_THREE_DIR}" incus admin shutdown || true
+    INCUS_DIR="${INCUS_TWO_DIR}" incus admin shutdown
+    INCUS_DIR="${INCUS_ONE_DIR}" incus admin shutdown
+    sleep 0.5
+    rm -f "${INCUS_THREE_DIR}/unix.socket"
+    rm -f "${INCUS_TWO_DIR}/unix.socket"
+    rm -f "${INCUS_ONE_DIR}/unix.socket"
 
     teardown_clustering_netns
     teardown_clustering_bridge

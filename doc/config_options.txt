@@ -1870,6 +1870,13 @@ The custom policy routing table ID to add IPv6 static routes to (in addition to 
 
 ```
 
+```{config:option} failover devices-nic_sriov
+:required: "no"
+:shortdesc: "Failover bridge to use when live-migrating the NIC"
+:type: "string"
+
+```
+
 ```{config:option} hwaddr devices-nic_sriov
 :default: "randomly assigned"
 :managed: "no"
@@ -3474,6 +3481,12 @@ The disk quota is applied the next time the instance starts.
 
 ```{config:option} volatile.<name>.ceph_rbd instance-volatile
 :shortdesc: "RBD device path for Ceph disk devices"
+:type: "string"
+
+```
+
+```{config:option} volatile.<name>.failover.host_name instance-volatile
+:shortdesc: "Network device name on the host for the failover interface"
 :type: "string"
 
 ```
@@ -5133,6 +5146,14 @@ User keys can be used in search.
 
 <!-- config group network_physical-ovn end -->
 <!-- config group network_sriov-common start -->
+```{config:option} failover network_sriov-common
+:condition: "-"
+:scope: "local"
+:shortdesc: "Failover bridge to use when live-migrating `sriov` NICs"
+:type: "string"
+
+```
+
 ```{config:option} mtu network_sriov-common
 :condition: "-"
 :shortdesc: "The MTU of the new interface"
@@ -5779,6 +5800,15 @@ When using scriptlet-based authorization, this option stores the scriptlet.
 
 <!-- config group server-authorization end -->
 <!-- config group server-cluster start -->
+```{config:option} cluster.healing_delay server-cluster
+:defaultdesc: "`0`"
+:scope: "global"
+:shortdesc: "Delay between detecting an offline cluster member and evacuating it"
+:type: "integer"
+Specify the number of seconds to wait between an offline cluster member being detected and its evacuation.
+The `cluster-member-offline` event is sent at the start of that delay, giving external tooling time to power off the member.
+```
+
 ```{config:option} cluster.healing_threshold server-cluster
 :defaultdesc: "`0`"
 :scope: "global"
@@ -6270,6 +6300,16 @@ This is very efficient but comes with the downside that a crash of LXCFS will br
 With this option, it's now possible to run a LXCFS instance per
 container instead, using more system resources but reducing the impact
 of a crash.
+```
+
+```{config:option} instances.migration.bwlimit server-miscellaneous
+:defaultdesc: "`128MiB` (QEMU default)"
+:scope: "global"
+:shortdesc: "Bandwidth limit for virtual machine live migrations"
+:type: "string"
+The upper limit to be placed on the bandwidth used by the memory and state
+transfer of each virtual machine live migration.
+When unset, the QEMU default of 128MiB/s (about 1Gbit/s) applies.
 ```
 
 ```{config:option} instances.nic.host_name server-miscellaneous

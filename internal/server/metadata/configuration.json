@@ -2110,6 +2110,14 @@
 						}
 					},
 					{
+						"failover": {
+							"longdesc": "",
+							"required": "no",
+							"shortdesc": "Failover bridge to use when live-migrating the NIC",
+							"type": "string"
+						}
+					},
+					{
 						"hwaddr": {
 							"default": "randomly assigned",
 							"longdesc": "",
@@ -3812,6 +3820,13 @@
 						"volatile.\u003cname\u003e.ceph_rbd": {
 							"longdesc": "",
 							"shortdesc": "RBD device path for Ceph disk devices",
+							"type": "string"
+						}
+					},
+					{
+						"volatile.\u003cname\u003e.failover.host_name": {
+							"longdesc": "",
+							"shortdesc": "Network device name on the host for the failover interface",
 							"type": "string"
 						}
 					},
@@ -5733,6 +5748,15 @@
 			"common": {
 				"keys": [
 					{
+						"failover": {
+							"condition": "-",
+							"longdesc": "",
+							"scope": "local",
+							"shortdesc": "Failover bridge to use when live-migrating `sriov` NICs",
+							"type": "string"
+						}
+					},
+					{
 						"mtu": {
 							"condition": "-",
 							"longdesc": "",
@@ -6442,6 +6466,15 @@
 			"cluster": {
 				"keys": [
 					{
+						"cluster.healing_delay": {
+							"defaultdesc": "`0`",
+							"longdesc": "Specify the number of seconds to wait between an offline cluster member being detected and its evacuation.\nThe `cluster-member-offline` event is sent at the start of that delay, giving external tooling time to power off the member.",
+							"scope": "global",
+							"shortdesc": "Delay between detecting an offline cluster member and evacuating it",
+							"type": "integer"
+						}
+					},
+					{
 						"cluster.healing_threshold": {
 							"defaultdesc": "`0`",
 							"longdesc": "Specify the number of seconds after which an offline cluster member is to be evacuated.\nTo disable evacuating offline members, set this option to `0`.",
@@ -6983,6 +7016,15 @@
 							"scope": "global",
 							"shortdesc": "Whether to run LXCFS on a per-instance basis",
 							"type": "bool"
+						}
+					},
+					{
+						"instances.migration.bwlimit": {
+							"defaultdesc": "`128MiB` (QEMU default)",
+							"longdesc": "The upper limit to be placed on the bandwidth used by the memory and state\ntransfer of each virtual machine live migration.\nWhen unset, the QEMU default of 128MiB/s (about 1Gbit/s) applies.",
+							"scope": "global",
+							"shortdesc": "Bandwidth limit for virtual machine live migrations",
+							"type": "string"
 						}
 					},
 					{

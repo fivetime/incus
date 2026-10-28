@@ -120,6 +120,10 @@ message MigrationHeader {
 	 * as 15, so the fork moves blockFeatures. A server that does not know 19
 	 * ignores it and transfers uncompressed, the pre-feature behaviour. */
 	optional blockFeatures			blockFeatures		= 19;
+
+	/* Upstream numbers this field 16, which this fork uses for cephPool, so
+	 * the fork moves it like blockFeatures. */
+	optional uint32				multifdChannels		= 20;
 }
 
 message MigrationControl {

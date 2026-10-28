@@ -1878,7 +1878,7 @@ func (d *lxc) deviceDetachNIC(configCopy map[string]string, netIF []deviceConfig
 		// that device doesn't already exist on the host as if a device exists on the host
 		// we can't know whether that is because liblxc has moved it back already or whether
 		// it is a conflicting device.
-		if !util.PathExists(fmt.Sprintf("/sys/class/net/%s", devName)) {
+		if !network.InterfaceExists(devName) {
 			if stopHookNetnsPath == "" {
 				return fmt.Errorf("Cannot detach NIC device %q without stopHookNetnsPath being provided", devName)
 			}
@@ -3230,6 +3230,11 @@ func (d *lxc) detachInterfaceRename(netns string, ifName string, hostName string
 
 // Start starts the instance.
 func (d *lxc) Start(stateful bool) error {
+	return d.start(stateful, nil)
+}
+
+// start starts the instance and can use an existing InstanceOperation lock.
+func (d *lxc) start(stateful bool, op *operationlock.InstanceOperation) error {
 	if d.LocalConfig()[migrationCheckpointKey] != "" {
 		return errors.New("A retained migration checkpoint must be restored explicitly")
 	}
@@ -3250,15 +3255,17 @@ func (d *lxc) Start(stateful bool) error {
 		return err
 	}
 
-	// Setup a new operation.
-	op, err := operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionStart, []operationlock.Action{operationlock.ActionRestart, operationlock.ActionRestore}, false, false)
-	if err != nil {
-		if errors.Is(err, operationlock.ErrNonReusuableSucceeded) {
-			// An existing matching operation has now succeeded, return.
-			return nil
-		}
+	// Setup a new operation if needed.
+	if op == nil {
+		op, err = operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionStart, []operationlock.Action{operationlock.ActionRestart, operationlock.ActionRestore}, false, false)
+		if err != nil {
+			if errors.Is(err, operationlock.ErrNonReusuableSucceeded) {
+				// An existing matching operation has now succeeded, return.
+				return nil
+			}
 
-		return fmt.Errorf("Failed to create instance start operation: %w", err)
+			return fmt.Errorf("Failed to create instance start operation: %w", err)
+		}
 	}
 
 	defer op.Done(nil)
@@ -4042,6 +4049,7 @@ func (d *lxc) onStop(args map[string]string) error {
 			// Create a new restart operation.
 			op, err = operationlock.CreateWaitGet(d.Project().Name, d.Name(), d.op, operationlock.ActionRestart, nil, true, false)
 			if err == nil {
+				op.SetInstanceInitiated(true)
 				defer op.Done(nil)
 			} else {
 				d.logger.Error("Failed to setup new restart operation", logger.Ctx{"err": err})
@@ -4062,10 +4070,10 @@ func (d *lxc) onStop(args map[string]string) error {
 			d.state.Events.SendLifecycle(d.project.Name, lifecycle.InstanceShutdown.Event(d, nil))
 		}
 
-		// Reboot the container
+		// Reboot the container on our own lock, other requests must not join it.
 		if target == "reboot" || autoRestart {
 			// Start the container again
-			err = d.Start(false)
+			err = d.start(false, op)
 			if err != nil {
 				op.Done(fmt.Errorf("Failed restarting instance: %w", err))
 				return
@@ -4340,7 +4348,7 @@ func (d *lxc) Render() (any, any, error) {
 }
 
 // RenderFull renders the full state of the instance.
-func (d *lxc) RenderFull(hostInterfaces []net.Interface) (*api.InstanceFull, any, error) {
+func (d *lxc) RenderFull() (*api.InstanceFull, any, error) {
 	if d.IsSnapshot() {
 		return nil, nil, errors.New("RenderFull only works with containers")
 	}
@@ -4355,7 +4363,7 @@ func (d *lxc) RenderFull(hostInterfaces []net.Interface) (*api.InstanceFull, any
 	ct := api.InstanceFull{Instance: *base.(*api.Instance)}
 
 	// Add the ContainerState
-	ct.State, err = d.renderState(ct.StatusCode, hostInterfaces)
+	ct.State, err = d.renderState(ct.StatusCode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -4399,7 +4407,7 @@ func (d *lxc) RenderFull(hostInterfaces []net.Interface) (*api.InstanceFull, any
 }
 
 // renderState renders just the running state of the instance.
-func (d *lxc) renderState(statusCode api.StatusCode, hostInterfaces []net.Interface) (*api.InstanceState, error) {
+func (d *lxc) renderState(statusCode api.StatusCode) (*api.InstanceState, error) {
 	status := api.InstanceState{
 		Status:     statusCode.String(),
 		StatusCode: statusCode,
@@ -4418,7 +4426,7 @@ func (d *lxc) renderState(statusCode api.StatusCode, hostInterfaces []net.Interf
 
 		status.CPU = d.cpuState()
 		status.Memory = d.memoryState()
-		status.Network = d.networkState(hostInterfaces)
+		status.Network = d.networkState()
 		status.Pid = int64(pid)
 		status.Processes = processesState
 
@@ -4437,8 +4445,8 @@ func (d *lxc) renderState(statusCode api.StatusCode, hostInterfaces []net.Interf
 }
 
 // RenderState renders just the running state of the instance.
-func (d *lxc) RenderState(hostInterfaces []net.Interface) (*api.InstanceState, error) {
-	return d.renderState(d.statusCode(), hostInterfaces)
+func (d *lxc) RenderState() (*api.InstanceState, error) {
+	return d.renderState(d.statusCode())
 }
 
 // snapshot creates a snapshot of the instance.
@@ -9330,7 +9338,7 @@ func (d *lxc) memoryState() api.InstanceStateMemory {
 	return memory
 }
 
-func (d *lxc) networkState(hostInterfaces []net.Interface) map[string]api.InstanceStateNetwork {
+func (d *lxc) networkState() map[string]api.InstanceStateNetwork {
 	result := map[string]api.InstanceStateNetwork{}
 
 	pid := d.InitPID()
@@ -9338,7 +9346,7 @@ func (d *lxc) networkState(hostInterfaces []net.Interface) map[string]api.Instan
 		return result
 	}
 
-	nw, err := netutils.NetnsGetifaddrs(int32(pid), hostInterfaces)
+	nw, err := netutils.NetnsGetifaddrs(int32(pid))
 	if err != nil {
 		d.logger.Error("Failed to retrieve network information via netlink", logger.Ctx{"err": err, "pid": pid})
 		return result
@@ -10209,7 +10217,7 @@ func (d *lxc) Info() instance.Info {
 }
 
 // Metrics returns the metrics set for the instance.
-func (d *lxc) Metrics(hostInterfaces []net.Interface) (*metrics.MetricSet, error) {
+func (d *lxc) Metrics() (*metrics.MetricSet, error) {
 	out := metrics.NewMetricSet(map[string]string{"project": d.project.Name, "name": d.name, "type": instancetype.Container.String()})
 
 	if !d.IsRunning() {
@@ -10352,7 +10360,7 @@ func (d *lxc) Metrics(hostInterfaces []net.Interface) (*metrics.MetricSet, error
 	}
 
 	// Get network stats
-	networkState := d.networkState(hostInterfaces)
+	networkState := d.networkState()
 
 	for name, netState := range networkState {
 		labels := map[string]string{"device": name}

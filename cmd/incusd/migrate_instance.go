@@ -82,6 +82,11 @@ func newMigrationSource(inst instance.Instance, stateful bool, instanceOnly bool
 
 			ret.conns[connName] = newMigrationConn(secret, nil, nil)
 		}
+
+		// The state transfer may use several connections.
+		if connName == api.SecretNameState {
+			ret.conns[connName].AllowExtra()
+		}
 	}
 
 	return &ret, nil
@@ -121,6 +126,15 @@ func (s *migrationSourceWs) do(migrateOp *operations.Operation) error {
 		return wsConn, nil
 	}
 
+	stateConnExtraFunc := func(ctx context.Context, count int) ([]io.ReadWriteCloser, error) {
+		conn := s.conns[api.SecretNameState]
+		if conn == nil {
+			return nil, errors.New("Migration source control connection not initialized")
+		}
+
+		return conn.ExtraWebsocketIO(ctx, count)
+	}
+
 	filesystemConnFunc := func(ctx context.Context) (io.ReadWriteCloser, error) {
 		conn := s.conns[api.SecretNameFilesystem]
 		if conn == nil {
@@ -141,6 +155,7 @@ func (s *migrationSourceWs) do(migrateOp *operations.Operation) error {
 			ControlSend:    s.send,
 			ControlReceive: s.recv,
 			StateConn:      stateConnFunc,
+			StateConnExtra: stateConnExtraFunc,
 			FilesystemConn: filesystemConnFunc,
 			Snapshots:      !s.instanceOnly,
 			Live:           s.live,
@@ -228,6 +243,11 @@ func newMigrationSink(args *migrationSinkArgs) (*migrationSink, error) {
 
 			sink.conns[connName] = newMigrationConn(secret, nil, nil)
 		}
+
+		// The state transfer may use several connections.
+		if connName == api.SecretNameState {
+			sink.conns[connName].AllowExtra()
+		}
 	}
 
 	return &sink, nil
@@ -268,6 +288,19 @@ func (c *migrationSink) do(instOp *operationlock.InstanceOperation) error {
 		return wsConn, nil
 	}
 
+	// Only a target that dials the source can open extra state connections.
+	var stateConnExtraFunc func(ctx context.Context, count int) ([]io.ReadWriteCloser, error)
+	if !c.push {
+		stateConnExtraFunc = func(ctx context.Context, count int) ([]io.ReadWriteCloser, error) {
+			conn := c.conns[api.SecretNameState]
+			if conn == nil {
+				return nil, errors.New("Migration target control connection not initialized")
+			}
+
+			return conn.ExtraWebsocketIO(ctx, count)
+		}
+	}
+
 	filesystemConnFunc := func(ctx context.Context) (io.ReadWriteCloser, error) {
 		conn := c.conns[api.SecretNameFilesystem]
 		if conn == nil {
@@ -287,6 +320,7 @@ func (c *migrationSink) do(instOp *operationlock.InstanceOperation) error {
 			ControlSend:    c.send,
 			ControlReceive: c.recv,
 			StateConn:      stateConnFunc,
+			StateConnExtra: stateConnExtraFunc,
 			FilesystemConn: filesystemConnFunc,
 			Snapshots:      !c.instanceOnly,
 			Live:           c.live,

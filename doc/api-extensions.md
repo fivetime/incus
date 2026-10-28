@@ -3676,6 +3676,34 @@ This adds a `bgp.communities` network configuration key for `bridge` and `ovn` n
 It takes a comma-separated list of standard BGP communities (`ASN:value`)
 which are attached to all prefixes advertised by the network.
 
+## `instances_migration_bwlimit`
+This adds the `instances.migration.bwlimit` server configuration key which limits
+the bandwidth used by the memory and state transfer of each virtual machine live migration.
+
+## `backup_s3_region`
+This adds a `region` field to the S3 backup target used when uploading
+instance or volume backups, for S3 compatible stores whose region can't
+be derived from their URL.
+
+## `nic_sriov_migration`
+
+This adds a new `failover` configuration key to both `sriov` networks and NICs, accepting a bridge network name (managed or not), which controls the creation of a so-called failover `virtio-net` NIC on said bridge. This failover NIC is used to live-migrate an SR-IOV NIC through the `virtio-net` failover mechanism on guests supporting the feature.
+
+## `auth_tls_jwt_cookie`
+
+This adds the `/tls/login` and `/tls/logout` endpoints for browser based clients.
+
+A `POST` to `/tls/login` with a valid TLS `JWT` in the `Authorization` header
+stores that token in a `tls_jwt` cookie which is then accepted by all API
+endpoints and WebSocket connections. The cookie is `Secure`, `HttpOnly` and
+`SameSite=Strict` and expires with the token. `/tls/logout` clears the cookie.
+
+## `cluster_healing_delay`
+
+This adds the `cluster.healing_delay` server configuration key and the `cluster-member-offline` event.
+
+When cluster healing detects an offline member, the event is sent immediately and the evacuation only starts once the delay has elapsed, giving external tooling time to power the member off.
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external
