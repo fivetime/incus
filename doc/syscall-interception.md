@@ -107,7 +107,10 @@ kernel block file system.
 
 The caller must hold `CAP_SYS_ADMIN` in the instance, the source must be
 a block device matching one of the instance's `unix-block` devices, and
-the resulting mount is always `nodev,nosuid`. Remounts, bind mounts and
+the resulting mount is always `nodev`. It is `nosuid` only when the caller
+asks for it: set-user-ID files and file capabilities apply through the
+instance's ID map, as on a FUSE mount the instance creates itself, so
+they grant nothing outside the instance. Remounts, bind mounts and
 sources that are not such a block device keep using the plain FUSE
 mount. The FUSE implementation must accept its mount point as `/dev/fd/N`
 (libfuse 3.3 or later) and must negotiate `FUSE_ALLOW_IDMAP` (libfuse
