@@ -103,28 +103,33 @@ func TestStripMountOption(t *testing.T) {
 }
 
 func TestMountFuseblkOpts(t *testing.T) {
-	// Nothing configured, interception off: the guest's options as they are.
-	if got := mountFuseblkOpts("ro,noatime", "", false); got != "ro,noatime" {
-		t.Fatal(fmt.Errorf("unexpected options: %q", got))
+	cases := []struct {
+		name       string
+		guest      string
+		configured string
+		resize     bool
+		want       string
+	}{
+		// Nothing configured, interception off: the guest's options as they are.
+		{"guest only", "ro,noatime", "", false, "ro,noatime"},
+
+		// Configured helper options are appended.
+		{"configured appended", "ro", "kernel,noexcl", false, "ro,kernel,noexcl"},
+
+		// With the interception on, Incus adds host_authorized_resize itself.
+		{"resize added", "ro", "kernel,noexcl", true, "ro,kernel,noexcl,host_authorized_resize"},
+
+		// Neither the guest nor the configuration may add it on their own.
+		{"resize stripped", "ro,host_authorized_resize", "kernel,host_authorized_resize=1,noexcl", false, "ro,kernel,noexcl"},
+
+		// And with the interception on it appears exactly once.
+		{"resize once", "host_authorized_resize", "host_authorized_resize", true, "host_authorized_resize"},
 	}
 
-	// Configured helper options are appended.
-	if got := mountFuseblkOpts("ro", "kernel,noexcl", false); got != "ro,kernel,noexcl" {
-		t.Fatal(fmt.Errorf("unexpected options: %q", got))
-	}
-
-	// With the interception on, Incus adds host_authorized_resize itself.
-	if got := mountFuseblkOpts("ro", "kernel,noexcl", true); got != "ro,kernel,noexcl,host_authorized_resize" {
-		t.Fatal(fmt.Errorf("unexpected options: %q", got))
-	}
-
-	// Neither the guest nor the configuration may add it on their own.
-	if got := mountFuseblkOpts("ro,host_authorized_resize", "kernel,host_authorized_resize=1,noexcl", false); got != "ro,kernel,noexcl" {
-		t.Fatal(fmt.Errorf("option not stripped: %q", got))
-	}
-
-	// And with the interception on it appears exactly once.
-	if got := mountFuseblkOpts("host_authorized_resize", "host_authorized_resize", true); got != "host_authorized_resize" {
-		t.Fatal(fmt.Errorf("option duplicated: %q", got))
+	for _, c := range cases {
+		got := mountFuseblkOpts(c.guest, c.configured, c.resize)
+		if got != c.want {
+			t.Fatal(fmt.Errorf("%s: mountFuseblkOpts(%q, %q, %v) = %q, want %q", c.name, c.guest, c.configured, c.resize, got, c.want))
+		}
 	}
 }
