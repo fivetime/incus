@@ -48,7 +48,8 @@ test_interception() {
     mknod "${TEST_DIR}/dev/loopdisk" b "$(stat -c '%Hr' "${loop_device_1}")" "$(stat -c '%Lr' "${loop_device_1}")"
 
     incus config device add c1 loop unix-block source="${TEST_DIR}/dev/loopdisk" path=/dev/sda
-    incus exec c1 -- mkfs.ext4 /dev/sda
+    # Leave room on the device so that resize2fs has a size to grow to.
+    incus exec c1 -- mkfs.ext4 /dev/sda 1G
     ! incus exec c1 -- mount /dev/sda /mnt || false
     incus config set c1 security.syscalls.intercept.mount=true
 
@@ -76,7 +77,8 @@ test_interception() {
     incus restart c1 -f
     incus exec c1 -- mount /dev/sda /mnt
     # The instance's root reaches the file system, which (fuse2fs) doesn't implement the ioctl.
-    incus exec c1 -- resize2fs /dev/sda 2>&1 | grep -q "does not support" || false
+    out="$(incus exec c1 -- resize2fs /dev/sda 2>&1 || true)"
+    echo "${out}" | grep -q "does not support" || { echo "${out}"; false; }
     # A root in a nested user namespace has the capability only there: refused by Incus.
     if incus exec c1 -- unshare -U -r true 2>/dev/null; then
         incus exec c1 -- unshare -U -r resize2fs /dev/sda 2>&1 | grep -q "Permission denied" || false
