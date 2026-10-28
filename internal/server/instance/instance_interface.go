@@ -142,8 +142,8 @@ type Instance interface {
 	// Status
 	Render() (any, any, error)
 	RenderWithUsage() (any, any, error)
-	RenderFull(hostInterfaces []net.Interface) (*api.InstanceFull, any, error)
-	RenderState(hostInterfaces []net.Interface) (*api.InstanceState, error)
+	RenderFull() (*api.InstanceFull, any, error)
+	RenderState() (*api.InstanceState, error)
 	IsRunning() bool
 	IsFrozen() bool
 	IsEphemeral() bool
@@ -198,7 +198,7 @@ type Instance interface {
 
 	DeferTemplateApply(trigger TemplateTrigger) error
 
-	Metrics(hostInterfaces []net.Interface) (*metrics.MetricSet, error)
+	Metrics() (*metrics.MetricSet, error)
 
 	// Bitmaps.
 	CreateBitmap(deviceNames []string, data api.StorageVolumeBitmapsPost) error
@@ -230,6 +230,7 @@ type VM interface {
 	GetNVRAM() (*uefi.Store, error)
 	SetNVRAM(store *uefi.Store) error
 	ResetNVRAM() error
+	QemuArchConfig() (string, string, error)
 }
 
 // CriuMigrationArgs arguments for CRIU migration.
@@ -259,6 +260,7 @@ type MigrateArgs struct {
 	ControlSend           func(m proto.Message) error
 	ControlReceive        func(m proto.Message, handshake bool) error
 	StateConn             func(ctx context.Context) (io.ReadWriteCloser, error)
+	StateConnExtra        func(ctx context.Context, count int) ([]io.ReadWriteCloser, error) // Extra state connections, nil when this side can't provide them.
 	FilesystemConn        func(ctx context.Context) (io.ReadWriteCloser, error)
 	Snapshots             bool
 	Live                  bool

@@ -11,7 +11,7 @@ func TestOpenStackMaterializationProvenanceIsNotCopied(t *testing.T) {
 		ConfigOpenStackRootfsMaterializationID,
 		"user.openstack.uuid",
 	} {
-		if InstanceIncludeWhenCopying(key, false) || InstanceIncludeWhenCopying(key, true) {
+		if InstanceIncludeWhenCopying(key, false, false) || InstanceIncludeWhenCopying(key, true, false) {
 			t.Fatalf("Materialization provenance key %q can be copied", key)
 		}
 	}

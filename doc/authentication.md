@@ -70,6 +70,16 @@ To do this, the user must generate a signed `JWT` which has its
 it must have valid `NotBefore` and `NotAfter` fields and be signed by
 the client certificate's private key.
 
+Such a token can be generated from the current client certificate with
+[`incus remote get-client-token`](incus_remote_get-client-token.md).
+
+Browser based clients which cannot set HTTP headers on WebSocket
+connections can instead send the token once through a `POST` request to
+`/tls/login` with the token in the `Authorization` header. On success,
+Incus stores the token in a `Secure`, `HttpOnly` cookie named `tls_jwt`
+which is then accepted for all subsequent requests until the token
+expires. A request to `/tls/logout` clears the cookie.
+
 (authentication-add-certs)=
 #### Adding trusted certificates to the server
 
@@ -143,7 +153,21 @@ Only enable `core.trust_ca_certificates` with a CA dedicated to Incus, as anyone
 
 ### Encrypting local keys
 
-The `incus` client also supports encrypted client keys. Keys generated via the methods above can be encrypted with a password, using:
+To generate a new client certificate with an encrypted private key, use:
+
+```sh
+incus remote generate-certificate --encrypt
+```
+
+Generation fails if the certificate or private key file already exists.
+This restriction prevents accidentally replacing credentials that a server may already trust.
+The `--encrypt` option encrypts newly generated keys only.
+
+The command prompts for a passphrase and confirmation.
+The private key is encrypted before it is written to disk.
+Use `--tls-cert <certificate-path>` and `--tls-key <key-path>` together to choose {ref}`output files for the client certificate and key <remote-client-certificate>`.
+
+To encrypt an existing client key while preserving the client identity, use:
 
 ```
 ssh-keygen -p -o -f .config/incus/client.key

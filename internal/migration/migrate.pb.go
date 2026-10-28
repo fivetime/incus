@@ -836,8 +836,11 @@ type MigrationHeader struct {
 	// as 15, so the fork moves blockFeatures. A server that does not know 19
 	// ignores it and transfers uncompressed, the pre-feature behaviour.
 	BlockFeatures *BlockFeatures `protobuf:"bytes,19,opt,name=blockFeatures" json:"blockFeatures,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Upstream numbers this field 16, which this fork uses for cephPool, so
+	// the fork moves it like blockFeatures.
+	MultifdChannels *uint32 `protobuf:"varint,20,opt,name=multifdChannels" json:"multifdChannels,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *MigrationHeader) Reset() {
@@ -994,6 +997,13 @@ func (x *MigrationHeader) GetBlockFeatures() *BlockFeatures {
 		return x.BlockFeatures
 	}
 	return nil
+}
+
+func (x *MigrationHeader) GetMultifdChannels() uint32 {
+	if x != nil && x.MultifdChannels != nil {
+		return *x.MultifdChannels
+	}
+	return 0
 }
 
 type MigrationControl struct {
@@ -1163,7 +1173,7 @@ const file_internal_migration_migrate_proto_rawDesc = "" +
 	"deviceName\x18\n" +
 	" \x01(\tR\n" +
 	"deviceName\x12>\n" +
-	"\rblockFeatures\x18\v \x01(\v2\x18.migration.blockFeaturesR\rblockFeatures\"\xaf\x06\n" +
+	"\rblockFeatures\x18\v \x01(\v2\x18.migration.blockFeaturesR\rblockFeatures\"\xd9\x06\n" +
 	"\x0fMigrationHeader\x12*\n" +
 	"\x02fs\x18\x01 \x02(\x0e2\x1a.migration.MigrationFSTypeR\x02fs\x12'\n" +
 	"\x04criu\x18\x02 \x01(\x0e2\x13.migration.CRIUTypeR\x04criu\x12*\n" +
@@ -1187,7 +1197,8 @@ const file_internal_migration_migrate_proto_rawDesc = "" +
 	"\n" +
 	"cephDriver\x18\x12 \x01(\tR\n" +
 	"cephDriver\x12>\n" +
-	"\rblockFeatures\x18\x13 \x01(\v2\x18.migration.blockFeaturesR\rblockFeatures\"|\n" +
+	"\rblockFeatures\x18\x13 \x01(\v2\x18.migration.blockFeaturesR\rblockFeatures\x12(\n" +
+	"\x0fmultifdChannels\x18\x14 \x01(\rR\x0fmultifdChannels\"|\n" +
 	"\x10MigrationControl\x12\x18\n" +
 	"\asuccess\x18\x01 \x02(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x124\n" +

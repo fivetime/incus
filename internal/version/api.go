@@ -598,6 +598,11 @@ var APIExtensions = []string{
 	"oidc_id_token",
 	"certificate_ca_trust",
 	"network_bgp_communities",
+	"instances_migration_bwlimit",
+	"backup_s3_region",
+	"nic_sriov_migration",
+	"auth_tls_jwt_cookie",
+	"cluster_healing_delay",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an

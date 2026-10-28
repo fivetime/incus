@@ -75,7 +75,7 @@ incus remote generate-certificate --quiet 2> /dev/null || true
 log "Runner has $(nproc) CPUs, $(free -g | awk '/^Mem:/ {print $2}') GiB of RAM and $(df -h --output=avail / | tail -n 1 | tr -d " ") free on /"
 
 log "Create the shared disk"
-incus storage volume create "${POOL}" "${PREFIX}-shared" --type=block size=20GiB security.shared=true
+incus storage volume create "${POOL}" "${PREFIX}-shared" --type=block size=40GiB security.shared=true
 
 log "Launch ${MEMBERS} virtual machines"
 for i in $(seq "${MEMBERS}"); do
@@ -210,7 +210,7 @@ incus storage show "${REMOTE}:shared" | grep -q "status: Created"
 
 log "Launch a VM on local storage and one on shared storage"
 incus init "${IMAGE}" "${REMOTE}:v1" --vm -s local --target "$(member 1)" -c migration.stateful=true
-incus init "${IMAGE}" "${REMOTE}:v2" --vm -s shared --target "$(member 1)" -c migration.stateful=true
+incus init "${IMAGE}" "${REMOTE}:v2" --vm -s shared -d root,size=4GiB -d root,size.state=1GiB --target "$(member 1)" -c migration.stateful=true
 
 log "Attach custom block and ISO volumes to the shared storage VM"
 incus storage volume create "${REMOTE}:shared" vol1 --type=block size=64MiB
@@ -262,6 +262,121 @@ incus move "${REMOTE}:v1" "${REMOTE}:v1" --target "$(member 2)"
 check_vm v1 "$(member 2)"
 incus move "${REMOTE}:v1" "${REMOTE}:v1" --target "$(member 1)"
 check_vm v1 "$(member 1)"
+
+# check_marker checks the on-disk marker of a freshly booted VM.
+check_marker() {
+    incus wait "${REMOTE}:${1}" agent --timeout=600 --interval=2
+    incus exec "${REMOTE}:${1}" -- cat /root/marker | grep -Fx "${2}"
+}
+
+# snapshots prints the snapshot names of a VM on one line.
+snapshots() {
+    incus snapshot list "${REMOTE}:${1}" --format csv -c n | xargs
+}
+
+log "Snapshot the running shared storage VM across the members"
+incus exec "${REMOTE}:v2" -- sh -c "echo snap0 > /root/marker && sync"
+incus snapshot create "${REMOTE}:v2" snap0
+
+for i in 1 2 3; do
+    incus exec "${REMOTE}:v2" -- sh -c "echo snap${i} > /root/marker && sync"
+    incus snapshot create "${REMOTE}:v2" "snap${i}"
+
+    next="$(member "$((i % MEMBERS + 1))")"
+    incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "${next}"
+    check_vm v2 "${next}"
+    check_volumes
+done
+
+incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync"
+
+log "Delete a snapshot in the middle of the chain of the running VM"
+incus snapshot delete "${REMOTE}:v2" snap2
+[ "$(snapshots v2)" = "snap0 snap1 snap3" ]
+check_vm v2 "${next}"
+
+log "Delete the oldest snapshot of the running VM"
+incus snapshot delete "${REMOTE}:v2" snap0
+[ "$(snapshots v2)" = "snap1 snap3" ]
+check_vm v2 "${next}"
+
+log "Delete the newest snapshot of the running VM"
+incus exec "${REMOTE}:v2" -- sh -c "echo snap4 > /root/marker && sync"
+incus snapshot create "${REMOTE}:v2" snap4
+incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync"
+incus snapshot delete "${REMOTE}:v2" snap4
+[ "$(snapshots v2)" = "snap1 snap3" ]
+
+next="$(member "$((4 % MEMBERS + 1))")"
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "${next}"
+check_vm v2 "${next}"
+check_volumes
+
+log "Copy a snapshot to a new VM on another member"
+incus copy "${REMOTE}:v2/snap1" "${REMOTE}:v3" --target "$(member 2)"
+incus config device remove "${REMOTE}:v3" vol1 vol2
+incus start "${REMOTE}:v3"
+check_marker v3 snap1
+incus info "${REMOTE}:v3" | grep -q "Location: $(member 2)"
+incus delete -f "${REMOTE}:v3"
+
+log "Copy a snapshot to local storage"
+incus copy "${REMOTE}:v2/snap3" "${REMOTE}:v3" -s local --target "$(member 2)"
+incus config device remove "${REMOTE}:v3" vol1 vol2
+incus start "${REMOTE}:v3"
+check_marker v3 snap3
+incus delete -f "${REMOTE}:v3"
+
+log "Copy the running VM with its snapshots"
+incus copy "${REMOTE}:v2" "${REMOTE}:v4" --target "$(member "${MEMBERS}")" --stateless
+incus config device remove "${REMOTE}:v4" vol1 vol2
+[ "$(snapshots v4)" = "snap1 snap3" ]
+incus start "${REMOTE}:v4"
+check_marker v4 current
+
+log "Restore the snapshots of the shared storage VM"
+! incus snapshot restore "${REMOTE}:v2" snap1 || false
+incus snapshot restore "${REMOTE}:v2" snap3
+check_marker v2 snap3
+incus storage volume set "${REMOTE}:shared" virtual-machine/v2 lvmcluster.remove_snapshots=true
+incus snapshot restore "${REMOTE}:v2" snap1
+check_marker v2 snap1
+[ "$(snapshots v2)" = "snap1" ]
+check_volumes
+
+log "Check the copied VM doesn't depend on the source snapshots"
+incus restart -f "${REMOTE}:v4"
+check_marker v4 current
+incus snapshot restore "${REMOTE}:v4" snap3 --diskonly
+check_marker v4 snap3
+incus delete -f "${REMOTE}:v4"
+
+log "Take a stateful snapshot of the running VM"
+incus exec "${REMOTE}:v2" -- sh -c "echo stateful > /root/marker && sync && echo stateful > /dev/shm/marker"
+incus snapshot create "${REMOTE}:v2" snap5 --stateful
+incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync && echo live > /dev/shm/marker"
+
+next="$(member "$((5 % MEMBERS + 1))")"
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "${next}"
+check_vm v2 "${next}"
+
+log "Restore the stateful snapshot"
+incus snapshot restore "${REMOTE}:v2" snap5 --stateful
+incus wait "${REMOTE}:v2" agent --timeout=120 --interval=2
+incus exec "${REMOTE}:v2" -- cat /dev/shm/marker | grep -Fx stateful
+incus restart -f "${REMOTE}:v2"
+check_marker v2 stateful
+
+log "Delete the stateful snapshot of the running VM"
+incus snapshot delete "${REMOTE}:v2" snap5
+[ "$(snapshots v2)" = "snap1" ]
+check_volumes
+
+incus exec "${REMOTE}:v2" -- sh -c "echo live > /dev/shm/marker"
+if [ "${next}" != "$(member 1)" ]; then
+    incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 1)"
+    check_vm v2 "$(member 1)"
+fi
 
 log "Heal the cluster after losing a member"
 incus config set "${REMOTE}:" cluster.offline_threshold=11 cluster.healing_threshold=15
