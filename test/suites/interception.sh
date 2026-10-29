@@ -48,8 +48,7 @@ test_interception() {
     mknod "${TEST_DIR}/dev/loopdisk" b "$(stat -c '%Hr' "${loop_device_1}")" "$(stat -c '%Lr' "${loop_device_1}")"
 
     incus config device add c1 loop unix-block source="${TEST_DIR}/dev/loopdisk" path=/dev/sda
-    # Leave room on the device so that resize2fs has a size to grow to.
-    incus exec c1 -- mkfs.ext4 /dev/sda 1G
+    incus exec c1 -- mkfs.ext4 /dev/sda
     ! incus exec c1 -- mount /dev/sda /mnt || false
     incus config set c1 security.syscalls.intercept.mount=true
 
@@ -76,12 +75,16 @@ test_interception() {
     incus config set c1 security.syscalls.intercept.ioctl.resize_fs=true
     incus restart c1 -f
     incus exec c1 -- mount /dev/sda /mnt
+    # Issue the ioctl directly: resize2fs doesn't see a fuse2fs mount as mounted,
+    # so it never reaches the online path. Prints the error, or nothing on success.
+    # shellcheck disable=SC2016
+    resize_fs='sysopen(my $fh, "/mnt", O_RDONLY) or die "open: $!\n"; ioctl($fh, 0x40086610, pack("Q", 1 << 20)) or print "$!\n"'
     # The instance's root reaches the file system, which (fuse2fs) doesn't implement the ioctl.
-    out="$(incus exec c1 -- resize2fs /dev/sda 2>&1 || true)"
-    echo "${out}" | grep -q "does not support" || { echo "${out}"; false; }
+    out="$(incus exec c1 -- perl -MFcntl -e "${resize_fs}")"
+    [ "${out}" != "Operation not permitted" ] || false
     # A root in a nested user namespace has the capability only there: refused by Incus.
     if incus exec c1 -- unshare -U -r true 2>/dev/null; then
-        incus exec c1 -- unshare -U -r resize2fs /dev/sda 2>&1 | grep -q "Permission denied" || false
+        [ "$(incus exec c1 -- unshare -U -r perl -MFcntl -e "${resize_fs}")" = "Operation not permitted" ]
     fi
     incus exec c1 -- umount /mnt
 
