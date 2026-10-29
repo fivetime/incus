@@ -82,7 +82,8 @@ test_interception() {
     cat > "${TEST_DIR}/resize-fs.pl" << 'EOF'
 use Fcntl;
 sysopen(my $fh, "/mnt", O_RDONLY) or die "open: $!\n";
-ioctl($fh, 0x40086610, pack("Q", 1 << 20)) or print "$!\n";
+my $blocks = pack("Q", 1 << 20);
+ioctl($fh, 0x40086610, $blocks) or print "$!\n";
 EOF
     incus file push "${TEST_DIR}/resize-fs.pl" c1/root/resize-fs.pl
     # The instance's root reaches the file system, which (fuse2fs) doesn't implement the ioctl.
