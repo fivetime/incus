@@ -75,13 +75,25 @@ test_interception() {
     incus config set c1 security.syscalls.intercept.ioctl.resize_fs=true
     incus restart c1 -f
     incus exec c1 -- mount /dev/sda /mnt
+    # Issue the ioctl directly: resize2fs doesn't see a fuse2fs mount as mounted,
+    # so it never reaches the online path. The script prints the error, or
+    # nothing on success; it is pushed as a file because the incus wrapper
+    # evaluates its arguments again.
+    cat > "${TEST_DIR}/resize-fs.pl" << 'EOF'
+use Fcntl;
+sysopen(my $fh, "/mnt", O_RDONLY) or die "open: $!\n";
+ioctl($fh, 0x40086610, pack("Q", 1 << 20)) or print "$!\n";
+EOF
+    incus file push "${TEST_DIR}/resize-fs.pl" c1/root/resize-fs.pl
     # The instance's root reaches the file system, which (fuse2fs) doesn't implement the ioctl.
-    incus exec c1 -- resize2fs /dev/sda 2>&1 | grep -q "does not support" || false
+    out="$(incus exec c1 -- perl /root/resize-fs.pl)"
+    [ "${out}" != "Operation not permitted" ] || false
     # A root in a nested user namespace has the capability only there: refused by Incus.
     if incus exec c1 -- unshare -U -r true 2>/dev/null; then
-        incus exec c1 -- unshare -U -r resize2fs /dev/sda 2>&1 | grep -q "Permission denied" || false
+        [ "$(incus exec c1 -- unshare -U -r perl /root/resize-fs.pl)" = "Operation not permitted" ]
     fi
     incus exec c1 -- umount /mnt
+    rm "${TEST_DIR}/resize-fs.pl"
 
     echo "==> Testing LXCFS overlay on proc mounts"
     incus config set c1 limits.memory=512MiB security.syscalls.intercept.mount.lxcfs=true
