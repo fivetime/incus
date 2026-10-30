@@ -115,8 +115,29 @@
 #define FSCONFIG_CMD_CREATE 6 /* Invoke superblock creation */
 #endif
 
+#ifndef FSCONFIG_CMD_RECONFIGURE
+#define FSCONFIG_CMD_RECONFIGURE 7 /* Invoke superblock reconfiguration */
+#endif
+
 #ifndef FSOPEN_CLOEXEC
 #define FSOPEN_CLOEXEC 0x00000001
+#endif
+
+// fspick() flags
+#ifndef FSPICK_CLOEXEC
+#define FSPICK_CLOEXEC 0x00000001
+#endif
+
+#ifndef FSPICK_SYMLINK_NOFOLLOW
+#define FSPICK_SYMLINK_NOFOLLOW 0x00000002
+#endif
+
+#ifndef FSPICK_NO_AUTOMOUNT
+#define FSPICK_NO_AUTOMOUNT 0x00000004
+#endif
+
+#ifndef FSPICK_EMPTY_PATH
+#define FSPICK_EMPTY_PATH 0x00000008
 #endif
 
 static inline int incus_fsopen(const char *fs_name, unsigned int flags)
@@ -134,6 +155,11 @@ static inline int incus_fsmount(int fs_fd, unsigned int flags,
 			      unsigned int attr_flags)
 {
 	return syscall(__NR_fsmount, fs_fd, flags, attr_flags);
+}
+
+static inline int incus_fspick(int dfd, const char *path, unsigned int flags)
+{
+	return syscall(__NR_fspick, dfd, path, flags);
 }
 
 static inline int incus_open_tree(int dfd, const char *filename, unsigned int flags)
