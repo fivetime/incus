@@ -122,6 +122,10 @@ func TestFuseblkRemountAllowed(t *testing.T) {
 		{unix.MS_REMOUNT | unix.MS_BIND, false},
 		{unix.MS_REMOUNT | unix.MS_MOVE, false},
 		{unix.MS_REMOUNT | unix.MS_MANDLOCK, false},
+
+		// The kernel ignores propagation flags on a remount; so does the host side.
+		{unix.MS_REMOUNT | unix.MS_PRIVATE, true},
+		{unix.MS_REMOUNT | unix.MS_SLAVE, true},
 	}
 
 	for _, tc := range cases {
@@ -195,8 +199,10 @@ func TestSeccompNotifyMountRemountRule(t *testing.T) {
 		t.Fatal(fmt.Errorf("remount rule [%d, %#x] doesn't mirror the mount rule [%d, %#x]", value, mask, mountValue, mountMask))
 	}
 
-	// A remount with any of these is a different operation and stays with the kernel.
-	for _, flag := range []uint64{unix.MS_REMOUNT, unix.MS_BIND, unix.MS_MOVE, unix.MS_SHARED, unix.MS_SLAVE, unix.MS_PRIVATE, unix.MS_UNBINDABLE, unix.MS_KERNMOUNT} {
+	// A remount with any of these is a different operation and stays with the kernel. The mask
+	// is the mount rule's: MS_PRIVATE and MS_SLAVE aren't in it, and the kernel ignores both on
+	// a remount, as Incus does (see TestFuseblkRemountAllowed).
+	for _, flag := range []uint64{unix.MS_REMOUNT, unix.MS_BIND, unix.MS_MOVE, unix.MS_SHARED, unix.MS_UNBINDABLE} {
 		if mask&flag == 0 {
 			t.Fatal(fmt.Errorf("flag %#x isn't in the remount rule's mask", flag))
 		}
