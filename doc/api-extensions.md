@@ -4124,3 +4124,18 @@ mounted inside the instance, as a nested container runtime mounts one for
 each container, is created by Incus on the caller's behalf and the LXCFS
 files are bound over it, so that nested containers see the instance's
 memory and CPU limits rather than the host's.
+
+## `container_syscall_intercept_mount_fuseblk_remount`
+
+A `fuseblk` mount created through `security.syscalls.intercept.mount.fuseblk`
+gets the caller's `ro`, `sync`, `dirsync` and `lazytime` on its superblock,
+and a remount of it from inside the instance is performed by Incus, as the
+superblock belongs to the host and the kernel refuses it to the instance.
+The superblock flags a remount may change (`ro`/`rw`, `sync`/`async`,
+`lazytime`) and the mount's own attributes (`noatime`, `nosuid` and the
+like) are applied as the remount names them; `nodev` stays set, the ID map
+is untouched and the remount's option string is ignored, as the kernel
+ignores it for FUSE. The caller must hold `CAP_SYS_ADMIN` in the instance's
+own user namespace, the target must be the root of a `fuseblk` mount on one
+of the instance's `unix-block` devices, and bind and move remounts are left
+to the kernel.

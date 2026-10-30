@@ -110,9 +110,16 @@ a block device matching one of the instance's `unix-block` devices, and
 the resulting mount is always `nodev`. It is `nosuid` only when the caller
 asks for it: set-user-ID files and file capabilities apply through the
 instance's ID map, as on a FUSE mount the instance creates itself, so
-they grant nothing outside the instance. Remounts, bind mounts and
-sources that are not such a block device keep using the plain FUSE
-mount. The FUSE implementation must accept its mount point as `/dev/fd/N`
+they grant nothing outside the instance. Bind mounts and sources that are
+not such a block device keep using the plain FUSE mount. The caller's
+`ro`, `sync`, `dirsync` and `lazytime` are set on the superblock. Because
+the superblock is the host's, the kernel refuses the instance a later
+remount of the mount; Incus performs it instead, applying the superblock
+flags a remount may change (`ro`/`rw`, `sync`/`async`, `lazytime`) and the
+mount's own attributes, keeping `nodev` and the ID map, and ignoring the
+remount's option string as the kernel does for FUSE. A root in a user
+namespace nested below the instance's is refused, as for the resize
+ioctl. The FUSE implementation must accept its mount point as `/dev/fd/N`
 (libfuse 3.3 or later) and must negotiate `FUSE_ALLOW_IDMAP` (libfuse
 3.19 or later with `default_permissions`); `fuse4fs` does so with
 `-o kernel`, and `security.syscalls.intercept.mount.fuseblk.options` is

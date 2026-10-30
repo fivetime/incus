@@ -624,6 +624,7 @@ var APIExtensions = []string{
 	"container_syscall_intercept_mount_fuseblk",
 	"container_syscall_intercept_ioctl_resize_fs",
 	"container_syscall_intercept_mount_lxcfs",
+	"container_syscall_intercept_mount_fuseblk_remount",
 }
 
 // APIExtensionsCount returns the number of available API extensions.

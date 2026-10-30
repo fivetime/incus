@@ -27,6 +27,18 @@ package main
 #include <time.h>
 #include <unistd.h>
 
+#ifndef STATX_MNT_ID
+#define STATX_MNT_ID 0x00001000U
+#endif
+
+#ifndef STATX_ATTR_MOUNT_ROOT
+#define STATX_ATTR_MOUNT_ROOT 0x00002000
+#endif
+
+#ifndef AT_STATX_DONT_SYNC
+#define AT_STATX_DONT_SYNC 0x4000
+#endif
+
 #include "../../shared/cgo/macro.h"
 #include "../../shared/cgo/memory_utils.h"
 #include "../../shared/cgo/mount_utils.h"
@@ -349,6 +361,47 @@ static void setxattr_emulate(void)
 #define FUSEBLK_PROBE_FAILED 1
 #define FUSEBLK_PROBE_WRONG_DEVICE 2
 
+// fuseblk_set_superblock_flags passes the caller's superblock flags to the
+// file system context, as mount(2) does for a superblock the caller may
+// create or reconfigure itself: the kernel takes them from the context, not
+// from the mount attributes. Each is passed by its own name, so nothing but
+// these can reach the context. Creating sets the ones asked for; a remount
+// replaces the set, so the others are cleared, except dirsync, which a
+// remount can't change.
+static void fuseblk_set_superblock_flags(int fs_fd, unsigned long flags, bool reconfigure)
+{
+	const struct {
+		unsigned long flag;
+		const char *set;
+		const char *clear;
+		bool remount;
+	} sb_flags[] = {
+		{ MS_RDONLY,      "ro",       "rw",         true },
+		{ MS_SYNCHRONOUS, "sync",     "async",      true },
+		{ MS_LAZYTIME,    "lazytime", "nolazytime", true },
+		{ MS_DIRSYNC,     "dirsync",  NULL,         false },
+	};
+	const char *opt;
+	size_t i;
+	int ret;
+
+	for (i = 0; i < sizeof(sb_flags) / sizeof(sb_flags[0]); i++) {
+		if (reconfigure && !sb_flags[i].remount)
+			continue;
+
+		if (flags & sb_flags[i].flag)
+			opt = sb_flags[i].set;
+		else if (reconfigure)
+			opt = sb_flags[i].clear;
+		else
+			continue;
+
+		ret = incus_fsconfig(fs_fd, FSCONFIG_SET_FLAG, opt, NULL, 0);
+		if (ret < 0)
+			die("error: failed to set fuseblk superblock flag %s", opt);
+	}
+}
+
 // fuseblk_create_tree creates the fuseblk superblock for the caller's block
 // device on the host, starts the FUSE server inside the container on it,
 // waits for the server to answer INIT and returns the detached mount idmapped
@@ -476,6 +529,10 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 	ret = incus_fsconfig(fs_fd, FSCONFIG_SET_FLAG, "default_permissions", NULL, 0);
 	if (ret < 0)
 		die("error: failed to create fuseblk mount: fsconfig default_permissions");
+
+	// ro, sync and the like live on the superblock, not on the mount
+	// attributes set below, and the caller's mount call named them.
+	fuseblk_set_superblock_flags(fs_fd, flags, false);
 
 	if (guest_source) {
 		host_root_fd = open("/", O_PATH | O_DIRECTORY | O_CLOEXEC);
@@ -626,6 +683,121 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 		die("error: failed to create detached idmapped mount");
 
 	return fd_tree;
+}
+
+// fuseblk_remount reconfigures a fuseblk superblock Incus created for the
+// caller's block device, as the caller's remount would if the superblock
+// were its own, and gives the mount the attributes the remount names. The
+// superblock belongs to the host's user namespace, so this runs as host root
+// in the host's namespaces. The target is resolved only inside the caller's
+// root and must be the root of a mount in the caller's mount namespace whose
+// superblock is fuseblk on exactly the caller's device; that is read from
+// the caller's mountinfo rather than asked of its FUSE server, which may not
+// answer. Only the superblock flags a remount may change and the mount
+// attributes with a mount_setattr equivalent are applied, each by name: the
+// remount's data string is not, as the kernel ignores it on a FUSE remount.
+// nodev stays forced and the ID map is left alone.
+static void fuseblk_remount(pid_t pid, int ns_fd, const char *target, unsigned long flags,
+			    unsigned int dev_major, unsigned int dev_minor)
+{
+	__do_close int root_fd = -EBADF, target_fd = -EBADF, fs_fd = -EBADF;
+	__do_free char *line = NULL;
+	struct incus_open_how how = {
+	    .flags		= O_PATH | O_CLOEXEC | O_DIRECTORY,
+	    .resolve		= RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS,
+	};
+	struct lxc_mount_attr attr = {};
+	struct statx stx;
+	unsigned int attrs = 0, maj = 0, min = 0;
+	FILE *mountinfo;
+	size_t len = 0;
+	bool found = false;
+	int ret, id, parent;
+	char buf[PATH_MAX], fstype[64];
+	cap_t caps;
+	cap_flag_value_t flag;
+
+	// The caller must administer the instance itself: a root in a user
+	// namespace nested below it holds its capabilities only there.
+	if (!userns_is_child(ns_fd))
+		die_errno(EPERM, "error: caller is in a nested user namespace");
+
+	caps = cap_get_pid(pid);
+	if (!caps)
+		die("error: failed to get caller capabilities");
+
+	if (cap_get_flag(caps, CAP_SYS_ADMIN, CAP_EFFECTIVE, &flag) != 0 || flag != CAP_SET)
+		die_errno(EPERM, "error: caller lacks CAP_SYS_ADMIN");
+
+	cap_free(caps);
+
+	snprintf(buf, sizeof(buf), "/proc/%d/root", pid);
+	root_fd = open(buf, O_PATH | O_DIRECTORY | O_CLOEXEC);
+	if (root_fd < 0)
+		die("error: failed to open container root");
+
+	target_fd = incus_openat2(root_fd, target, &how, sizeof(how));
+	if (target_fd < 0)
+		die("error: failed to open remount target");
+
+	// Cached attributes are enough: the mount ID and the mount-root
+	// attribute come from the VFS, not from the server.
+	if (statx(target_fd, "", AT_EMPTY_PATH | AT_STATX_DONT_SYNC, STATX_TYPE | STATX_MNT_ID, &stx))
+		die("error: failed to stat remount target");
+
+	if (!(stx.stx_attributes_mask & STATX_ATTR_MOUNT_ROOT) || !(stx.stx_attributes & STATX_ATTR_MOUNT_ROOT))
+		die_errno(EINVAL, "error: remount target is not the root of a mount");
+
+	if (!(stx.stx_mask & STATX_MNT_ID))
+		die_errno(EINVAL, "error: remount target has no mount ID");
+
+	snprintf(buf, sizeof(buf), "/proc/%d/mountinfo", pid);
+	mountinfo = fopen(buf, "re");
+	if (!mountinfo)
+		die("error: failed to open caller mountinfo");
+
+	while (getline(&line, &len, mountinfo) > 0) {
+		char *sep;
+
+		if (sscanf(line, "%d %d %u:%u", &id, &parent, &maj, &min) != 4 || (__u64)id != stx.stx_mnt_id)
+			continue;
+
+		sep = strstr(line, " - ");
+		if (!sep || sscanf(sep + 3, "%63s", fstype) != 1)
+			die_errno(EINVAL, "error: unreadable mountinfo entry for the remount target");
+
+		found = true;
+		break;
+	}
+
+	fclose(mountinfo);
+
+	if (!found)
+		die_errno(EINVAL, "error: remount target is not a mount of the caller");
+
+	if (strcmp(fstype, "fuseblk") != 0 || maj != dev_major || min != dev_minor)
+		die_errno(EPERM, "error: remount target is not a fuseblk mount of the caller's device");
+
+	fs_fd = incus_fspick(target_fd, "", FSPICK_EMPTY_PATH | FSPICK_CLOEXEC | FSPICK_NO_AUTOMOUNT);
+	if (fs_fd < 0)
+		die("error: failed to pick the fuseblk superblock");
+
+	fuseblk_set_superblock_flags(fs_fd, flags, true);
+
+	ret = incus_fsconfig(fs_fd, FSCONFIG_CMD_RECONFIGURE, NULL, NULL, 0);
+	if (ret < 0)
+		die("error: failed to reconfigure fuseblk superblock");
+
+	// The mount's own attributes follow the remount as mount(2) applies
+	// them once the superblock is done: the ones it names are set and
+	// the others cleared, except nodev, which stays set, as at creation.
+	mnt_attributes_new(flags, &attrs);
+	attr.attr_set = attrs | MOUNT_ATTR_NODEV;
+	attr.attr_clr = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV |
+			MOUNT_ATTR_NOEXEC | MOUNT_ATTR__ATIME | MOUNT_ATTR_NODIRATIME;
+	ret = incus_mount_setattr(target_fd, "", AT_EMPTY_PATH, &attr, sizeof(attr));
+	if (ret < 0)
+		die("error: failed to set fuseblk mount attributes");
 }
 
 // attach_detached_mount attaches a detached mount created in the host's mount
@@ -964,6 +1136,15 @@ static void mount_emulate(void)
 	ret = atoi(advance_arg(true));
 	if (ret == 3) {
 		proc_lxcfs_mount(pid, pidfd, ns_fd);
+		return;
+	}
+
+	if (ret == 4) {
+		target = advance_arg(true);
+		flags = strtoul(advance_arg(true), NULL, 10);
+		dev_major = strtoul(advance_arg(true), NULL, 10);
+		dev_minor = strtoul(advance_arg(true), NULL, 10);
+		fuseblk_remount(pid, ns_fd, target, flags, dev_major, dev_minor);
 		return;
 	}
 

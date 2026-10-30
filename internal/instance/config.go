@@ -1292,7 +1292,11 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	// a mount only returns after the FUSE implementation has flushed and acknowledged `DESTROY`, as it
 	// does for a kernel block file system. The FUSE implementation must support being handed the
 	// `/dev/fuse` descriptor as `/dev/fd/N` and must negotiate `FUSE_ALLOW_IDMAP`; sources that are not
-	// an owned block device keep using the plain FUSE mount.
+	// an owned block device keep using the plain FUSE mount. The caller's `ro`, `sync`, `dirsync` and
+	// `lazytime` are set on the superblock, and a remount of the mount from inside the instance is
+	// performed by Incus as well, since the superblock is the host's: the superblock flags a remount
+	// may change and the mount's own attributes are applied, `nodev` stays set and the remount's
+	// option string is ignored, as the kernel ignores it for FUSE.
 	// ---
 	//  type: bool
 	//  defaultdesc: `false`

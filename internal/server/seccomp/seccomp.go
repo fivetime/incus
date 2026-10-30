@@ -2257,6 +2257,59 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 		return 0
 	}
 
+	// A remount of a fuseblk mount Incus created for the instance is done by the host, which
+	// owns the superblock: the kernel refuses it to the guest. As for the resize ioctl, the
+	// caller must administer the instance itself, not a user namespace nested below it.
+	if major, minor, ok := srv.mountSyscallFuseblkRemount(c, &args); ok {
+		ctx["fuseblk_device"] = fmt.Sprintf("%d:%d", major, minor)
+
+		callerDev, callerIno, err := taskUserNS(args.pid)
+		initDev, initIno, initErr := taskUserNS(int(siov.msg.init_pid))
+		if err == nil {
+			err = initErr
+		}
+
+		// The namespaces were read from /proc by pid; confirm they were the caller's.
+		if err == nil && (siov.notifyFd < 0 || C.seccomp_notify_id_valid(C.int(siov.notifyFd), siov.req) != 0) {
+			err = errors.New("the seccomp notification is no longer valid, or no notify fd was received")
+		}
+
+		if err == nil && (callerDev != initDev || callerIno != initIno) {
+			err = errors.New("the caller is in a nested user namespace")
+		}
+
+		var stderr string
+		if err == nil {
+			_, stderr, err = subprocess.RunCommandSplit(
+				context.TODO(),
+				nil,
+				[]*os.File{pidFd},
+				localUtil.GetExecPath(),
+				"forksyscall",
+				"mount",
+				fmt.Sprintf("%d", args.pid),
+				fmt.Sprintf("%d", pidFdNr),
+				fmt.Sprintf("%d", 4),
+				args.target,
+				fmt.Sprintf("%d", args.flags),
+				fmt.Sprintf("%d", major),
+				fmt.Sprintf("%d", minor),
+			)
+		}
+
+		if err != nil {
+			// The kernel then refuses the remount itself, so record why here.
+			ctx["err"] = err
+			ctx["fuseblk_stderr"] = strings.TrimSpace(stderr)
+			ctx["syscall_continue"] = "true"
+			logger.Warn("Failed to reconfigure fuseblk mount for syscall interception", ctx)
+			C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
+			return 0
+		}
+
+		return 0
+	}
+
 	fuseBinary := ""
 	lxcfsDir, lxcfsWanted := srv.mountSyscallLXCFS(c, &args)
 	if lxcfsWanted && lxcfsDir == "" {
@@ -2786,6 +2839,16 @@ func (srv *Server) mountSyscallFuseblkDevice(c Instance, args *MountArgs) (uint3
 
 	major := unix.Major(uint64(st.Rdev))
 	minor := unix.Minor(uint64(st.Rdev))
+	if !instanceUnixBlockDevice(c, major, minor) {
+		return 0, 0, false
+	}
+
+	return major, minor, true
+}
+
+// instanceUnixBlockDevice reports whether the device numbers are those of one of the instance's
+// own unix-block devices.
+func instanceUnixBlockDevice(c Instance, major uint32, minor uint32) bool {
 	for _, dev := range c.ExpandedDevices() {
 		if dev["type"] != "unix-block" {
 			continue
@@ -2793,11 +2856,50 @@ func (srv *Server) mountSyscallFuseblkDevice(c Instance, args *MountArgs) (uint3
 
 		devMajor, devMinor, ok := unixBlockDeviceNumbers(dev)
 		if ok && devMajor == major && devMinor == minor {
-			return major, minor, true
+			return true
 		}
 	}
 
-	return 0, 0, false
+	return false
+}
+
+// fuseblkRemountAllowed reports whether a mount call is a remount Incus performs on a fuseblk
+// superblock it created: a plain remount, neither a bind nor a move, and without mandatory
+// locking, which FUSE refuses.
+func fuseblkRemountAllowed(flags int) bool {
+	if flags&C.MS_REMOUNT == 0 || flags&(C.MS_BIND|C.MS_MOVE) != 0 {
+		return false
+	}
+
+	return flags&C.MS_MANDLOCK == 0
+}
+
+// mountSyscallFuseblkRemount reports whether a mount call remounts the root of a fuseblk mount
+// Incus created for one of the instance's own unix-block devices: the instance must enable
+// fuseblk mounts, the call must be a plain remount of an absolute path, and the directory there
+// must be on such a device. It returns the device numbers the host side must find again on the
+// mount it picks.
+func (srv *Server) mountSyscallFuseblkRemount(c Instance, args *MountArgs) (uint32, uint32, bool) {
+	if !util.IsTrue(c.ExpandedConfig()["security.syscalls.intercept.mount.fuseblk"]) {
+		return 0, 0, false
+	}
+
+	if !fuseblkRemountAllowed(args.flags) || !filepath.IsAbs(args.target) {
+		return 0, 0, false
+	}
+
+	// Cached attributes are enough for the device, and don't ask the instance's FUSE server.
+	var stx unix.Statx_t
+	err := unix.Statx(unix.AT_FDCWD, filepath.Join(fmt.Sprintf("/proc/%d/root/", args.pid), args.target), unix.AT_STATX_DONT_SYNC, unix.STATX_TYPE, &stx)
+	if err != nil || stx.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return 0, 0, false
+	}
+
+	if !instanceUnixBlockDevice(c, stx.Dev_major, stx.Dev_minor) {
+		return 0, 0, false
+	}
+
+	return stx.Dev_major, stx.Dev_minor, true
 }
 
 // MountSyscallShift checks whether this mount syscall needs shifting.

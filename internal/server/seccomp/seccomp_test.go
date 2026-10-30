@@ -102,6 +102,33 @@ func TestStripMountOption(t *testing.T) {
 	}
 }
 
+func TestFuseblkRemountAllowed(t *testing.T) {
+	cases := []struct {
+		flags int
+		want  bool
+	}{
+		// A plain remount, with or without flags mount(8) adds on its own.
+		{unix.MS_REMOUNT, true},
+		{unix.MS_REMOUNT | unix.MS_SYNCHRONOUS | unix.MS_NOATIME, true},
+		{unix.MS_REMOUNT | unix.MS_RDONLY | unix.MS_SILENT, true},
+
+		// Not a remount.
+		{0, false},
+		{unix.MS_SYNCHRONOUS, false},
+
+		// Bind and move remounts are the kernel's; FUSE refuses mandatory locking.
+		{unix.MS_REMOUNT | unix.MS_BIND, false},
+		{unix.MS_REMOUNT | unix.MS_MOVE, false},
+		{unix.MS_REMOUNT | unix.MS_MANDLOCK, false},
+	}
+
+	for _, tc := range cases {
+		if got := fuseblkRemountAllowed(tc.flags); got != tc.want {
+			t.Fatal(fmt.Errorf("fuseblkRemountAllowed(%#x) = %v, want %v", tc.flags, got, tc.want))
+		}
+	}
+}
+
 func TestMountFuseblkOpts(t *testing.T) {
 	cases := []struct {
 		name       string

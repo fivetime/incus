@@ -96,6 +96,40 @@ EOF
     incus exec c1 -- umount /mnt
     rm "${TEST_DIR}/resize-fs.pl"
 
+    echo "==> Testing fuseblk superblock flags and remount"
+    # fuse2fs doesn't know host_authorized_resize, so that interception is off here.
+    incus config set c1 security.syscalls.intercept.ioctl.resize_fs=false security.syscalls.intercept.mount.fuseblk=true
+    incus restart c1 -f
+    # Only where the image's FUSE implementation can serve a fuseblk mount (fd mode, idmapping).
+    if incus exec c1 -- mount -o sync /dev/sda /mnt 2>/dev/null; then
+        incus exec c1 -- grep -q "^/dev/sda /mnt fuseblk rw,sync,nodev,relatime," /proc/self/mounts
+        # The superblock is the host's, so its remount is done by Incus: flags only, nodev kept.
+        incus exec c1 -- mount -o remount,async,noatime /mnt
+        incus exec c1 -- grep -q "^/dev/sda /mnt fuseblk rw,nodev,noatime," /proc/self/mounts
+        incus exec c1 -- mount -o remount,sync /mnt
+        incus exec c1 -- grep -q "^/dev/sda /mnt fuseblk rw,sync,nodev,relatime," /proc/self/mounts
+        # A bind mount in another mount namespace shares the superblock and sees its flags.
+        cat > "${TEST_DIR}/bind-flags.sh" << 'EOF'
+mount --bind /mnt /opt && grep "^/dev/sda /opt fuseblk " /proc/self/mounts | cut -d' ' -f4 | cut -d, -f1-2
+EOF
+        incus file push "${TEST_DIR}/bind-flags.sh" c1/root/bind-flags.sh
+        [ "$(incus exec c1 -- unshare -m sh /root/bind-flags.sh)" = "rw,sync" ]
+        incus exec c1 -- mount -o remount,async /mnt
+        [ "$(incus exec c1 -- unshare -m sh /root/bind-flags.sh)" = "rw,nodev" ]
+        # Not the root of the mount: refused.
+        ! incus exec c1 -- mount -o remount,sync /mnt/lost+found || false
+        # A root in a nested user namespace has the capability only there: refused.
+        if incus exec c1 -- unshare -U -r true 2>/dev/null; then
+            ! incus exec c1 -- unshare -U -r mount -o remount,sync /mnt || false
+            incus exec c1 -- grep -q "^/dev/sda /mnt fuseblk rw,nodev,relatime," /proc/self/mounts
+        fi
+        incus exec c1 -- umount /mnt
+        rm "${TEST_DIR}/bind-flags.sh"
+    else
+        echo "==> SKIP: the image's FUSE implementation can't serve a fuseblk mount"
+    fi
+    incus config unset c1 security.syscalls.intercept.mount.fuseblk
+
     echo "==> Testing LXCFS overlay on proc mounts"
     incus config set c1 limits.memory=512MiB security.syscalls.intercept.mount.lxcfs=true
     incus restart c1 -f
