@@ -125,7 +125,8 @@ func TestFuseblkRemountAllowed(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		if got := fuseblkRemountAllowed(tc.flags); got != tc.want {
+		got := fuseblkRemountAllowed(tc.flags)
+		if got != tc.want {
 			t.Fatal(fmt.Errorf("fuseblkRemountAllowed(%#x) = %v, want %v", tc.flags, got, tc.want))
 		}
 	}

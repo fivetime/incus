@@ -2272,8 +2272,9 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 	// A remount of a fuseblk mount Incus created for the instance is done by the host, which
 	// owns the superblock: the kernel refuses it to the guest. As for the resize ioctl, the
 	// caller must administer the instance itself, not a user namespace nested below it.
-	if major, minor, ok := srv.mountSyscallFuseblkRemount(c, &args); ok {
-		ctx["fuseblk_device"] = fmt.Sprintf("%d:%d", major, minor)
+	remountMajor, remountMinor, isRemount := srv.mountSyscallFuseblkRemount(c, &args)
+	if isRemount {
+		ctx["fuseblk_device"] = fmt.Sprintf("%d:%d", remountMajor, remountMinor)
 
 		callerDev, callerIno, err := taskUserNS(args.pid)
 		initDev, initIno, initErr := taskUserNS(int(siov.msg.init_pid))
@@ -2304,8 +2305,8 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 				fmt.Sprintf("%d", 4),
 				args.target,
 				fmt.Sprintf("%d", args.flags),
-				fmt.Sprintf("%d", major),
-				fmt.Sprintf("%d", minor),
+				fmt.Sprintf("%d", remountMajor),
+				fmt.Sprintf("%d", remountMinor),
 			)
 		}
 
