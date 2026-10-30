@@ -361,6 +361,8 @@ static void setxattr_emulate(void)
 #define FUSEBLK_PROBE_FAILED 1
 #define FUSEBLK_PROBE_WRONG_DEVICE 2
 
+static bool userns_is_child(int ns_fd);
+
 // fuseblk_set_superblock_flags passes the caller's superblock flags to the
 // file system context, as mount(2) does for a superblock the caller may
 // create or reconfigure itself: the kernel takes them from the context, not
