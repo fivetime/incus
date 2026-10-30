@@ -699,8 +699,8 @@ static int fuseblk_create_tree(pid_t pid, int pidfd, int ns_fd, int fd_userns,
 // attributes with a mount_setattr equivalent are applied, each by name: the
 // remount's data string is not, as the kernel ignores it on a FUSE remount.
 // nodev stays forced and the ID map is left alone.
-static void fuseblk_remount(pid_t pid, int ns_fd, const char *target, unsigned long flags,
-			    unsigned int dev_major, unsigned int dev_minor)
+static void fuseblk_remount(pid_t pid, int pidfd, int ns_fd, const char *target,
+			    unsigned long flags, unsigned int dev_major, unsigned int dev_minor)
 {
 	__do_close int root_fd = -EBADF, target_fd = -EBADF, fs_fd = -EBADF;
 	__do_free char *line = NULL;
@@ -793,6 +793,12 @@ static void fuseblk_remount(pid_t pid, int ns_fd, const char *target, unsigned l
 	// The mount's own attributes follow the remount as mount(2) applies
 	// them once the superblock is done: the ones it names are set and
 	// the others cleared, except nodev, which stays set, as at creation.
+	// mount_setattr() only changes a mount of the caller's own mount
+	// namespace, so enter the instance's one: the descriptor already
+	// names the mount, and the credentials stay the host's.
+	if (!change_namespaces(pidfd, ns_fd, CLONE_NEWNS))
+		die("error: failed to enter the caller's mount namespace");
+
 	mnt_attributes_new(flags, &attrs);
 	attr.attr_set = attrs | MOUNT_ATTR_NODEV;
 	attr.attr_clr = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV |
@@ -1146,7 +1152,7 @@ static void mount_emulate(void)
 		flags = strtoul(advance_arg(true), NULL, 10);
 		dev_major = strtoul(advance_arg(true), NULL, 10);
 		dev_minor = strtoul(advance_arg(true), NULL, 10);
-		fuseblk_remount(pid, ns_fd, target, flags, dev_major, dev_minor);
+		fuseblk_remount(pid, pidfd, ns_fd, target, flags, dev_major, dev_minor);
 		return;
 	}
 
