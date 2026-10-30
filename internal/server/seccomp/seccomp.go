@@ -2225,7 +2225,7 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 	ctx["target"] = args.target
 
 	// const char *filesystemtype
-	if siov.req.data.args[1] != 0 {
+	if siov.req.data.args[2] != 0 {
 		_, err := C.pread(C.int(siov.memFd), unsafe.Pointer(&mntFs[0]), C.size_t(unix.PathMax), C.off_t(siov.req.data.args[2]))
 		if err != nil {
 			ctx["err"] = fmt.Sprintf("Failed to read fstype for of mount syscall: %s", err)
@@ -2907,9 +2907,28 @@ func (srv *Server) mountSyscallFuseblkRemount(c Instance, args *MountArgs) (uint
 		return 0, 0, false
 	}
 
-	// Cached attributes are enough for the device, and don't ask the instance's FUSE server.
+	// Resolve the target as the host side will: inside the instance's root, so an absolute
+	// symlink stays in it, and without magic links. Cached attributes are enough for the
+	// device, and don't ask the instance's FUSE server.
+	rootFd, err := unix.Open(fmt.Sprintf("/proc/%d/root", args.pid), unix.O_PATH|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	defer func() { _ = unix.Close(rootFd) }()
+
+	targetFd, err := unix.Openat2(rootFd, args.target, &unix.OpenHow{
+		Flags:   unix.O_PATH | unix.O_CLOEXEC | unix.O_DIRECTORY,
+		Resolve: unix.RESOLVE_IN_ROOT | unix.RESOLVE_NO_MAGICLINKS,
+	})
+	if err != nil {
+		return 0, 0, false
+	}
+
+	defer func() { _ = unix.Close(targetFd) }()
+
 	var stx unix.Statx_t
-	err := unix.Statx(unix.AT_FDCWD, filepath.Join(fmt.Sprintf("/proc/%d/root/", args.pid), args.target), unix.AT_STATX_DONT_SYNC, unix.STATX_TYPE, &stx)
+	err = unix.Statx(targetFd, "", unix.AT_EMPTY_PATH|unix.AT_STATX_DONT_SYNC, unix.STATX_TYPE, &stx)
 	if err != nil || stx.Mode&unix.S_IFMT != unix.S_IFDIR {
 		return 0, 0, false
 	}
