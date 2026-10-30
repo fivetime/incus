@@ -119,7 +119,7 @@ flags a remount may change (`ro`/`rw`, `sync`/`async`, `lazytime`) and the
 mount's own attributes, keeping `nodev` and the ID map, and ignoring the
 remount's option string as the kernel does for FUSE. A root in a user
 namespace nested below the instance's is refused, as for the resize
-ioctl. Enabling `fuseblk` mounts also makes the instance's seccomp policy
+ioctl. Enabling `fuseblk` mounts also makes the instance's `seccomp` policy
 notify plain remounts (not bind, move or propagation changes); a remount
 of any other mount is passed on to the kernel unchanged. The FUSE
 implementation must accept its mount point as `/dev/fd/N`
