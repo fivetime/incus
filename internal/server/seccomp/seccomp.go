@@ -586,6 +586,14 @@ fsconfig errno 38
 const seccompNotifyMount = `mount notify [3,0,SCMP_CMP_MASKED_EQ,18446744070422410016]
 `
 
+// A remount changes the flags of an existing superblock, which the kernel refuses to a user
+// namespace that doesn't own it. Instances allowed fuseblk mounts get their plain remounts
+// notified too, with the same mask plus MS_REMOUNT (32) set: a bind, move or propagation
+// change is still left to the kernel. HandleMountSyscall only acts on the fuseblk mounts it
+// created and continues every other remount.
+const seccompNotifyMountRemount = `mount notify [3,32,SCMP_CMP_MASKED_EQ,18446744070422410016]
+`
+
 // 5 == BPF_PROG_LOAD
 // 8 == BPF_PROG_ATTACH
 // 9 == BPF_PROG_DETACH .
@@ -830,6 +838,10 @@ func seccompGetPolicyContent(s *state.State, c Instance) (string, error) {
 			// Specifically, we're blocking fsopen and fsconfig which is
 			// enough to get /sbin/mount to fallback to the old mount API.
 			policy += seccompBlockNewMountAPI
+
+			if util.IsTrue(config["security.syscalls.intercept.mount.fuseblk"]) {
+				policy += seccompNotifyMountRemount
+			}
 		}
 
 		if util.IsTrue(config["security.syscalls.intercept.bpf"]) {
@@ -2307,6 +2319,13 @@ func (srv *Server) HandleMountSyscall(c Instance, siov *Iovec) int {
 			return 0
 		}
 
+		return 0
+	}
+
+	// Every other remount is the kernel's: it changes no superblock Incus owns.
+	if args.flags&C.MS_REMOUNT != 0 {
+		ctx["syscall_continue"] = "true"
+		C.seccomp_notify_update_response(siov.resp, 0, C.uint32_t(seccompUserNotifFlagContinue))
 		return 0
 	}
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -157,6 +159,52 @@ func TestMountFuseblkOpts(t *testing.T) {
 		got := mountFuseblkOpts(c.guest, c.configured, c.resize)
 		if got != c.want {
 			t.Fatal(fmt.Errorf("%s: mountFuseblkOpts(%q, %q, %v) = %q, want %q", c.name, c.guest, c.configured, c.resize, got, c.want))
+		}
+	}
+}
+
+// notifyRule returns the value and mask of a one-argument SCMP_CMP_MASKED_EQ seccomp rule.
+func notifyRule(t *testing.T, rule string) (uint64, uint64) {
+	t.Helper()
+
+	fields := strings.Split(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(rule), "mount notify ["), "]"), ",")
+	if len(fields) != 4 || fields[0] != "3" || fields[2] != "SCMP_CMP_MASKED_EQ" {
+		t.Fatal(fmt.Errorf("unexpected mount rule %q", rule))
+	}
+
+	value, err := strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mask, err := strconv.ParseUint(fields[3], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return value, mask
+}
+
+func TestSeccompNotifyMountRemountRule(t *testing.T) {
+	value, mask := notifyRule(t, seccompNotifyMountRemount)
+	mountValue, mountMask := notifyRule(t, seccompNotifyMount)
+
+	// The remount rule matches the flags the mount rule excludes, with MS_REMOUNT set.
+	if value != unix.MS_REMOUNT || mountValue != 0 || mask != mountMask {
+		t.Fatal(fmt.Errorf("remount rule [%d, %#x] doesn't mirror the mount rule [%d, %#x]", value, mask, mountValue, mountMask))
+	}
+
+	// A remount with any of these is a different operation and stays with the kernel.
+	for _, flag := range []uint64{unix.MS_REMOUNT, unix.MS_BIND, unix.MS_MOVE, unix.MS_SHARED, unix.MS_SLAVE, unix.MS_PRIVATE, unix.MS_UNBINDABLE, unix.MS_KERNMOUNT} {
+		if mask&flag == 0 {
+			t.Fatal(fmt.Errorf("flag %#x isn't in the remount rule's mask", flag))
+		}
+	}
+
+	// The flags a remount may carry must not stop the notification.
+	for _, flag := range []uint64{unix.MS_RDONLY, unix.MS_SYNCHRONOUS, unix.MS_DIRSYNC, unix.MS_LAZYTIME, unix.MS_NOATIME, unix.MS_NODIRATIME, unix.MS_RELATIME, unix.MS_STRICTATIME, unix.MS_NODEV, unix.MS_NOSUID, unix.MS_NOEXEC, unix.MS_MANDLOCK, unix.MS_SILENT, unix.MS_REC} {
+		if mask&flag != 0 {
+			t.Fatal(fmt.Errorf("flag %#x in the remount rule's mask would hide a remount", flag))
 		}
 	}
 }
