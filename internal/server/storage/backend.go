@@ -2428,8 +2428,9 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 	}
 
 	// A fresh copy isn't refreshing anything, so a record with no volume behind it is a leftover.
+	// Look the volume up with its recorded config: a cephext volume is only found through it.
 	if dbVol != nil && !args.Refresh && !isRemoteClusterMove {
-		leftoverExists, err := b.driver.HasVolume(b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, inst.Name()), nil))
+		leftoverExists, err := b.driver.HasVolume(b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, inst.Name()), dbVol.Config))
 		if err != nil {
 			return err
 		}
