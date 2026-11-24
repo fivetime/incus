@@ -22,6 +22,7 @@ import (
 	backupConfig "github.com/lxc/incus/v7/internal/server/backup/config"
 	"github.com/lxc/incus/v7/internal/server/db"
 	"github.com/lxc/incus/v7/internal/server/db/cluster"
+	deviceConfig "github.com/lxc/incus/v7/internal/server/device/config"
 	"github.com/lxc/incus/v7/internal/server/instance"
 	"github.com/lxc/incus/v7/internal/server/instance/instancetype"
 	"github.com/lxc/incus/v7/internal/server/locking"
@@ -599,6 +600,7 @@ func validateVolumeCommonRules(vol drivers.Volume) map[string]func(string) error
 
 	if vol.Type() == drivers.VolumeTypeCustom {
 		rules["dependent"] = validate.Optional(validate.IsBool)
+		rules["migration.follow_instance"] = validate.Optional(validate.IsBool)
 	}
 
 	return rules
@@ -642,6 +644,34 @@ func ImageUnpackContainer(imageFile string, destPath string, blockBackend bool, 
 
 	// Done with this.
 	return nil
+}
+
+// ImageVirtualSize returns the virtual size of a qcow2 image file.
+func ImageVirtualSize(sysOS *sys.OS, imgPath string) (int64, error) {
+	// Force the qcow2 format rather than trusting qemu-img's detection and cap its CPU time and
+	// address space, as the image may be malicious.
+	cmd := []string{"prlimit", "--cpu=2", "--as=1073741824", "qemu-img", "info", "-f", "qcow2", "--output=json", imgPath}
+	imgJSON, err := apparmor.QemuImg(sysOS, cmd, imgPath, "", nil)
+	if err != nil {
+		return -1, fmt.Errorf("Failed reading image info %q: %w", imgPath, err)
+	}
+
+	imgInfo := struct {
+		Format      string `json:"format"`
+		VirtualSize int64  `json:"virtual-size"`
+	}{}
+
+	err = json.Unmarshal([]byte(imgJSON), &imgInfo)
+	if err != nil {
+		return -1, fmt.Errorf("Failed unmarshalling image info %q: %w (%q)", imgPath, err, imgJSON)
+	}
+
+	// Belt and braces qcow2 check.
+	if imgInfo.Format != drivers.BlockVolumeTypeQcow2 {
+		return -1, fmt.Errorf("Unexpected image format %q", imgInfo.Format)
+	}
+
+	return imgInfo.VirtualSize, nil
 }
 
 // ImageUnpack unpacks a filesystem image into the destination path.
@@ -700,36 +730,15 @@ func ImageUnpack(imageFile string, vol drivers.Volume, destBlockFile string, sys
 	// convertBlockImage converts the qcow2 block image file into a raw block device. If needed it will attempt
 	// to enlarge the destination volume to accommodate the unpacked qcow2 image file.
 	convertBlockImage := func(v drivers.Volume, imgPath string, dstPath string, tracker *ioprogress.ProgressTracker) (int64, error) {
-		// Get info about qcow2 file. Force input format to qcow2 so we don't rely on qemu-img's detection
-		// logic as that has been known to have vulnerabilities and we only support qcow2 images anyway.
-		// Use prlimit because qemu-img can consume considerable RAM & CPU time if fed a maliciously
-		// crafted disk image. Since cloud tenants are not to be trusted, ensure QEMU is limits to 1 GiB
-		// address space and 2 seconds CPU time, which ought to be more than enough for real world images.
-		cmd := []string{"prlimit", "--cpu=2", "--as=1073741824", "qemu-img", "info", "-f", "qcow2", "--output=json", imgPath}
-		imgJSON, err := apparmor.QemuImg(sysOS, cmd, imgPath, dstPath, tracker)
+		virtualSize, err := ImageVirtualSize(sysOS, imgPath)
 		if err != nil {
-			return -1, fmt.Errorf("Failed reading image info %q: %w", imgPath, err)
-		}
-
-		imgInfo := struct {
-			Format      string `json:"format"`
-			VirtualSize int64  `json:"virtual-size"`
-		}{}
-
-		err = json.Unmarshal([]byte(imgJSON), &imgInfo)
-		if err != nil {
-			return -1, fmt.Errorf("Failed unmarshalling image info %q: %w (%q)", imgPath, err, imgJSON)
-		}
-
-		// Belt and braces qcow2 check.
-		if imgInfo.Format != drivers.BlockVolumeTypeQcow2 {
-			return -1, fmt.Errorf("Unexpected image format %q", imgInfo.Format)
+			return -1, err
 		}
 
 		// Check whether image is allowed to be unpacked into pool volume. Create a partial image volume
 		// struct and then use it to check that target volume size can be set as needed.
 		imgVolConfig := map[string]string{
-			"volatile.rootfs.size": fmt.Sprintf("%d", imgInfo.VirtualSize),
+			"volatile.rootfs.size": fmt.Sprintf("%d", virtualSize),
 		}
 
 		imgVol := drivers.NewVolume(nil, "", drivers.VolumeTypeImage, drivers.ContentTypeBlock, "", imgVolConfig, nil)
@@ -748,7 +757,7 @@ func ImageUnpack(imageFile string, vol drivers.Volume, destBlockFile string, sys
 
 			// If the target volume's size is smaller than the image unpack size, then we need to
 			// increase the target volume's size.
-			if volSizeBytes < imgInfo.VirtualSize {
+			if volSizeBytes < virtualSize {
 				l.Debug("Increasing volume size", logger.Ctx{"imgPath": imgPath, "dstPath": dstPath, "oldSize": volSizeBytes, "newSize": newVolSize, "allowUnsafeResize": allowUnsafeResize})
 				err = vol.SetQuota(newVolSize, allowUnsafeResize, nil)
 				if err != nil {
@@ -792,13 +801,13 @@ func ImageUnpack(imageFile string, vol drivers.Volume, destBlockFile string, sys
 				return -1, err
 			}
 
-			return imgInfo.VirtualSize, nil
+			return virtualSize, nil
 		}
 
 		// Convert the qcow2 format to a raw block device.
 		l.Debug("Converting qcow2 image to raw disk", logger.Ctx{"imgPath": imgPath, "dstPath": dstPath})
 
-		cmd = []string{
+		cmd := []string{
 			"nice", "-n19", // Run with low priority to reduce CPU impact on other processes.
 			"qemu-img", "convert", "-p", "-f", "qcow2", "-O", "raw", "-t", "writeback",
 		}
@@ -834,7 +843,7 @@ func ImageUnpack(imageFile string, vol drivers.Volume, destBlockFile string, sys
 			return -1, fmt.Errorf("Failed converting image to raw at %q: %w", dstPath, err)
 		}
 
-		return imgInfo.VirtualSize, nil
+		return virtualSize, nil
 	}
 
 	var imgSize int64
@@ -1467,7 +1476,7 @@ func GenerateDependentVolumesOffer(s *state.State, config *backupConfig.Config, 
 
 		for _, volSnap := range volConfig.VolumeSnapshots {
 			// Set size for snapshot volume
-			snapSize, err := CalculateVolumeSnapshotSize(projectName, pool, drivers.ContentType(contentType), drivers.VolumeTypeCustom, volName, volSnap.Name)
+			snapSize, err := CalculateVolumeSnapshotSize(storageProjectName, pool, drivers.ContentType(contentType), drivers.VolumeTypeCustom, volName, volSnap.Name)
 			if err != nil {
 				return nil, err
 			}
@@ -1482,22 +1491,167 @@ func GenerateDependentVolumesOffer(s *state.State, config *backupConfig.Config, 
 	return result, nil
 }
 
+// ForEachFollowingDisk executes the given function for each disk of a VM whose independent volume on
+// local storage follows the instance when it moves to another cluster member.
+func ForEachFollowingDisk(s *state.State, inst instance.Instance, diskAction func(dev deviceConfig.DeviceNamed, pool Pool, dbVol *db.StorageVolume) error) error {
+	if inst.Type() != instancetype.VM {
+		return nil
+	}
+
+	storageProjectName, err := project.StorageVolumeProject(s.DB.Cluster, inst.Project().Name, db.StoragePoolVolumeTypeCustom)
+	if err != nil {
+		return err
+	}
+
+	for _, dev := range inst.ExpandedDevices().Sorted() {
+		if dev.Config["type"] != "disk" || util.IsTrue(dev.Config["dependent"]) || dev.Config["path"] == "/" || dev.Config["pool"] == "" || dev.Config["source"] == "" {
+			continue
+		}
+
+		pool, err := LoadByName(s, dev.Config["pool"])
+		if err != nil {
+			return fmt.Errorf("Failed loading storage pool: %w", err)
+		}
+
+		// Volumes on shared storage remain reachable from every member.
+		if pool.Driver().Info().Remote {
+			continue
+		}
+
+		volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
+		dbVol, err := VolumeDBGet(pool, storageProjectName, volName, drivers.VolumeTypeCustom)
+		if err != nil {
+			if response.IsNotFoundError(err) {
+				continue
+			}
+
+			return fmt.Errorf("Failed loading custom volume for device %q: %w", dev.Name, err)
+		}
+
+		if util.IsFalseOrEmpty(dbVol.Config["migration.follow_instance"]) {
+			continue
+		}
+
+		err = diskAction(dev, pool, dbVol)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// GenerateFollowingVolumesBackupConfig returns the backup config of the volumes following the instance
+// to another cluster member, so they can be migrated alongside its dependent volumes.
+func GenerateFollowingVolumesBackupConfig(s *state.State, inst instance.Instance, snapshots bool, op *operations.Operation) ([]*backupConfig.Config, error) {
+	storageProjectName, err := project.StorageVolumeProject(s.DB.Cluster, inst.Project().Name, db.StoragePoolVolumeTypeCustom)
+	if err != nil {
+		return nil, err
+	}
+
+	result := []*backupConfig.Config{}
+	err = ForEachFollowingDisk(s, inst, func(dev deviceConfig.DeviceNamed, pool Pool, dbVol *db.StorageVolume) error {
+		// Moving the volume would break any other instance using it.
+		err := VolumeUsedByInstanceDevices(s, pool.Name(), storageProjectName, &dbVol.StorageVolume, true, func(dbInst db.InstanceArgs, p api.Project, usedByDevices []string) error {
+			if dbInst.Project == inst.Project().Name && dbInst.Name == inst.Name() {
+				return nil
+			}
+
+			return fmt.Errorf("Volume of device %q can't follow the instance as it's also used by instance %q in project %q", dev.Name, dbInst.Name, dbInst.Project)
+		})
+		if err != nil {
+			return err
+		}
+
+		volConfig, err := pool.GenerateCustomVolumeBackupConfig(storageProjectName, dbVol.Name, snapshots, op)
+		if err != nil {
+			return err
+		}
+
+		poolAPI := pool.ToAPI()
+		volConfig.Pool = &poolAPI
+		result = append(result, volConfig)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// GenerateMigrationVolumesOffer creates the dependent volumes offer of an instance migration, adding the
+// volumes following the instance on a cluster move, and reduces the config to the offered volumes.
+func GenerateMigrationVolumesOffer(s *state.State, inst instance.Instance, config *backupConfig.Config, snapshots bool, devices api.DevicesMap, skipDisks []string, clusterMove bool, op *operations.Operation) ([]*migration.DependentVolume, error) {
+	if clusterMove {
+		followingVolumes, err := GenerateFollowingVolumesBackupConfig(s, inst, snapshots, op)
+		if err != nil {
+			return nil, fmt.Errorf("Failed generating following volumes migration config: %w", err)
+		}
+
+		config.DependentVolumes = append(config.DependentVolumes, followingVolumes...)
+	}
+
+	offer, err := GenerateDependentVolumesOffer(s, config, inst.ExpandedDevices().CloneNative(), inst.Project().Name, snapshots, devices, skipDisks, clusterMove)
+	if err != nil {
+		return nil, err
+	}
+
+	// The target matches the volume configs to the offer by position, so only send the offered ones.
+	offeredVolumes := make([]*backupConfig.Config, 0, len(offer))
+	for _, volConfig := range config.DependentVolumes {
+		for _, vol := range offer {
+			if vol.GetPool() == volConfig.Pool.Name && vol.GetName() == volConfig.Volume.Name {
+				offeredVolumes = append(offeredVolumes, volConfig)
+				break
+			}
+		}
+	}
+
+	config.DependentVolumes = offeredVolumes
+
+	return offer, nil
+}
+
 // DependentVolumeWithType represents a volume and its supported migration types.
 type DependentVolumeWithType struct {
 	Volume      *migration.DependentVolume
 	VolumeTypes []localMigration.Type
 }
 
+// ValidateDependentVolumesAgainstOffer rejects a migration response whose dependent volumes don't
+// match the ones the source offered, so a malicious target can't redefine their identity.
+func ValidateDependentVolumesAgainstOffer(offer []*migration.DependentVolume, resp []*migration.DependentVolume) error {
+	offered := make(map[string]*migration.DependentVolume, len(offer))
+	for _, vol := range offer {
+		offered[vol.GetDeviceName()] = vol
+	}
+
+	for _, vol := range resp {
+		match, ok := offered[vol.GetDeviceName()]
+		if !ok {
+			return fmt.Errorf("Dependent volume %q was not offered", vol.GetDeviceName())
+		}
+
+		if vol.GetName() != match.GetName() || vol.GetPool() != match.GetPool() || vol.GetContentType() != match.GetContentType() {
+			return fmt.Errorf("Dependent volume %q doesn't match the offer", vol.GetDeviceName())
+		}
+	}
+
+	return nil
+}
+
 // DependentVolumesMatchMigrationType returns the transport type matching the header's dependent volumes.
 func DependentVolumesMatchMigrationType(s *state.State, header *migration.MigrationHeader, snapshots bool, overrides api.DevicesMap, source bool, clusterMove bool) ([]DependentVolumeWithType, error) {
 	dependentVolumes := []DependentVolumeWithType{}
 	for _, vol := range header.DependentVolumes {
-		contentType := drivers.ContentType(*vol.ContentType)
-		poolName := *vol.Pool
+		contentType := drivers.ContentType(vol.GetContentType())
+		poolName := vol.GetPool()
 		storageMove := false
 
-		if overrides != nil && overrides[*vol.DeviceName] != nil {
-			newPoolName, ok := overrides[*vol.DeviceName]["pool"]
+		if overrides != nil && overrides[vol.GetDeviceName()] != nil {
+			newPoolName, ok := overrides[vol.GetDeviceName()]["pool"]
 			if ok {
 				storageMove = newPoolName != poolName
 				poolName = newPoolName

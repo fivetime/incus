@@ -21,8 +21,9 @@ There are different ways of backing up your instances:
 
 ```{note}
 Custom storage volumes might be attached to an instance, but they are not part of the instance.
-Therefore, the content of a custom storage volume is not stored when you back up your instance.
-You must back up the data of your storage volume separately.
+Therefore, the content of a custom storage volume is not stored when you back up your instance, unless the volume is attached with `dependent=true`.
+Such a volume is included in the snapshots and export files of the instance.
+You must back up the data of all other storage volumes separately.
 See {ref}`howto-storage-backup-volume` for instructions.
 ```
 
@@ -99,6 +100,8 @@ You should also configure whether you want to take snapshots of instances that a
 ### Restore an instance snapshot
 
 You can restore an instance to any of its snapshots.
+However, if the instance has a disk device with `dependent=true`, only the most recent snapshot can be restored.
+The same applies to virtual machines on `lvmcluster` storage pools and to the storage drivers that cannot restore older snapshots (see {ref}`storage-drivers-features`), unless the `remove_snapshots` option of the driver (for example, `lvmcluster.remove_snapshots`) is set, in which case the newer snapshots are deleted.
 
 To do so, use the following command:
 
@@ -130,6 +133,10 @@ If you do not specify a file path, the export file is saved as `<instance_name>.
 : By default, the export file contains all snapshots of the instance.
   Add this flag to export the instance without its snapshots.
 
+`--root-only`
+: By default, the export file contains all custom storage volumes that are attached to the instance with `dependent=true`.
+  Add this flag to export the instance without those volumes.
+
 ### Restore an instance from an export file
 
 You can import an export file (for example, `/path/to/my-backup.tgz`) as a new instance.
@@ -140,6 +147,19 @@ To do so, use the following command:
 If you do not specify an instance name, the original name of the exported instance is used for the new instance.
 If an instance with that name already (or still) exists in the specified storage pool, the command returns an error.
 In that case, either delete the existing instance before importing the backup or specify a different instance name for the import.
+
+The export file contains the full configuration of the instance, including its devices.
+When importing on a different server, some of that configuration might not be valid anymore.
+A common example is a NIC device with a static IP address that is not part of the subnet of the local network, which fails with an error like:
+
+    Error: Failed importing backup: Failed creating instance record: Failed initializing instance: Invalid devices: Device validation failed for "eth0": Device IP address "10.80.1.100" not within network "incusbr0" subnet
+
+Use the `--config` (`-c`) and `--device` (`-d`) flags to override configuration keys and device options during the import.
+For example, to set new static addresses on the `eth0` device:
+
+    incus import <file_path> -d eth0,ipv4.address=<new_ipv4_address> -d eth0,ipv6.address=<new_ipv6_address>
+
+Alternatively, remove the key entirely (`-d eth0,ipv4.address=`) to let the instance get an address from the local network instead.
 
 (instances-backup-copy)=
 ## Copy an instance to a backup server

@@ -113,6 +113,7 @@ var patches = []patch{
 	{name: "network_ovn_acl_address_sets", stage: patchPostDaemonStorage, run: patchGenericNetwork(patchNetworkOVNACLAddressSets)},
 	{name: "auth_openfga_security_tags", stage: patchPostNetworks, run: patchGenericAuthorization},
 	{name: "instance_idmap_base_non_isolated", stage: patchPostDaemonStorage, run: patchInstanceIdmapBaseNonIsolated},
+	{name: "storage_lvmcluster_exclusive_instance_locks", stage: patchPostDaemonStorage, run: patchStorageLvmclusterExclusiveInstanceLocks},
 }
 
 type patchRun func(name string, d *Daemon) error
@@ -471,18 +472,38 @@ func patchInstanceIdmapBaseNonIsolated(_ string, d *Daemon) error {
 	s := d.State()
 
 	return s.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
-		// Profiles setting both keys.
+		// Load everything upfront as a query per entry takes too long on members far from the leader.
 		profiles, err := dbCluster.GetProfiles(ctx, tx.Tx())
 		if err != nil {
 			return err
 		}
 
-		for _, profile := range profiles {
-			config, err := dbCluster.GetProfileConfig(ctx, tx.Tx(), profile.ID)
-			if err != nil {
-				return err
-			}
+		profileConfigs, err := dbCluster.GetConfig(ctx, tx.Tx(), "profiles", "profile")
+		if err != nil {
+			return err
+		}
 
+		snapshots, err := dbCluster.GetInstanceSnapshots(ctx, tx.Tx())
+		if err != nil {
+			return err
+		}
+
+		baseKey := "security.idmap.base"
+		isolatedKey := "security.idmap.isolated"
+		snapshotConfigs, err := dbCluster.GetConfig(ctx, tx.Tx(), "instances_snapshots", "instance_snapshot", dbCluster.ConfigFilter{Key: &baseKey}, dbCluster.ConfigFilter{Key: &isolatedKey})
+		if err != nil {
+			return err
+		}
+
+		instanceSnapshots := map[string][]dbCluster.InstanceSnapshot{}
+		for _, snap := range snapshots {
+			key := snap.Project + "/" + snap.Instance
+			instanceSnapshots[key] = append(instanceSnapshots[key], snap)
+		}
+
+		// Profiles setting both keys.
+		for _, profile := range profiles {
+			config := profileConfigs[profile.ID]
 			if config["security.idmap.base"] == "" || !util.IsTrue(config["security.idmap.isolated"]) {
 				continue
 			}
@@ -516,18 +537,8 @@ func patchInstanceIdmapBaseNonIsolated(_ string, d *Daemon) error {
 				}
 			}
 
-			snaps, err := tx.GetInstanceSnapshotsWithName(ctx, inst.Project, inst.Name)
-			if err != nil {
-				return err
-			}
-
-			for _, snap := range snaps {
-				config, err := dbCluster.GetInstanceSnapshotConfig(ctx, tx.Tx(), snap.ID)
-				if err != nil {
-					return err
-				}
-
-				expanded = db.ExpandInstanceConfig(config, inst.Profiles)
+			for _, snap := range instanceSnapshots[inst.Project+"/"+inst.Name] {
+				expanded = db.ExpandInstanceConfig(snapshotConfigs[snap.ID], inst.Profiles)
 				if expanded["security.idmap.base"] != "" && util.IsTrue(expanded["security.idmap.isolated"]) {
 					err = tx.UpdateInstanceSnapshotConfig(snap.ID, map[string]string{"security.idmap.isolated": "false"})
 					if err != nil {
@@ -2347,6 +2358,44 @@ func patchNetworkOVNACLAddressSets(_ string, d *Daemon) error {
 	}
 
 	reverter.Success()
+	return nil
+}
+
+// patchStorageLvmclusterExclusiveInstanceLocks switches the lvmcluster storage locks of running VMs to exclusive.
+func patchStorageLvmclusterExclusiveInstanceLocks(_ string, d *Daemon) error {
+	s := d.State()
+
+	instances, err := instance.LoadNodeAll(s, instancetype.VM)
+	if err != nil {
+		return fmt.Errorf("Failed loading local instances: %w", err)
+	}
+
+	failed := false
+	for _, inst := range instances {
+		if !inst.IsRunning() {
+			continue
+		}
+
+		pool, err := storagePools.LoadByInstance(s, inst)
+		if err != nil {
+			logger.Warn("Failed loading instance storage pool", logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "err": err})
+			failed = true
+			continue
+		}
+
+		// Dependent disks may be on lvmcluster even when the root disk isn't.
+		err = pool.SetInstanceAccessMode(inst, storageDrivers.VolumeAccessModeExclusive, nil)
+		if err != nil {
+			logger.Warn("Failed switching storage locks to exclusive", logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "err": err})
+			failed = true
+		}
+	}
+
+	// Retry on the next start for the instances that failed.
+	if failed {
+		return errRetryNextTime
+	}
+
 	return nil
 }
 

@@ -137,8 +137,16 @@ func (m *incusAgentService) Execute(args []string, r <-chan svc.ChangeRequest, c
 
 	d := newDaemon(m.agentCmd.global.flagLogDebug, m.agentCmd.global.flagLogVerbose, m.agentCmd.global.flagSecretsLocation)
 
+	// Load the agent configuration.
+	err := loadAgentConfig(d)
+	if err != nil {
+		changes <- svc.Status{State: svc.StopPending}
+		elog.Error(1, fmt.Sprintf("Failed to load agent configuration: %s", err))
+		return true, 1
+	}
+
 	// Start the server.
-	err := osLoadModules()
+	err = osLoadModules()
 	if err == nil {
 		err = startHTTPServer(d, m.agentCmd.global.flagLogDebug)
 	}
@@ -712,6 +720,11 @@ func osExitStatus(err error) (int, error) {
 }
 
 func osSetEnv(post *api.InstanceExecPost, env map[string]string) {
+	// Drop the Linux defaults that the daemon adds for all instances.
+	for _, key := range []string{"HOME", "USER", "LANG", "TERM"} {
+		delete(env, key)
+	}
+
 	// SystemRoot is already set by default
 	env["SystemDrive"] = "C:"
 
@@ -751,4 +764,30 @@ func osSetEnv(post *api.InstanceExecPost, env map[string]string) {
 	if post.Cwd == "" {
 		post.Cwd = system32
 	}
+}
+
+// osStepClock moves the system clock forward by the given offset.
+func osStepClock(offset time.Duration) error {
+	t := time.Now().Add(offset).UTC()
+
+	// SYSTEMTIME as expected by SetSystemTime.
+	st := struct {
+		Year, Month, DayOfWeek, Day, Hour, Minute, Second, Milliseconds uint16
+	}{
+		Year:         uint16(t.Year()),
+		Month:        uint16(t.Month()),
+		DayOfWeek:    uint16(t.Weekday()),
+		Day:          uint16(t.Day()),
+		Hour:         uint16(t.Hour()),
+		Minute:       uint16(t.Minute()),
+		Second:       uint16(t.Second()),
+		Milliseconds: uint16(t.Nanosecond() / 1e6),
+	}
+
+	ret, _, err := windows.NewLazySystemDLL("kernel32.dll").NewProc("SetSystemTime").Call(uintptr(unsafe.Pointer(&st)))
+	if ret == 0 {
+		return err
+	}
+
+	return nil
 }

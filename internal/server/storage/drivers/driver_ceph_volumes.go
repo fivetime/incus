@@ -78,17 +78,14 @@ func (d *ceph) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.Ope
 		if volExists {
 			canRestore := true
 
-			// Check if the cached image volume is larger than the current pool volume.size setting
-			// (if so we won't be able to resize the snapshot to that the smaller size later).
+			// Check if the cached image volume is larger than the size the new image volume will be created
+			// with (if so we won't be able to resize the snapshot to that the smaller size later).
 			volSizeBytes, err := d.getVolumeSize(d.getRBDVolumeName(deletedVol, "", true))
 			if err != nil {
 				return err
 			}
 
-			poolVolSize := DefaultBlockSize
-			if vol.poolConfig["volume.size"] != "" {
-				poolVolSize = vol.poolConfig["volume.size"]
-			}
+			poolVolSize := vol.ConfigSize()
 
 			poolVolSizeBytes, err := units.ParseByteSizeString(poolVolSize)
 			if err != nil {
@@ -2098,37 +2095,46 @@ func (d *ceph) RestoreVolume(vol Volume, snapshotName string, op *operations.Ope
 		defer logger.WarnOnError(func() error { return d.MountVolume(vol, op) }, "Failed to mount volume")
 	}
 
-	_, err = subprocess.RunCommand(
-		"rbd",
-		"--id", d.config["ceph.user.name"],
-		"--cluster", d.config["ceph.cluster_name"],
-		"--pool", d.config["ceph.osd.pool_name"],
-		"snap",
-		"rollback",
-		"--snap", fmt.Sprintf("snapshot_%s", snapshotName),
-		d.getRBDVolumeName(vol, "", false),
-	)
-	if err != nil {
-		return err
+	vols := []Volume{vol}
+	if vol.IsVMBlock() {
+		vols = append(vols, vol.NewVMBlockFilesystemVolume())
 	}
 
-	snapVol, err := vol.NewSnapshot(snapshotName)
-	if err != nil {
-		return err
-	}
+	for _, v := range vols {
+		_, err = subprocess.RunCommand(
+			"rbd",
+			"--id", d.config["ceph.user.name"],
+			"--cluster", d.config["ceph.cluster_name"],
+			"--pool", d.config["ceph.osd.pool_name"],
+			"snap",
+			"rollback",
+			"--snap", fmt.Sprintf("snapshot_%s", snapshotName),
+			d.getRBDVolumeName(v, "", false),
+		)
+		if err != nil {
+			return err
+		}
 
-	// Map the RBD volume.
-	devPath, err := d.rbdMapVolume(snapVol)
-	if err != nil {
-		return err
-	}
+		if v.contentType != ContentTypeFS || !renegerateFilesystemUUIDNeeded(v.ConfigBlockFilesystem()) {
+			continue
+		}
 
-	defer logger.WarnOnError(func() error { return d.rbdUnmapVolume(snapVol, true) }, "Failed to unmap volume")
+		// Give the restored filesystem a new UUID.
+		devPath, err := d.rbdMapVolume(v)
+		if err != nil {
+			return err
+		}
 
-	// Re-generate the UUID.
-	err = d.generateUUID(snapVol.ConfigBlockFilesystem(), devPath)
-	if err != nil {
-		return err
+		err = d.generateUUID(v.ConfigBlockFilesystem(), devPath)
+		if err != nil {
+			_ = d.rbdUnmapVolume(v, true)
+			return err
+		}
+
+		err = d.rbdUnmapVolume(v, true)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

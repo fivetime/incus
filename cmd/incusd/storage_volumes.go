@@ -859,6 +859,12 @@ func storagePoolVolumesPost(d *Daemon, r *http.Request) response.Response {
 		return response.SmartError(err)
 	}
 
+	// Authorize against the project the volume is actually created in.
+	err = s.Authorizer.CheckPermission(r.Context(), r, auth.ObjectProject(projectName), auth.EntitlementCanCreateStorageVolumes)
+	if err != nil {
+		return response.SmartError(err)
+	}
+
 	resp := forwardedResponseIfTargetIsRemote(s, r)
 	if resp != nil {
 		return resp
@@ -996,6 +1002,37 @@ func storagePoolVolumesPost(d *Daemon, r *http.Request) response.Response {
 		err = s.Authorizer.CheckPermission(r.Context(), r, auth.ObjectStorageVolume(srcProjectName, srcPoolName, db.StoragePoolVolumeTypeNameCustom, req.Source.Name, req.Source.Location), auth.EntitlementCanView)
 		if err != nil {
 			return response.SmartError(err)
+		}
+
+		// A volume attached to an instance on another member may be locked by it, so copy it through that member.
+		_, _, srcIsSnapshot := api.GetParentAndSnapshotName(req.Source.Name)
+		if s.ServerClustered && req.Source.Location == "" && !srcIsSnapshot {
+			srcPool, err := storagePools.LoadByName(s, srcPoolName)
+			if err != nil {
+				return response.SmartError(err)
+			}
+
+			if srcPool.Driver().Info().Remote {
+				client, err := cluster.ConnectIfVolumeIsRemote(s, srcPoolName, srcProjectName, req.Source.Name, db.StoragePoolVolumeTypeCustom, s.Endpoints.NetworkCert(), s.ServerCert(), r)
+				if err != nil {
+					return response.SmartError(err)
+				}
+
+				if client != nil {
+					// Let that member run the whole copy within the same pool.
+					if srcPoolName == poolName && request.QueryParam(r, "target") == "" {
+						return response.ForwardedResponse(client, r)
+					}
+
+					// Otherwise pull the volume from that member.
+					info, err := client.GetConnectionInfo()
+					if err != nil {
+						return response.SmartError(err)
+					}
+
+					return clusterCopyCustomVolumeInternal(s, r, strings.TrimPrefix(info.URL, "https://"), projectName, poolName, &req)
+				}
+			}
 		}
 
 		if dbVolume != nil {
@@ -1850,17 +1887,23 @@ func storagePoolVolumeTypePostRename(s *state.State, r *http.Request, poolName s
 	reverter := revert.New()
 	defer reverter.Fail()
 
-	// Update devices using the volume in instances and profiles.
-	err = storagePoolVolumeUpdateUsers(r.Context(), s, projectName, pool.Name(), vol, pool.Name(), &newVol)
-	if err != nil {
-		return response.SmartError(err)
-	}
-
 	// Use an empty operation for this sync response to pass the requestor
 	op := &operations.Operation{}
 	op.SetRequestor(r)
 
+	// Rename the volume first as instance backup files reference dependent volumes.
 	err = pool.RenameCustomVolume(projectName, vol.Name, req.Name, op)
+	if err != nil {
+		return response.SmartError(err)
+	}
+
+	reverter.Add(func() {
+		_ = pool.RenameCustomVolume(projectName, req.Name, vol.Name, op)
+		_ = storagePoolVolumeUpdateUsers(context.TODO(), s, projectName, pool.Name(), &newVol, pool.Name(), vol)
+	})
+
+	// Update devices using the volume in instances and profiles.
+	err = storagePoolVolumeUpdateUsers(r.Context(), s, projectName, pool.Name(), vol, pool.Name(), &newVol)
 	if err != nil {
 		return response.SmartError(err)
 	}
@@ -1899,19 +1942,23 @@ func storagePoolVolumeTypePostMove(s *state.State, r *http.Request, poolName str
 		reverter := revert.New()
 		defer reverter.Fail()
 
-		// Update devices using the volume in instances and profiles.
-		err = storagePoolVolumeUpdateUsers(context.TODO(), s, requestProjectName, pool.Name(), vol, newPool.Name(), &newVol)
+		// Provide empty description and nil config to instruct CreateCustomVolumeFromCopy to copy it
+		// from source volume.
+		err = newPool.CreateCustomVolumeFromCopy(projectName, requestProjectName, newVol.Name, "", nil, pool.Name(), vol.Name, true, op)
 		if err != nil {
 			return err
 		}
 
 		reverter.Add(func() {
+			_ = newPool.DeleteCustomVolume(projectName, newVol.Name, op)
+		})
+
+		reverter.Add(func() {
 			_ = storagePoolVolumeUpdateUsers(context.TODO(), s, projectName, newPool.Name(), &newVol, pool.Name(), vol)
 		})
 
-		// Provide empty description and nil config to instruct CreateCustomVolumeFromCopy to copy it
-		// from source volume.
-		err = newPool.CreateCustomVolumeFromCopy(projectName, requestProjectName, newVol.Name, "", nil, pool.Name(), vol.Name, true, op)
+		// Update devices using the volume in instances and profiles.
+		err = storagePoolVolumeUpdateUsers(context.TODO(), s, requestProjectName, pool.Name(), vol, newPool.Name(), &newVol)
 		if err != nil {
 			return err
 		}

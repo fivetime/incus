@@ -3,6 +3,7 @@ package drivers
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/lxc/incus/v7/internal/server/instance/drivers/cfg"
@@ -350,13 +351,43 @@ func qemuPCIe(opts *qemuPCIeOpts) []cfg.Section {
 	}}
 }
 
-func qemuSCSI(opts *qemuDevOpts, numQueues int) []cfg.Section {
+// qemuIOThreadCount is the number of iothreads the virtio disks run through.
+const qemuIOThreadCount = 1
+
+// qemuIOThreadPrefix is the object name prefix of the iothreads.
+const qemuIOThreadPrefix = "qemu_iothread"
+
+// qemuIOThreadName returns the object name of an iothread.
+func qemuIOThreadName(index int) string {
+	return fmt.Sprintf("%s%d", qemuIOThreadPrefix, index)
+}
+
+func qemuIOThreads(count int) []cfg.Section {
+	sections := make([]cfg.Section, 0, count)
+	for i := range count {
+		sections = append(sections, cfg.Section{
+			Name:    fmt.Sprintf(`object "%s"`, qemuIOThreadName(i)),
+			Comment: "Disk I/O thread",
+			Entries: map[string]string{
+				"qom-type": "iothread",
+			},
+		})
+	}
+
+	return sections
+}
+
+func qemuSCSI(opts *qemuDevOpts, numQueues int, ioThread string) []cfg.Section {
 	entries := qemuDeviceEntries(&qemuDevEntriesOpts{
 		dev:     *opts,
 		pciName: "virtio-scsi-pci",
 		ccwName: "virtio-scsi-ccw",
 	})
 	entries["num_queues"] = fmt.Sprintf("%d", numQueues)
+
+	if ioThread != "" {
+		entries["iothread"] = ioThread
+	}
 
 	return []cfg.Section{{
 		Name:    `device "qemu_scsi"`,
@@ -728,8 +759,8 @@ func qemuConsole() []cfg.Section {
 }
 
 type qemuDriveFirmwareOpts struct {
-	roPath    string
-	nvramPath string
+	roPath   string
+	nvramFDs []int
 }
 
 func qemuDriveFirmware(opts *qemuDriveFirmwareOpts) []cfg.Section {
@@ -746,12 +777,24 @@ func qemuDriveFirmware(opts *qemuDriveFirmwareOpts) []cfg.Section {
 	}}
 
 	// Unified firmware images (e.g. AMD SEV) carry their own variable store and have no writable drive.
-	if opts.nvramPath != "" {
+	if len(opts.nvramFDs) > 0 {
+		// The file is passed as an fdset so QEMU duplicates a descriptor rather than re-opening the path.
+		for _, fd := range opts.nvramFDs {
+			sections = append(sections, cfg.Section{
+				Name:    "add-fd",
+				Comment: "Firmware settings file descriptor",
+				Entries: map[string]string{
+					"fd":  strconv.Itoa(fd),
+					"set": "0",
+				},
+			})
+		}
+
 		sections = append(sections, cfg.Section{
 			Name:    "drive",
 			Comment: "Firmware settings (writable)",
 			Entries: map[string]string{
-				"file":   opts.nvramPath,
+				"file":   "/dev/fdset/0",
 				"if":     "pflash",
 				"format": "raw",
 				"unit":   "1",

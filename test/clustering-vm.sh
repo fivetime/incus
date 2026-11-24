@@ -79,7 +79,7 @@ incus storage volume create "${POOL}" "${PREFIX}-shared" --type=block size=40GiB
 
 log "Launch ${MEMBERS} virtual machines"
 for i in $(seq "${MEMBERS}"); do
-    incus init "${IMAGE}" "$(member "${i}")" --vm -c security.nesting=true -c limits.cpu=2 -c limits.memory=4GiB -d root,size=20GiB
+    incus init "${IMAGE}" "$(member "${i}")" --vm -c security.nesting=true -c limits.cpu=2 -c limits.memory=4GiB -d root,size=30GiB
     incus config device add "$(member "${i}")" shared disk pool="${POOL}" source="${PREFIX}-shared"
     incus start "$(member "${i}")"
 done
@@ -212,6 +212,10 @@ log "Launch a VM on local storage and one on shared storage"
 incus init "${IMAGE}" "${REMOTE}:v1" --vm -s local --target "$(member 1)" -c migration.stateful=true
 incus init "${IMAGE}" "${REMOTE}:v2" --vm -s shared -d root,size=4GiB -d root,size.state=1GiB --target "$(member 1)" -c migration.stateful=true
 
+log "Attach a custom block volume following the local storage VM"
+incus storage volume create "${REMOTE}:local" vol3 --type=block size=64MiB migration.follow_instance=true --target "$(member 1)"
+incus storage volume attach "${REMOTE}:local" vol3 v1
+
 log "Attach custom block and ISO volumes to the shared storage VM"
 incus storage volume create "${REMOTE}:shared" vol1 --type=block size=64MiB
 incus storage volume attach "${REMOTE}:shared" vol1 v2
@@ -230,6 +234,10 @@ incus wait "${REMOTE}:v2" agent --timeout=600 --interval=2
 incus exec "${REMOTE}:v2" -- sh -c 'for _ in $(seq 60); do [ -e /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol1 ] && [ -e /dev/disk/by-id/scsi-0QEMU_QEMU_CD-ROM_incus_vol2 ] && exit 0; sleep 1; done; ls -l /dev/disk/by-id/; exit 1'
 incus exec "${REMOTE}:v2" -- sh -c "mkfs.ext4 -q /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol1 && mount /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol1 /mnt && echo data > /mnt/marker && umount /mnt"
 
+# shellcheck disable=SC2016
+incus exec "${REMOTE}:v1" -- sh -c 'for _ in $(seq 60); do [ -e /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol3 ] && exit 0; sleep 1; done; ls -l /dev/disk/by-id/; exit 1'
+incus exec "${REMOTE}:v1" -- sh -c "mkfs.ext4 -q /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol3 && mount /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol3 /mnt && echo data > /mnt/marker && umount /mnt"
+
 # check_vm checks that a VM runs on the given member and kept its memory state.
 check_vm() {
     incus info "${REMOTE}:${1}" | grep -q "Location: ${2}"
@@ -246,9 +254,50 @@ check_volumes() {
     incus exec "${REMOTE}:v2" -- sh -c "mount -o ro /dev/disk/by-id/scsi-0QEMU_QEMU_CD-ROM_incus_vol2 /mnt && cat /mnt/foo && umount /mnt" | grep -Fx foo
 }
 
+# check_following_volume checks that the volume following v1 is readable and only exists on the given member.
+check_following_volume() {
+    incus exec "${REMOTE}:v1" -- sh -c "mount /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol3 /mnt && cat /mnt/marker && umount /mnt" | grep -Fx data
+    [ "$(incus storage volume list "${REMOTE}:local" --format csv --columns nL | grep -c '^vol3,')" = "1" ]
+    incus storage volume list "${REMOTE}:local" --format csv --columns nL | grep -Fx "vol3,${1}"
+}
+
+# lv_locked checks that the given member can't activate a logical volume of the shared pool, even shared.
+lv_locked() {
+    if incus exec "${1}" -- lvchange --activate sy --ignoreactivationskip "shared/${2}"; then
+        incus exec "${1}" -- lvchange --activate n --ignoreactivationskip "shared/${2}"
+        return 1
+    fi
+
+    return 0
+}
+
+# wait_locked waits for a logical volume to be locked by another member than the given one.
+wait_locked() {
+    # The lock is only promoted once the previous member released the volume.
+    for _ in $(seq 30); do
+        if lv_locked "${1}" "${2}"; then
+            return 0
+        fi
+
+        sleep 2
+    done
+
+    lv_locked "${1}" "${2}"
+}
+
+# check_locks checks that the volumes of v2 are locked exclusively by the member running it.
+check_locks() {
+    for lv in virtual-machines_v2.block virtual-machines_v2 custom_default_vol4.block; do
+        wait_locked "${1}" "${lv}"
+    done
+
+    ! lv_locked "${1}" custom_default_vol1.block || false
+}
+
 incus exec "${REMOTE}:v1" -- sh -c "echo live > /dev/shm/marker"
 incus exec "${REMOTE}:v2" -- sh -c "echo live > /dev/shm/marker"
 check_volumes
+check_following_volume "$(member 1)"
 
 log "Live migrate the shared storage VM across the members"
 for i in $(seq 2 "${MEMBERS}") 1; do
@@ -257,21 +306,97 @@ for i in $(seq 2 "${MEMBERS}") 1; do
     check_volumes
 done
 
+log "Check the storage locks of the shared storage VM"
+incus storage volume create "${REMOTE}:shared" vol4 --type=block size=64MiB
+incus config device add "${REMOTE}:v2" vol4 disk pool=shared source=vol4 dependent=true
+check_locks "$(member 2)"
+
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 2)"
+check_vm v2 "$(member 2)"
+check_locks "$(member 1)"
+
+incus snapshot create "${REMOTE}:v2" locks
+check_locks "$(member 1)"
+! lv_locked "$(member 1)" virtual-machines_v2-locks.block || false
+! lv_locked "$(member 1)" custom_default_vol4-locks.block || false
+incus snapshot delete "${REMOTE}:v2" locks
+check_locks "$(member 1)"
+
+incus stop -f "${REMOTE}:v2"
+incus snapshot create "${REMOTE}:v2" locks
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 1)"
+incus start "${REMOTE}:v2"
+incus wait "${REMOTE}:v2" agent --timeout=120 --interval=2
+[ "$(incus list "${REMOTE}:" v2 -c L -f csv)" = "$(member 1)" ]
+check_locks "$(member 2)"
+! lv_locked "$(member 2)" virtual-machines_v2-locks.block || false
+! lv_locked "$(member 2)" custom_default_vol4-locks.block || false
+incus snapshot delete "${REMOTE}:v2" locks
+incus exec "${REMOTE}:v2" -- sh -c "echo live > /dev/shm/marker"
+
+incus config device remove "${REMOTE}:v2" vol4
+incus storage volume delete "${REMOTE}:shared" vol4
+check_volumes
+
 log "Live migrate the local storage VM"
+incus storage volume create "${REMOTE}:shared" vol5 --type=block size=64MiB
+incus config device add "${REMOTE}:v1" vol5 disk pool=shared source=vol5 dependent=true
 incus move "${REMOTE}:v1" "${REMOTE}:v1" --target "$(member 2)"
 check_vm v1 "$(member 2)"
+check_following_volume "$(member 2)"
+wait_locked "$(member 1)" custom_default_vol5.block
+
+log "Live move the dependent disk of the local storage VM to local storage"
+incus move "${REMOTE}:v1" "${REMOTE}:v1" --target "$(member 1)" -d vol5,pool=local
+check_vm v1 "$(member 1)"
+check_following_volume "$(member 1)"
+[ "$(incus config device get "${REMOTE}:v1" vol5 pool)" = "local" ]
+incus storage volume list "${REMOTE}:local" --format csv --columns nL | grep -Fx "vol5,$(member 1)"
+
+log "Live move the local dependent disk of the local storage VM to shared storage"
+incus move "${REMOTE}:v1" "${REMOTE}:v1" --target "$(member 2)" -d vol5,pool=shared
+check_vm v1 "$(member 2)"
+check_following_volume "$(member 2)"
+[ "$(incus config device get "${REMOTE}:v1" vol5 pool)" = "shared" ]
+wait_locked "$(member 1)" custom_default_vol5.block
 incus move "${REMOTE}:v1" "${REMOTE}:v1" --target "$(member 1)"
 check_vm v1 "$(member 1)"
+check_following_volume "$(member 1)"
+wait_locked "$(member 2)" custom_default_vol5.block
+incus config device remove "${REMOTE}:v1" vol5
+incus storage volume delete "${REMOTE}:shared" vol5
+
+log "Move the stopped local storage VM"
+incus stop -f "${REMOTE}:v1"
+incus move "${REMOTE}:v1" "${REMOTE}:v1" --target "$(member "${MEMBERS}")"
+incus info "${REMOTE}:v1" | grep -q "Location: $(member "${MEMBERS}")"
+incus start "${REMOTE}:v1"
+incus wait "${REMOTE}:v1" agent --timeout=600 --interval=2
+check_following_volume "$(member "${MEMBERS}")"
 
 # check_marker checks the on-disk marker of a freshly booted VM.
 check_marker() {
     incus wait "${REMOTE}:${1}" agent --timeout=600 --interval=2
-    incus exec "${REMOTE}:${1}" -- cat /root/marker | grep -Fx "${2}"
+    actual="$(incus exec "${REMOTE}:${1}" -- cat /root/marker)"
+    echo "${actual}"
+    if [ "${actual}" != "${2}" ]; then
+        echo "Unexpected marker in ${1}: \"${actual}\", expected \"${2}\""
+        return 1
+    fi
 }
 
 # snapshots prints the snapshot names of a VM on one line.
 snapshots() {
     incus snapshot list "${REMOTE}:${1}" --format csv -c n | xargs
+}
+
+# check_snapshots checks the snapshot names of a VM, printing them on mismatch.
+check_snapshots() {
+    actual="$(snapshots "${1}")"
+    if [ "${actual}" != "${2}" ]; then
+        echo "Unexpected snapshots of ${1}: \"${actual}\", expected \"${2}\""
+        return 1
+    fi
 }
 
 log "Snapshot the running shared storage VM across the members"
@@ -292,12 +417,12 @@ incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync"
 
 log "Delete a snapshot in the middle of the chain of the running VM"
 incus snapshot delete "${REMOTE}:v2" snap2
-[ "$(snapshots v2)" = "snap0 snap1 snap3" ]
+check_snapshots v2 "snap0 snap1 snap3"
 check_vm v2 "${next}"
 
 log "Delete the oldest snapshot of the running VM"
 incus snapshot delete "${REMOTE}:v2" snap0
-[ "$(snapshots v2)" = "snap1 snap3" ]
+check_snapshots v2 "snap1 snap3"
 check_vm v2 "${next}"
 
 log "Delete the newest snapshot of the running VM"
@@ -305,7 +430,7 @@ incus exec "${REMOTE}:v2" -- sh -c "echo snap4 > /root/marker && sync"
 incus snapshot create "${REMOTE}:v2" snap4
 incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync"
 incus snapshot delete "${REMOTE}:v2" snap4
-[ "$(snapshots v2)" = "snap1 snap3" ]
+check_snapshots v2 "snap1 snap3"
 
 next="$(member "$((4 % MEMBERS + 1))")"
 incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "${next}"
@@ -330,7 +455,7 @@ incus delete -f "${REMOTE}:v3"
 log "Copy the running VM with its snapshots"
 incus copy "${REMOTE}:v2" "${REMOTE}:v4" --target "$(member "${MEMBERS}")" --stateless
 incus config device remove "${REMOTE}:v4" vol1 vol2
-[ "$(snapshots v4)" = "snap1 snap3" ]
+check_snapshots v4 "snap1 snap3"
 incus start "${REMOTE}:v4"
 check_marker v4 current
 
@@ -341,7 +466,7 @@ check_marker v2 snap3
 incus storage volume set "${REMOTE}:shared" virtual-machine/v2 lvmcluster.remove_snapshots=true
 incus snapshot restore "${REMOTE}:v2" snap1
 check_marker v2 snap1
-[ "$(snapshots v2)" = "snap1" ]
+check_snapshots v2 "snap1"
 check_volumes
 
 log "Check the copied VM doesn't depend on the source snapshots"
@@ -369,7 +494,7 @@ check_marker v2 stateful
 
 log "Delete the stateful snapshot of the running VM"
 incus snapshot delete "${REMOTE}:v2" snap5
-[ "$(snapshots v2)" = "snap1" ]
+check_snapshots v2 "snap1"
 check_volumes
 
 incus exec "${REMOTE}:v2" -- sh -c "echo live > /dev/shm/marker"
@@ -378,9 +503,177 @@ if [ "${next}" != "$(member 1)" ]; then
     check_vm v2 "$(member 1)"
 fi
 
+log "Rename the snapshots of the running shared storage VM"
+incus exec "${REMOTE}:v2" -- sh -c "echo snap6 > /root/marker && sync"
+incus snapshot create "${REMOTE}:v2" snap6
+incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync"
+incus snapshot rename "${REMOTE}:v2" snap1 renamed1
+incus snapshot rename "${REMOTE}:v2" snap6 renamed6
+check_snapshots v2 "renamed1 renamed6"
+
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 2)"
+check_vm v2 "$(member 2)"
+check_volumes
+
+incus snapshot delete "${REMOTE}:v2" renamed1
+check_snapshots v2 "renamed6"
+check_vm v2 "$(member 2)"
+incus snapshot restore "${REMOTE}:v2" renamed6
+check_marker v2 snap6
+
+log "Rename the stopped shared storage VM"
+incus stop -f "${REMOTE}:v2"
+incus move "${REMOTE}:v2" "${REMOTE}:v5"
+check_snapshots v5 "renamed6"
+incus move "${REMOTE}:v5" "${REMOTE}:v5" --target "$(member 1)"
+incus move "${REMOTE}:v5" "${REMOTE}:v2"
+check_snapshots v2 "renamed6"
+incus start "${REMOTE}:v2"
+check_marker v2 snap6
+incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync && echo live > /dev/shm/marker"
+check_volumes
+
+log "Live move the shared storage VM to local storage"
+incus storage volume create "${REMOTE}:shared" vol4 --type=block size=64MiB
+incus config device add "${REMOTE}:v2" vol4 disk pool=shared source=vol4 dependent=true
+incus move "${REMOTE}:v2" "${REMOTE}:v2" -s local --target "$(member 2)"
+check_vm v2 "$(member 2)"
+check_volumes
+[ "$(incus config device get "${REMOTE}:v2" root pool)" = "local" ]
+check_snapshots v2 "renamed6"
+wait_locked "$(member 1)" custom_default_vol4.block
+
+log "Live move the VM back to shared storage"
+incus move "${REMOTE}:v2" "${REMOTE}:v2" -s shared --target "$(member 1)"
+check_vm v2 "$(member 1)"
+check_volumes
+[ "$(incus config device get "${REMOTE}:v2" root pool)" = "shared" ]
+check_locks "$(member 2)"
+
+log "Live move the dependent disk of the shared storage VM to local storage"
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 2)" -d vol4,pool=local
+check_vm v2 "$(member 2)"
+check_volumes
+[ "$(incus config device get "${REMOTE}:v2" vol4 pool)" = "local" ]
+
+log "Live move the shared storage VM with a local dependent disk"
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 1)"
+check_vm v2 "$(member 1)"
+incus storage volume list "${REMOTE}:local" --format csv --columns nL | grep -Fx "vol4,$(member 1)"
+
+log "Live move the local dependent disk of the shared storage VM to shared storage"
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 2)" -d vol4,pool=shared
+check_vm v2 "$(member 2)"
+check_volumes
+[ "$(incus config device get "${REMOTE}:v2" vol4 pool)" = "shared" ]
+wait_locked "$(member 1)" custom_default_vol4.block
+incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 1)" -d vol4,pool=local
+check_vm v2 "$(member 1)"
+incus storage volume list "${REMOTE}:local" --format csv --columns nL | grep -Fx "vol4,$(member 1)"
+
+log "Live move the shared storage VM and its dependent disk to local storage"
+incus storage volume create "${REMOTE}:shared" vol6 --type=block size=64MiB
+incus config device add "${REMOTE}:v2" vol6 disk pool=shared source=vol6 dependent=true
+incus move "${REMOTE}:v2" "${REMOTE}:v2" -s local --target "$(member 2)" -d vol6,pool=local
+check_vm v2 "$(member 2)"
+check_volumes
+[ "$(incus config device get "${REMOTE}:v2" root pool)" = "local" ]
+[ "$(incus config device get "${REMOTE}:v2" vol6 pool)" = "local" ]
+incus storage volume list "${REMOTE}:local" --format csv --columns nL | grep -Fx "vol4,$(member 2)"
+
+log "Live move the VM and its dependent disk back to shared storage"
+incus move "${REMOTE}:v2" "${REMOTE}:v2" -s shared --target "$(member 1)" -d vol6,pool=shared
+check_vm v2 "$(member 1)"
+check_volumes
+[ "$(incus config device get "${REMOTE}:v2" root pool)" = "shared" ]
+[ "$(incus config device get "${REMOTE}:v2" vol6 pool)" = "shared" ]
+wait_locked "$(member 2)" custom_default_vol6.block
+incus config device remove "${REMOTE}:v2" vol4
+incus config device remove "${REMOTE}:v2" vol6
+incus storage volume delete "${REMOTE}:local" vol4 --target "$(member 1)"
+incus storage volume delete "${REMOTE}:shared" vol6
+incus restart -f "${REMOTE}:v2"
+check_marker v2 current
+incus snapshot restore "${REMOTE}:v2" renamed6
+check_marker v2 snap6
+incus exec "${REMOTE}:v2" -- sh -c "echo current > /root/marker && sync && echo live > /dev/shm/marker"
+
+log "Refresh a copy of the running VM"
+incus copy "${REMOTE}:v2" "${REMOTE}:v3" --target "$(member 2)" --stateless
+incus config device remove "${REMOTE}:v3" vol1 vol2
+
+incus exec "${REMOTE}:v2" -- sh -c "echo snap7 > /root/marker && sync"
+incus snapshot create "${REMOTE}:v2" snap7
+incus exec "${REMOTE}:v2" -- sh -c "echo refreshed > /root/marker && sync"
+# A refresh brings the source devices back and vol1 can't be attached twice.
+incus config device remove "${REMOTE}:v2" vol1
+incus copy "${REMOTE}:v2" "${REMOTE}:v3" --refresh
+incus config device remove "${REMOTE}:v3" vol2
+check_snapshots v3 "renamed6 snap7"
+incus start "${REMOTE}:v3"
+check_marker v3 refreshed
+incus snapshot restore "${REMOTE}:v3" snap7
+check_marker v3 snap7
+incus delete -f "${REMOTE}:v3"
+incus storage volume attach "${REMOTE}:shared" vol1 v2
+# shellcheck disable=SC2016
+incus exec "${REMOTE}:v2" -- sh -c 'for _ in $(seq 60); do [ -e /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_vol1 ] && exit 0; sleep 1; done; exit 1'
+check_vm v2 "$(member 1)"
+check_volumes
+
+log "Copy the running VM to local storage"
+incus snapshot delete "${REMOTE}:v2" renamed6
+check_snapshots v2 "snap7"
+incus copy "${REMOTE}:v2" "${REMOTE}:v6" -s local --target "$(member 2)" --stateless
+incus config device remove "${REMOTE}:v6" vol1 vol2
+check_snapshots v6 "snap7"
+incus start "${REMOTE}:v6"
+check_marker v6 refreshed
+
+log "Copy the running local storage VM to shared storage"
+incus copy "${REMOTE}:v6" "${REMOTE}:v7" -s shared --target "$(member "${MEMBERS}")" --stateless
+check_snapshots v7 "snap7"
+
+log "Refresh a copy on shared storage from local storage"
+incus exec "${REMOTE}:v6" -- sh -c "echo snap8 > /root/marker && sync"
+incus snapshot create "${REMOTE}:v6" snap8
+incus exec "${REMOTE}:v6" -- sh -c "echo refreshed > /root/marker && sync"
+incus copy "${REMOTE}:v6" "${REMOTE}:v7" --refresh
+check_snapshots v7 "snap7 snap8"
+incus start "${REMOTE}:v7"
+check_marker v7 refreshed
+incus snapshot restore "${REMOTE}:v7" snap8 --diskonly
+check_marker v7 snap8
+incus delete -f "${REMOTE}:v6" "${REMOTE}:v7"
+
 log "Heal the cluster after losing a member"
 incus config set "${REMOTE}:" cluster.offline_threshold=11 cluster.healing_threshold=15
 incus move "${REMOTE}:v2" "${REMOTE}:v2" --target "$(member 2)"
+check_vm v2 "$(member 2)"
+
+log "Don't heal a member which lost its network but still runs its VM"
+dev="$(incus exec "$(member 2)" -- sh -c "ip -o route show default | awk '{print \$5}'")"
+incus exec "$(member 2)" -- ip link set "${dev}" down
+sleep 90
+[ "$(incus list "${REMOTE}:" v2 -c L -f csv)" = "$(member 2)" ]
+incus exec "$(member 2)" -- pgrep -f -- "-name v2" > /dev/null
+found=""
+for i in $(seq "${MEMBERS}"); do
+    if incus exec "$(member "${i}")" -- grep -q "storage is still in use, retrying on the next run" /var/log/incus/incusd.log; then
+        found=1
+    fi
+done
+[ -n "${found}" ]
+
+incus exec "$(member 2)" -- ip link set "${dev}" up
+for _ in $(seq 60); do
+    if incus cluster list "${REMOTE}:" --format csv | grep "^$(member 2)," | grep -q "ONLINE"; then
+        break
+    fi
+
+    sleep 5
+done
+incus cluster list "${REMOTE}:" --format csv | grep "^$(member 2)," | grep -q "ONLINE"
 check_vm v2 "$(member 2)"
 
 incus stop -f "$(member 2)"
@@ -417,6 +710,7 @@ check_volumes
 
 log "Cleanup"
 incus delete -f "${REMOTE}:v1" "${REMOTE}:v2"
+incus storage volume delete "${REMOTE}:local" vol3
 incus storage volume delete "${REMOTE}:shared" vol1
 incus storage volume delete "${REMOTE}:shared" vol2
 incus storage delete "${REMOTE}:shared"

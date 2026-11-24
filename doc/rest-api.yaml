@@ -807,6 +807,198 @@ definitions:
         title: DebugKernelModule represents a loaded kernel module.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
+    DebugLVM:
+        properties:
+            lvs:
+                items:
+                    additionalProperties: {}
+                    type: object
+                type: array
+                x-go-name: LVs
+            pvs:
+                items:
+                    additionalProperties: {}
+                    type: object
+                type: array
+                x-go-name: PVs
+            vgs:
+                items:
+                    additionalProperties: {}
+                    type: object
+                type: array
+                x-go-name: VGs
+        title: DebugLVM represents LVM debug information for the system.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    DebugNetworkDumpTraffic:
+        properties:
+            duration:
+                description: Seconds to capture for, defaults to 10 if unset, 0 captures until the request is canceled.
+                format: int64
+                type: integer
+                x-go-name: Duration
+            filter:
+                description: Capture filter expression in tcpdump syntax.
+                type: string
+                x-go-name: Filter
+            format:
+                description: Output format, either "text" (default) or "pcap".
+                type: string
+                x-go-name: Format
+            interface:
+                description: Interface to capture on, defaults to all interfaces.
+                type: string
+                x-go-name: Interface
+        title: DebugNetworkDumpTraffic defines the arguments for a network traffic dump request.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    DebugNetworkPing:
+        properties:
+            count:
+                description: Number of packets to send, defaults to 10 if unset, 0 pings until the request is canceled.
+                format: int64
+                type: integer
+                x-go-name: Count
+            family:
+                description: Address family to use, either "ipv4" or "ipv6", automatically selected if unset.
+                type: string
+                x-go-name: Family
+            interface:
+                description: Interface to send from, automatically selected if unset.
+                type: string
+                x-go-name: Interface
+            interval:
+                description: Seconds to wait between packets.
+                format: double
+                type: number
+                x-go-name: Interval
+            numeric:
+                description: Don't resolve addresses to names.
+                type: boolean
+                x-go-name: Numeric
+            pmtu_discovery:
+                description: Path MTU discovery strategy, one of "do", "dont", "want" or "probe".
+                type: string
+                x-go-name: PMTUDiscovery
+            size:
+                description: Payload size in bytes.
+                format: int64
+                type: integer
+                x-go-name: Size
+            target:
+                description: Host name or address to ping.
+                type: string
+                x-go-name: Target
+        title: DebugNetworkPing defines the arguments for a network ping request.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    DebugNetworkRoutes:
+        properties:
+            ipv4_routes:
+                items:
+                    additionalProperties: {}
+                    type: object
+                type: array
+                x-go-name: IPv4Routes
+            ipv4_rules:
+                items:
+                    additionalProperties: {}
+                    type: object
+                type: array
+                x-go-name: IPv4Rules
+            ipv6_routes:
+                items:
+                    additionalProperties: {}
+                    type: object
+                type: array
+                x-go-name: IPv6Routes
+            ipv6_rules:
+                items:
+                    additionalProperties: {}
+                    type: object
+                type: array
+                x-go-name: IPv6Rules
+        title: DebugNetworkRoutes holds the routing policy rules and tables as reported by iproute2.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    DebugNetworkSpeedTest:
+        properties:
+            bitrate:
+                description: Target bitrate in bits per second with an optional K, M or G suffix, 0 for unlimited.
+                type: string
+                x-go-name: Bitrate
+            duration:
+                description: Seconds to test for, defaults to 10 if unset, 0 tests until the request is canceled.
+                format: int64
+                type: integer
+                x-go-name: Duration
+            family:
+                description: Address family to use, either "ipv4" or "ipv6", automatically selected if unset.
+                type: string
+                x-go-name: Family
+            format:
+                description: Output format, either "json" (default) or "text".
+                type: string
+                x-go-name: Format
+            interface:
+                description: Interface to send from, automatically selected if unset.
+                type: string
+                x-go-name: Interface
+            parallel:
+                description: Number of parallel connections to test with, defaults to 1.
+                format: int64
+                type: integer
+                x-go-name: Parallel
+            port:
+                description: Port of the iperf3 server, defaults to 5201.
+                format: int64
+                type: integer
+                x-go-name: Port
+            protocol:
+                description: Protocol to test with, either "tcp" (default) or "udp".
+                type: string
+                x-go-name: Protocol
+            reverse:
+                description: Measure the download rather than upload bandwidth.
+                type: boolean
+                x-go-name: Reverse
+            target:
+                description: Host name or address of the iperf3 server.
+                type: string
+                x-go-name: Target
+        title: DebugNetworkSpeedTest defines the arguments for a network speed test request.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    DebugNetworkTrace:
+        properties:
+            count:
+                description: Number of probes to send to each hop, defaults to 10 if unset, 0 traces until the request is canceled.
+                format: int64
+                type: integer
+                x-go-name: Count
+            family:
+                description: Address family to use, either "ipv4" or "ipv6", automatically selected if unset.
+                type: string
+                x-go-name: Family
+            format:
+                description: Output format, either "json" (default) or "text".
+                type: string
+                x-go-name: Format
+            interface:
+                description: Interface to send from, automatically selected if unset.
+                type: string
+                x-go-name: Interface
+            numeric:
+                description: Don't resolve addresses to names.
+                type: boolean
+                x-go-name: Numeric
+            target:
+                description: Host name or address to trace the path to.
+                type: string
+                x-go-name: Target
+        title: DebugNetworkTrace defines the arguments for a network trace request.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
     DebugReport:
         properties:
             media_type:
@@ -1587,10 +1779,6 @@ definitions:
         x-go-package: github.com/lxc/incus/v7/shared/api
     InitNetworksProjectPost:
         properties:
-            Project:
-                description: Project in which the network will reside
-                example: default
-                type: string
             config:
                 $ref: '#/definitions/ConfigMap'
             description:
@@ -1606,6 +1794,11 @@ definitions:
                 example: mybr1
                 type: string
                 x-go-name: Name
+            project:
+                description: Project in which the network will reside
+                example: default
+                type: string
+                x-go-name: Project
             type:
                 description: The network type (refer to doc/networks.md)
                 example: bridge
@@ -1676,10 +1869,6 @@ definitions:
         x-go-package: github.com/lxc/incus/v7/shared/api
     InitProfileProjectPost:
         properties:
-            Project:
-                description: Project in which the profile will reside
-                example: default
-                type: string
             config:
                 $ref: '#/definitions/ConfigMap'
             description:
@@ -1694,19 +1883,16 @@ definitions:
                 example: foo
                 type: string
                 x-go-name: Name
+            project:
+                description: Project in which the profile will reside
+                example: default
+                type: string
+                x-go-name: Project
         title: InitProfileProjectPost represents the fields of a new profile along with its associated project.
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
     InitStorageVolumesProjectPost:
         properties:
-            Pool:
-                description: Storage pool in which the volume will reside
-                example: default
-                type: string
-            Project:
-                description: Project in which the volume will reside
-                example: default
-                type: string
             config:
                 $ref: '#/definitions/ConfigMap'
             content_type:
@@ -1730,6 +1916,16 @@ definitions:
                 example: foo
                 type: string
                 x-go-name: Name
+            pool:
+                description: Storage pool in which the volume will reside
+                example: default
+                type: string
+                x-go-name: Pool
+            project:
+                description: Project in which the volume will reside
+                example: default
+                type: string
+                x-go-name: Project
             restore:
                 description: |-
                     Name of a snapshot to restore
@@ -2201,20 +2397,6 @@ definitions:
         x-go-package: github.com/lxc/incus/v7/shared/api
     InstancePost:
         properties:
-            Config:
-                $ref: '#/definitions/ConfigMap'
-            Devices:
-                $ref: '#/definitions/DevicesMap'
-            Profiles:
-                description: |-
-                    List of profiles applied to the instance.
-
-                    API extension: instance_move_config
-                example:
-                    - default
-                items:
-                    type: string
-                type: array
             allow_inconsistent:
                 description: |-
                     AllowInconsistent allow inconsistent copies when migrating.
@@ -2223,6 +2405,10 @@ definitions:
                 example: false
                 type: boolean
                 x-go-name: AllowInconsistent
+            config:
+                $ref: '#/definitions/ConfigMap'
+            devices:
+                $ref: '#/definitions/DevicesMap'
             instance_only:
                 description: Whether snapshots should be discarded (migration only)
                 example: false
@@ -2251,6 +2437,17 @@ definitions:
                 example: baz
                 type: string
                 x-go-name: Pool
+            profiles:
+                description: |-
+                    List of profiles applied to the instance.
+
+                    API extension: instance_move_config
+                example:
+                    - default
+                items:
+                    type: string
+                type: array
+                x-go-name: Profiles
             project:
                 description: |-
                     Target project for local cross-project move
@@ -3646,6 +3843,13 @@ definitions:
                     API extension: network_allocations_network
                 type: string
                 x-go-name: Network
+            project:
+                description: |-
+                    Project of the network
+
+                    API extension: network_allocations_project
+                type: string
+                x-go-name: Project
             type:
                 description: Type of the entity consuming the network address
                 type: string
@@ -4854,16 +5058,18 @@ definitions:
     ProjectStateResource:
         description: ProjectStateResource represents the state of a particular resource in a project
         properties:
-            Limit:
+            limit:
                 description: Limit for the resource (-1 if none)
                 example: 10
                 format: int64
                 type: integer
-            Usage:
+                x-go-name: Limit
+            usage:
                 description: Current usage for the resource
                 example: 4
                 format: int64
                 type: integer
+                x-go-name: Usage
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
     ProjectsPost:
@@ -5349,26 +5555,30 @@ definitions:
     ResourcesLoad:
         description: ResourcesLoad represents system load information
         properties:
-            Average1Min:
+            average1min:
                 description: Load average in the past minute
                 example: 0.69
                 format: double
                 type: number
-            Average5Min:
+                x-go-name: Average1Min
+            average5min:
                 description: Load average in the past 5 minutes
                 example: 1.1
                 format: double
                 type: number
-            Average10Min:
+                x-go-name: Average5Min
+            average10min:
                 description: Load average in the past 10 minutes
                 example: 1.29
                 format: double
                 type: number
-            Processes:
+                x-go-name: Average10Min
+            processes:
                 description: The number of active processes
                 example: 1234
                 format: int64
                 type: integer
+                x-go-name: Processes
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
     ResourcesMemory:
@@ -6569,27 +6779,30 @@ definitions:
     ServerStorageDriverInfo:
         description: ServerStorageDriverInfo represents the read-only info about a storage driver
         properties:
-            Name:
+            name:
                 description: |-
                     Name of the driver
 
                     API extension: server_supported_storage_drivers
                 example: zfs
                 type: string
-            Remote:
+                x-go-name: Name
+            remote:
                 description: |-
                     Whether the driver has remote volumes
 
                     API extension: server_supported_storage_drivers
                 example: false
                 type: boolean
-            Version:
+                x-go-name: Remote
+            version:
                 description: |-
                     Version of the driver
 
                     API extension: server_supported_storage_drivers
                 example: 0.8.4-1ubuntu11
                 type: string
+                x-go-name: Version
         type: object
         x-go-package: github.com/lxc/incus/v7/shared/api
     ServerUntrusted:
@@ -8038,6 +8251,9 @@ definitions:
         x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemKernelConfigCPU:
         properties:
+            disable_thermal_protection:
+                type: boolean
+                x-go-name: DisableThermalProtection
             scaling_governor:
                 type: string
                 x-go-name: ScalingGovernor
@@ -8141,9 +8357,24 @@ definitions:
         x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemKernelState:
         properties:
+            clock:
+                $ref: '#/definitions/SystemKernelStateClock'
             memory:
                 $ref: '#/definitions/SystemKernelStateMemory'
         title: SystemKernelState represents state for the system's kernel-level configuration.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    SystemKernelStateClock:
+        properties:
+            available_sources:
+                items:
+                    type: string
+                type: array
+                x-go-name: AvailableSources
+            source:
+                type: string
+                x-go-name: Source
+        title: SystemKernelStateClock reports the kernel timekeeping clock source.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemKernelStateMemory:
@@ -8367,6 +8598,13 @@ definitions:
                 x-go-name: DefaultConfirmationTimeout
             dns:
                 $ref: '#/definitions/SystemNetworkDNS'
+            ignore_service_checks:
+                description: |-
+                    If true, when bringing up the network don't wait for DNS and NTP to be configured and
+                    available before continuing. Most systems shouldn't need to set this, and when enabled
+                    initial update checks may fail due to being unable to resolve hostnames.
+                type: boolean
+                x-go-name: IgnoreServiceChecks
             interfaces:
                 items:
                     $ref: '#/definitions/SystemNetworkInterface'
@@ -8869,6 +9107,18 @@ definitions:
                 type: string
                 x-go-name: PublicKey
         title: SystemNetworkWireguardState holds state information about a specific wireguard interface.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    SystemNextBootVersion:
+        properties:
+            next_boot_version:
+                description: |-
+                    If not specified or "newest", the system will attempt to boot into the newest installed OS version.
+                    Values of "current" or "oldest" will change the boot target to reboot into the same version or
+                    the prior installed version.
+                type: string
+                x-go-name: NextBootVersion
+        title: SystemNextBootVersion defines a struct that is used to specify what version of IncusOS to boot the next time the system starts.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemProvider:
@@ -16217,7 +16467,7 @@ paths:
                     $ref: '#/responses/Conflict'
                 "500":
                     $ref: '#/responses/InternalServerError'
-            summary: Get the network allocations in use (`network`, `network-forward` and `load-balancer` and `instance`)
+            summary: Get the network allocations in use (`network`, `instance`, `uplink`, `network-forward` and `network-load-balancer`)
             tags:
                 - network-allocations
     /1.0/network-integrations:

@@ -74,6 +74,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/storage/linstor"
 	"github.com/lxc/incus/v7/internal/server/sys"
 	"github.com/lxc/incus/v7/internal/server/syslog"
+	systemdreport "github.com/lxc/incus/v7/internal/server/systemd-report"
 	"github.com/lxc/incus/v7/internal/server/task"
 	"github.com/lxc/incus/v7/internal/server/ucred"
 	localUtil "github.com/lxc/incus/v7/internal/server/util"
@@ -188,6 +189,9 @@ type Daemon struct {
 	// ACME challenge listener used by non-leader cluster members.
 	acmeListener   *http.Server
 	acmeListenerMu sync.Mutex
+
+	// Systemd-report server.
+	systemdReportServer *systemdreport.Server
 }
 
 // DaemonConfig holds configuration values for Daemon.
@@ -346,8 +350,24 @@ func allowPermission(objectType auth.ObjectType, entitlement auth.Entitlement, m
 				return projectName
 			}
 
-			// Object types that are always addressed in the requested project.
-			if slices.Contains([]auth.ObjectType{auth.ObjectTypeProject, auth.ObjectTypeInstance}, objectType) {
+			// Instances are always addressed in the requested project.
+			if objectType == auth.ObjectTypeInstance {
+				return projectName
+			}
+
+			// Project entitlements apply to the requested project, except for the creation of
+			// resources which may be inherited from the default project.
+			if objectType == auth.ObjectTypeProject && !slices.Contains([]auth.Entitlement{
+				auth.EntitlementCanCreateImages,
+				auth.EntitlementCanCreateImageAliases,
+				auth.EntitlementCanCreateNetworks,
+				auth.EntitlementCanCreateNetworkACLs,
+				auth.EntitlementCanCreateNetworkAddressSets,
+				auth.EntitlementCanCreateNetworkZones,
+				auth.EntitlementCanCreateProfiles,
+				auth.EntitlementCanCreateStorageBuckets,
+				auth.EntitlementCanCreateStorageVolumes,
+			}, entitlement) {
 				return projectName
 			}
 
@@ -368,6 +388,24 @@ func allowPermission(objectType auth.ObjectType, entitlement auth.Entitlement, m
 			})
 			if err != nil {
 				return projectName
+			}
+
+			// Resource creation is checked against the project the resource will be created in.
+			if objectType == auth.ObjectTypeProject {
+				switch entitlement {
+				case auth.EntitlementCanCreateImages, auth.EntitlementCanCreateImageAliases:
+					return project.ImageProjectFromRecord(p)
+				case auth.EntitlementCanCreateNetworks, auth.EntitlementCanCreateNetworkACLs, auth.EntitlementCanCreateNetworkAddressSets:
+					return project.NetworkProjectFromRecord(p)
+				case auth.EntitlementCanCreateNetworkZones:
+					return project.NetworkZoneProjectFromRecord(p)
+				case auth.EntitlementCanCreateProfiles:
+					return project.ProfileProjectFromRecord(p)
+				case auth.EntitlementCanCreateStorageBuckets:
+					return project.StorageBucketProjectFromRecord(p)
+				case auth.EntitlementCanCreateStorageVolumes:
+					return project.StorageVolumeProjectFromRecord(p, db.StoragePoolVolumeTypeCustom)
+				}
 			}
 
 			if objectType == auth.ObjectTypeProfile {
@@ -498,6 +536,16 @@ func allowPermission(objectType auth.ObjectType, entitlement auth.Entitlement, m
 			return response.SmartError(err)
 		}
 
+		// Objects inherited from another project are served with the requested project's restrictions and
+		// data, so also require access to that project (project endpoints take it from their own path).
+		requestProjectName := request.ProjectParam(r)
+		if objectType != auth.ObjectTypeProject && objectName.Project() != "" && objectName.Project() != requestProjectName {
+			err = s.Authorizer.CheckPermission(r.Context(), r, auth.ObjectProject(requestProjectName), auth.EntitlementCanView)
+			if err != nil {
+				return response.SmartError(err)
+			}
+		}
+
 		return response.EmptySyncResponse
 	}
 }
@@ -575,13 +623,18 @@ func (d *Daemon) Authenticate(w http.ResponseWriter, r *http.Request) (bool, str
 		return false, "", "", nil, err
 	}
 
+	// The TLS listener only proves possession of the first peer certificate's key, so the rest of
+	// the presented chain is attacker-controlled and must never be matched against the trust store.
+	var peerCert *x509.Certificate
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		peerCert = r.TLS.PeerCertificates[0]
+	}
+
 	// Allow internal cluster traffic by checking against the trusted certfificates.
-	if r.TLS != nil {
-		for _, i := range r.TLS.PeerCertificates {
-			trusted, fingerprint := localUtil.CheckTrustState(*i, trustedCerts[certificate.TypeServer], d.endpoints.NetworkCert(), false)
-			if trusted {
-				return true, fingerprint, "cluster", nil, nil
-			}
+	if peerCert != nil {
+		trusted, fingerprint := localUtil.CheckTrustState(*peerCert, trustedCerts[certificate.TypeServer], d.endpoints.NetworkCert(), false)
+		if trusted {
+			return true, fingerprint, "cluster", nil, nil
 		}
 	}
 
@@ -647,23 +700,21 @@ func (d *Daemon) Authenticate(w http.ResponseWriter, r *http.Request) (bool, str
 	}
 
 	// Validate metrics TLS certificates.
-	if r.URL.Path == "/1.0/metrics" {
-		for _, i := range r.TLS.PeerCertificates {
-			trusted, username := localUtil.CheckTrustState(*i, trustedCerts[certificate.TypeMetrics], d.endpoints.NetworkCert(), trustCACertificates)
-			if trusted {
-				return true, username, api.AuthenticationMethodTLS, nil, nil
-			}
+	if r.URL.Path == "/1.0/metrics" && peerCert != nil {
+		trusted, username := localUtil.CheckTrustState(*peerCert, trustedCerts[certificate.TypeMetrics], d.endpoints.NetworkCert(), trustCACertificates)
+		if trusted {
+			return true, username, api.AuthenticationMethodTLS, nil, nil
 		}
 
-		trusted, username := localUtil.CheckTrustStateIssuer(r.TLS.PeerCertificates, trustedCerts[certificate.TypeMetrics], d.endpoints.NetworkCert())
+		trusted, username = localUtil.CheckTrustStateIssuer(r.TLS.PeerCertificates, trustedCerts[certificate.TypeMetrics], d.endpoints.NetworkCert())
 		if trusted {
 			return true, username, api.AuthenticationMethodTLS, nil, nil
 		}
 	}
 
 	// Validate regular TLS certificates.
-	for _, i := range r.TLS.PeerCertificates {
-		trusted, username := localUtil.CheckTrustState(*i, trustedCerts[certificate.TypeClient], d.endpoints.NetworkCert(), trustCACertificates)
+	if peerCert != nil {
+		trusted, username := localUtil.CheckTrustState(*peerCert, trustedCerts[certificate.TypeClient], d.endpoints.NetworkCert(), trustCACertificates)
 		if trusted {
 			return true, username, api.AuthenticationMethodTLS, nil, nil
 		}
@@ -1409,7 +1460,7 @@ func (d *Daemon) init() error {
 
 	// Mount the storage pools.
 	logger.Infof("Initializing storage pools")
-	err = storageStartup(d.State())
+	err = storageStartup(d.State)
 	if err != nil {
 		return err
 	}
@@ -1588,7 +1639,7 @@ func (d *Daemon) init() error {
 	if !d.serverClustered || !d.db.Cluster.LocalNodeIsEvacuated() {
 		logger.Infof("Initializing networks")
 
-		err = networkStartup(d.State())
+		err = networkStartup(d.State)
 		if err != nil {
 			return err
 		}
@@ -1698,6 +1749,13 @@ func (d *Daemon) init() error {
 		return fmt.Errorf("Failed deleting volatile.last_state.ready: %w", err)
 	}
 
+	if !d.os.MockMode && systemdreport.Supported() {
+		d.systemdReportServer, err = systemdreport.Start(systemdreport.SocketPath, d.systemdReportSnapshot)
+		if err != nil {
+			logger.Warn("Failed starting systemd-report metrics", logger.Ctx{"err": err})
+		}
+	}
+
 	close(d.setupChan)
 
 	_ = d.db.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
@@ -1759,6 +1817,9 @@ func (d *Daemon) init() error {
 
 		// Remove expired tokens (hourly)
 		d.tasks.Add(autoRemoveExpiredTokensTask(d))
+
+		// Cancel operations whose requestor lost access (every 30 seconds)
+		d.tasks.Add(operationsRecheckAccessTask(d))
 	}
 
 	// Start all background tasks
@@ -1867,6 +1928,13 @@ func (d *Daemon) Stop(ctx context.Context, sig os.Signal) error {
 
 	// Cancelling the context will make everyone aware that we're shutting down.
 	d.shutdownCancel()
+
+	if d.systemdReportServer != nil {
+		err := d.systemdReportServer.Close()
+		if err != nil {
+			logger.Warn("Failed to stop systemd-report metrics", logger.Ctx{"err": err})
+		}
+	}
 
 	if d.loggingController != nil {
 		d.loggingController.Shutdown()

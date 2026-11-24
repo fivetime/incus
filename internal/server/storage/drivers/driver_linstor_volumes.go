@@ -264,6 +264,12 @@ func (d *linstor) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 		return err
 	}
 
+	// A leftover definition would make every later lookup ambiguous.
+	err = d.checkVolumeAbsent(vol)
+	if err != nil {
+		return err
+	}
+
 	if vol.contentType == ContentTypeFS {
 		// Create mountpoint.
 		err := vol.EnsureMountPath(true)
@@ -320,7 +326,12 @@ func (d *linstor) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.
 	}
 
 	l.Debug("Spawned a new Linstor resource definition for volume", logger.Ctx{"resourceDefinitionName": resourceDefinitionName})
-	rev.Add(func() { _ = d.DeleteVolume(vol, op) })
+
+	// Delete by name as the volume can't be looked up until its properties are set.
+	rev.Add(func() { _ = linstor.Client.ResourceDefinitions.Delete(context.TODO(), resourceDefinitionName) })
+	rev.Add(func() {
+		logger.WarnOnError(func() error { return d.DeleteVolume(vol, op) }, "Failed to clean up volume")
+	})
 
 	props, err := d.resourceDefinitionProperties(vol)
 	if err != nil {
@@ -493,12 +504,19 @@ func (d *linstor) CreateVolumeFromCopy(vol Volume, srcVol Volume, copySnapshots 
 	// For VM volumes, the associated filesystem volume is already cloned with the main block
 	// volume, since they share the same resource definition.
 	if vol.volType != VolumeTypeVM || vol.contentType != ContentTypeFS {
-		err := d.copyVolume(vol, srcVol)
+		err := d.checkVolumeAbsent(vol)
 		if err != nil {
 			return err
 		}
 
-		rev.Add(func() { _ = d.DeleteVolume(vol, op) })
+		err = d.copyVolume(vol, srcVol)
+		if err != nil {
+			return err
+		}
+
+		rev.Add(func() {
+			logger.WarnOnError(func() error { return d.DeleteVolume(vol, op) }, "Failed to clean up volume")
+		})
 	}
 
 	if vol.contentType == ContentTypeFS {
@@ -562,20 +580,17 @@ func (d *linstor) DeleteVolume(vol Volume, op *operations.Operation) error {
 	l := d.logger.AddContext(logger.Ctx{"volume": vol.Name()})
 	l.Debug("Deleting Linstor volume")
 
-	// Test if the volume exists.
-	volumeExists, err := d.HasVolume(vol)
+	// Delete every matching resource definition, a failed create can leave more than one behind.
+	resourceDefinitions, err := d.getVolumeResourceDefinitions(vol, false)
 	if err != nil {
 		return fmt.Errorf("Unable to check if volume exists: %w", err)
 	}
 
-	if !volumeExists {
+	if len(resourceDefinitions) == 0 {
 		l.Warn("Resource definition does not exist")
-	} else {
-		resourceDefinition, err := d.getResourceDefinition(vol, false)
-		if err != nil {
-			return err
-		}
+	}
 
+	for _, resourceDefinition := range resourceDefinitions {
 		err = d.deleteResourceDefinition(resourceDefinition.Name)
 		if err != nil {
 			return fmt.Errorf("Unable to delete the resource definition: %w", err)
@@ -624,16 +639,12 @@ func (d *linstor) HasVolume(vol Volume) (bool, error) {
 		return d.snapshotExists(parentVol, vol)
 	}
 
-	_, err := d.getResourceDefinition(vol, false)
+	resourceDefinitions, err := d.getVolumeResourceDefinitions(vol, false)
 	if err != nil {
-		if errors.Is(err, errResourceDefinitionNotFound) {
-			return false, nil
-		}
-
 		return false, err
 	}
 
-	return true, nil
+	return len(resourceDefinitions) > 0, nil
 }
 
 // GetVolumeDiskPath returns the location of a root disk block device.
@@ -1293,12 +1304,6 @@ func (d *linstor) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 		return err
 	}
 
-	// Get the device path.
-	devPath, err := d.getLinstorDevPath(vol)
-	if err != nil {
-		return err
-	}
-
 	// LVM and ZFS (LINSTOR's backends) round up the final block device size to the next extent. Because of
 	// this, we cannot simply get the volume size from the OS. We must fetch the size from LINSTOR.
 	oldSizeBytes, err := d.getVolumeSize(vol)
@@ -1312,6 +1317,19 @@ func (d *linstor) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool
 	}
 
 	inUse := vol.MountInUse()
+
+	// Get the device path, attaching the volume to this node if needed.
+	devPath, err := d.getLinstorDevPath(vol)
+	if err != nil {
+		return err
+	}
+
+	// Image volumes are only attached for the resize, don't leave the attachment behind.
+	if vol.volType == VolumeTypeImage && !inUse {
+		defer func() {
+			logger.WarnOnError(func() error { return d.deleteDisklessResource(vol) }, "Failed detaching image volume")
+		}()
+	}
 
 	// Resize filesystem if needed.
 	if vol.contentType == ContentTypeFS {

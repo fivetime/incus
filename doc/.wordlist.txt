@@ -21,6 +21,7 @@ backends
 backported
 Backports
 balancer
+BARs
 balancers
 benchmarking
 BFD
@@ -180,6 +181,7 @@ LRU
 LTS
 LV
 LVM
+LVM's
 LXC
 LXCFS
 LXC's
@@ -197,6 +199,7 @@ MiB
 Mibit
 MicroCeph
 MicroCloud
+migratable
 misconfigured
 MCS
 MII
@@ -272,6 +275,7 @@ Proxmox
 proxying
 PTS
 PTY
+PVID
 PXE
 qdisc
 QEMU
@@ -285,7 +289,9 @@ RBD
 RDNSS
 README
 reconfiguring
+representor
 requestor
+resizable
 resolvers
 RESTful
 revalidates
@@ -384,6 +390,7 @@ unmapped
 unmount
 unmounting
 unmounts
+untagged
 uplink
 uptime
 URI
@@ -394,6 +401,7 @@ vCPU
 vCPUs
 VE
 VDPA
+VFIO
 VFs
 VFS
 VirtIO

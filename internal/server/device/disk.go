@@ -514,14 +514,16 @@ func (d *disk) validateConfig(instConf instance.ConfigReader, partialValidation 
 		// With containers, this option supports mounting file system disk devices, and paths and single files within them.
 		//
 		// With VMs, this option supports mounting file system disk devices and paths within them. Mounting single files is not supported.
+		//
+		// The path is required for file system disks (`/` identifies the root disk). It cannot be set for block or ISO disks attached to VMs.
 		// ---
 		//  type: string
-		//  required: yes
+		//  required: for file system disks
 		//  shortdesc: Path inside the instance where the disk will be mounted (only for file system disk devices)
 		"path": validate.IsAny,
 
 		// gendoc:generate(entity=devices, group=disk, key=io.cache)
-		// This controls what bus a disk device should be attached to.
+		// This controls the caching mode used for the disk device.
 		//
 		// For block devices (disks), this is one of:
 		// - `none` (default)
@@ -569,11 +571,18 @@ func (d *disk) validateConfig(instConf instance.ConfigReader, partialValidation 
 		//  type: bool
 		//  default: `true`
 		//  required: no
-		//  shortdesc: Only for VMs: Whether the disk is attached or ejected
+		//  shortdesc: Only for VMs: Whether the disk is attached or ejected (only for custom ISO volumes)
 		"attached": validate.Optional(validate.IsBool),
 
 		// gendoc:generate(entity=devices, group=disk, key=dependent)
+		// A dependent disk ties a custom storage volume to the instance.
+		// The volume is snapshotted, restored, copied, moved, exported and deleted together with the instance.
 		//
+		// A dependent volume cannot be attached to another instance or snapshotted on its own.
+		// It cannot use `security.shared` or any `snapshots.*` option, and a volume that already has snapshots cannot be made dependent.
+		//
+		// When the instance moves to another cluster member, dependent volumes on shared storage are taken over rather than transferred.
+		// Live migration is not supported with dependent file system volumes.
 		// ---
 		//  type: bool
 		//  default: `false`
@@ -584,7 +593,7 @@ func (d *disk) validateConfig(instConf instance.ConfigReader, partialValidation 
 		// gendoc:generate(entity=devices, group=disk, key=wwn)
 		//
 		// ---
-		//  type: bool
+		//  type: string
 		//  default: ``
 		//  required: no
 		//  shortdesc: Only for VMs: Set the disk World Wide Name (only supported on `virtio-scsi` bus)
@@ -705,6 +714,9 @@ func (d *disk) validateConfig(instConf instance.ConfigReader, partialValidation 
 		return errors.New(`The "initial.copy" property can only be used with custom storage volumes`)
 	}
 
+	// Whether the custom volume follows the instance across cluster members.
+	followsInstance := false
+
 	if d.config["pool"] != "" {
 		if d.config["shift"] != "" {
 			return errors.New(`The "shift" property cannot be used with custom storage volumes (set "security.shifted=true" on the volume instead)`)
@@ -757,6 +769,24 @@ func (d *disk) validateConfig(instConf instance.ConfigReader, partialValidation 
 				if count > 0 {
 					return errors.New("Cannot add dependent custom storage block volume to more than one instance")
 				}
+			}
+
+			// Check that a volume following its instance is attached to exactly one virtual machine.
+			if util.IsTrue(dbVolume.Config["migration.follow_instance"]) {
+				if instConf.Type() != instancetype.VM {
+					return errors.New("Custom storage volumes with migration.follow_instance can only be attached to virtual machines")
+				}
+
+				count, err := d.getAttachedInstanceCount(storageProjectName, dbVolume)
+				if err != nil {
+					return err
+				}
+
+				if count > 0 {
+					return errors.New("Cannot add custom storage volume with migration.follow_instance to more than one instance")
+				}
+
+				followsInstance = true
 			}
 
 			// Check that only shared custom storage block volume are added to profiles, or multiple instances.
@@ -957,7 +987,7 @@ func (d *disk) validateConfig(instConf instance.ConfigReader, partialValidation 
 			return errors.New("Virtiofs mounts aren't supported with migration.stateful=true")
 		}
 
-		if d.config["path"] != "/" && d.pool != nil && !d.pool.Driver().Info().Remote && util.IsFalseOrEmpty(d.config["dependent"]) {
+		if d.config["path"] != "/" && d.pool != nil && !d.pool.Driver().Info().Remote && util.IsFalseOrEmpty(d.config["dependent"]) && !followsInstance {
 			return errors.New("Only additional disks coming from a shared storage pool are supported with migration.stateful=true")
 		}
 	}
@@ -2027,6 +2057,16 @@ func (d *disk) Update(oldDevices deviceConfig.Devices, isRunning bool) error {
 		}
 
 		reverter.Add(func() { _ = cleanup() })
+
+		oldDependent := util.IsTrue(oldDevices[d.name]["dependent"])
+		if isRunning && oldDependent != util.IsTrue(d.config["dependent"]) {
+			revertMode, err := d.updateDependentAccessMode()
+			if err != nil {
+				return err
+			}
+
+			reverter.Add(revertMode)
+		}
 	}
 
 	// Only apply IO limits and attach/detach logic if instance is running.
@@ -2737,6 +2777,12 @@ func (d *disk) storagePoolVolumeAttachShift(projectName, poolName, volumeName st
 
 					ct, ok := inst.(instance.Container)
 					if !ok {
+						continue
+					}
+
+					// A container still being created has no idmap yet, it gets checked when it starts.
+					localConfig := ct.LocalConfig()
+					if localConfig["volatile.idmap.next"] == "" && localConfig["volatile.idmap.current"] == "" && localConfig["volatile.last_state.idmap"] == "" {
 						continue
 					}
 
@@ -3674,6 +3720,36 @@ func (d *disk) getAttachedInstanceCount(projectName string, volume *db.StorageVo
 	}
 
 	return count, nil
+}
+
+// updateDependentAccessMode switches the lock of the volume to match its dependent setting.
+func (d *disk) updateDependentAccessMode() (func(), error) {
+	volName, _ := internalInstance.SplitVolumeSource(d.config["source"])
+
+	storageProjectName, err := project.StorageVolumeProject(d.state.DB.Cluster, d.inst.Project().Name, db.StoragePoolVolumeTypeCustom)
+	if err != nil {
+		return nil, err
+	}
+
+	dbVolume, err := storagePools.VolumeDBGet(d.pool, storageProjectName, volName, storageDrivers.VolumeTypeCustom)
+	if err != nil {
+		return nil, err
+	}
+
+	vol := d.pool.GetVolume(storageDrivers.VolumeTypeCustom, storageDrivers.ContentType(dbVolume.ContentType), project.StorageVolume(storageProjectName, volName), dbVolume.Config)
+
+	mode := storageDrivers.VolumeAccessModeShared
+	revertMode := storageDrivers.VolumeAccessModeExclusive
+	if util.IsTrue(d.config["dependent"]) {
+		mode, revertMode = revertMode, mode
+	}
+
+	err = d.pool.Driver().SetVolumeAccessMode(vol, mode)
+	if err != nil {
+		return nil, err
+	}
+
+	return func() { _ = d.pool.Driver().SetVolumeAccessMode(vol, revertMode) }, nil
 }
 
 // updateDependentConfig applies changes to dependent configuration settings.

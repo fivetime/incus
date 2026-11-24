@@ -46,7 +46,9 @@ func readStoragePoolDriversCache() ([]api.ServerStorageDriverInfo, map[string]st
 	return supportedDrivers, usedDrivers
 }
 
-func storageStartup(s *state.State) error {
+func storageStartup(stateFunc func() *state.State) error {
+	s := stateFunc()
+
 	// Update the storage drivers supported and used cache in api_1.0.go.
 	storagePoolDriversCacheUpdate(s.ShutdownCtx, s)
 
@@ -122,7 +124,7 @@ func storageStartup(s *state.State) error {
 	if len(initPools) > 0 {
 		go func() {
 			for {
-				t := time.NewTimer(time.Duration(time.Minute))
+				t := time.NewTimer(15 * time.Second)
 
 				select {
 				case <-s.ShutdownCtx.Done():
@@ -131,14 +133,17 @@ func storageStartup(s *state.State) error {
 				case <-t.C:
 					t.Stop()
 
+					// Refresh the state as the daemon may have finished starting since.
+					s = stateFunc()
+
 					// Try initializing remaining storage pools in random order.
-					tryInstancesStart := false
+					var initializedPools []string
 					for poolName := range initPools {
 						if initPool(poolName) {
 							// Storage pool initialized successfully or deleted so
 							// remove it from the list so its not retried.
 							delete(initPools, poolName)
-							tryInstancesStart = true
+							initializedPools = append(initializedPools, poolName)
 						}
 					}
 
@@ -146,13 +151,14 @@ func storageStartup(s *state.State) error {
 						logger.Info("All storage pools initialized")
 					}
 
-					// At least one remaining storage pool was initialized, check if any
-					// instances can now start.
-					if tryInstancesStart {
+					// At least one remaining storage pool was initialized, re-register the disks of
+					// instances that kept running through the restart and check if any instances can now start.
+					if len(initializedPools) > 0 {
 						instances, err := instance.LoadNodeAll(s, instancetype.Any)
 						if err != nil {
 							logger.Error("Failed loading instances to start", logger.Ctx{"err": err})
 						} else {
+							devicesRegisterPools(s, instances, initializedPools)
 							instancesStart(s, instances)
 						}
 					}

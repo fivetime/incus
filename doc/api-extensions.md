@@ -3704,6 +3704,35 @@ This adds the `cluster.healing_delay` server configuration key and the `cluster-
 
 When cluster healing detects an offline member, the event is sent immediately and the evacuation only starts once the delay has elapsed, giving external tooling time to power the member off.
 
+## `storage_volume_migration_follow_instance`
+
+This adds a `migration.follow_instance` configuration key for custom storage volumes.
+
+When set on a volume in a local storage pool that's attached to a single virtual machine, the volume
+is moved along with the virtual machine when it moves to another cluster member.
+
+## `nic_sriov_migration_native`
+
+This adds a new `variant` configuration key to both `sriov` networks and NICs, allowing to set the VFIO driver to use (either no value to keep the generic `vfio-pci` driver, or `mlx5` for `mlx5_vfio_pci`). This allows native VFIO live-migration of SR-IOV NICs.
+
+## `pci_rebar`
+
+This adds support for PCIe resizable BARs to the `pci` and `gpu` (physical) devices of virtual machines.
+
+The new `rebar.<N>.size` configuration keys set the size of BAR `N` on the host before the device is passed to the VM, with the original size restored when the instance stops.
+
+## `image_volume_size_hint`
+
+This adds a new image property, `volume.size_hint`, which sets the size of the cached image volume of a container image on block backed storage pools when it's smaller than the pool's `volume.size`.
+
+## `network_allocations_project`
+
+Adds the `project` field to the network allocations API response, holding the project of the network.
+
+## `storage_lvm_snapshot_chunk_size`
+
+Adds the `lvm.snapshots.chunk_size` volume configuration key (and its `volume.lvm.snapshots.chunk_size` pool default) to set the copy-on-write chunk size of snapshots on LVM pools that don't use a thin pool.
+
 ## `instance_storage_handover`
 
 This adds `PUT /1.0/instances/{name}/storage-handover` for an external

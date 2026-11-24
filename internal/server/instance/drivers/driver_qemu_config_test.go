@@ -286,8 +286,22 @@ func TestQemuConfigTemplates(t *testing.T) {
 			`,
 		}}
 		for _, tc := range testCases {
-			runTest(tc.expected, qemuSCSI(&tc.opts, 4))
+			runTest(tc.expected, qemuSCSI(&tc.opts, 4, ""))
 		}
+
+		runTest(`# SCSI controller
+			[device "qemu_scsi"]
+			addr = "00.0"
+			bus = "qemu_pcie1"
+			driver = "virtio-scsi-pci"
+			iothread = "qemu_iothread0"
+			num_queues = "4"
+			`, qemuSCSI(&qemuDevOpts{"pci", "qemu_pcie1", "00.0", false}, 4, "qemu_iothread0"))
+
+		runTest(`# Disk I/O thread
+			[object "qemu_iothread0"]
+			qom-type = "iothread"
+			`, qemuIOThreads(1))
 	})
 
 	t.Run("qemu_balloon", func(t *testing.T) {
@@ -851,7 +865,7 @@ func TestQemuConfigTemplates(t *testing.T) {
 			opts     qemuDriveFirmwareOpts
 			expected string
 		}{{
-			qemuDriveFirmwareOpts{"/tmp/ovmf.fd", "/tmp/settings.fd"},
+			qemuDriveFirmwareOpts{"/tmp/ovmf.fd", []int{4, 5}},
 			`# Firmware (read only)
 			[drive]
 			file = "/tmp/ovmf.fd"
@@ -860,14 +874,24 @@ func TestQemuConfigTemplates(t *testing.T) {
 			readonly = "on"
 			unit = "0"
 
+			# Firmware settings file descriptor
+			[add-fd]
+			fd = "4"
+			set = "0"
+
+			# Firmware settings file descriptor
+			[add-fd]
+			fd = "5"
+			set = "0"
+
 			# Firmware settings (writable)
 			[drive]
-			file = "/tmp/settings.fd"
+			file = "/dev/fdset/0"
 			format = "raw"
 			if = "pflash"
 			unit = "1"`,
 		}, {
-			qemuDriveFirmwareOpts{"/tmp/ovmf.amdsev.fd", ""},
+			qemuDriveFirmwareOpts{"/tmp/ovmf.amdsev.fd", nil},
 			`# Firmware (read only)
 			[drive]
 			file = "/tmp/ovmf.amdsev.fd"

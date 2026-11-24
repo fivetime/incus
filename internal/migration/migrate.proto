@@ -124,6 +124,10 @@ message MigrationHeader {
 	/* Upstream numbers this field 16, which this fork uses for cephPool, so
 	 * the fork moves it like blockFeatures. */
 	optional uint32				multifdChannels		= 20;
+
+	/* Upstream numbers this field 17, which this fork uses for sharedStorage,
+	 * so the fork moves it like blockFeatures. */
+	optional bool				dirtyBitmaps		= 21;
 }
 
 message MigrationControl {
