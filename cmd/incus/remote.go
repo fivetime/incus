@@ -14,9 +14,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,9 +44,9 @@ type cmdRemote struct {
 	global *cmdGlobal
 }
 
-type remoteColumn struct {
-	Name string
-	Data func(string, config.Remote) string
+type remoteRowData struct {
+	name string
+	config.Remote
 }
 
 func (c *cmdRemote) command() *cobra.Command {
@@ -68,7 +68,7 @@ func (c *cmdRemote) command() *cobra.Command {
 	cmd.AddCommand(remoteGetDefaultCmd.command())
 
 	// List
-	remoteListCmd := cmdRemoteList{global: c.global, remote: c}
+	remoteListCmd := cmdRemoteList{global: c.global, remote: c, lister: &listable[remoteRowData]{global: c.global}}
 	cmd.AddCommand(remoteListCmd.command())
 
 	if runtime.GOOS != "windows" {
@@ -1253,12 +1253,10 @@ func (c *cmdRemoteGetClientToken) run(cmd *cobra.Command, args []string) error {
 type cmdRemoteList struct {
 	global *cmdGlobal
 	remote *cmdRemote
-
-	flagFormat  string
-	flagColumns string
+	lister *listable[remoteRowData]
 }
 
-var cmdRemoteListUsage = u.Usage{}
+var cmdRemoteListUsage = u.Usage{u.Filter.List(0)}
 
 func (c *cmdRemoteList) command() *cobra.Command {
 	cmd := &cobra.Command{}
@@ -1268,88 +1266,53 @@ func (c *cmdRemoteList) command() *cobra.Command {
 	cmd.Long = cli.FormatSection(color.DescriptionPrefix, i18n.G(
 		`List the available remotes
 
-Default column layout: nupaPsg
+A single keyword like "images" will list any remote with a name starting by "images".
+A regular expression on the remote name. (e.g. .*local.*$).
+A key/value pair referring to a remote attribute. Available keys:
+  - name={remote name}
+  - url={remote URL}
+  - protocol={remote protocol}
+  - auth_type={authentication type}
+  - project={default project}
+  - public={true or false}
+  - static={true or false}
+  - global={true or false}
 
-== Columns ==
-The -c option takes a comma separated list of arguments that control
-which remote attributes to output when displaying in table or csv
-format.
+Values are matched as regular expressions. (e.g. url=https://.*:8443).
 
-Column arguments are either pre-defined shorthand chars (see below),
-or (extended) config keys.
+When multiple filters are passed, they are added one on top of the other,
+selecting remotes which satisfy them all.`))
 
-Commas between consecutive shorthand chars are optional.
-
-Pre-defined column shorthand chars:
-  n - Name
-  u - URL
-  p - Protocol
-  a - Auth Type
-  P - Public
-  s - Static
-  g - Global`,
-	))
+	c.lister.init(cmd, "nupaPsg", map[rune]listColumn[remoteRowData]{
+		'n': {i18n.G("NAME"), i18n.G("Name"), c.remoteNameColumnData},
+		'u': {i18n.G("URL"), i18n.G("URL"), c.addrColumnData},
+		'p': {i18n.G("PROTOCOL"), i18n.G("Protocol"), c.protocolColumnData},
+		'a': {i18n.G("AUTH TYPE"), i18n.G("Authentication type"), c.authTypeColumnData},
+		'P': {i18n.G("PUBLIC"), i18n.G("Whether the remote is public"), c.publicColumnData},
+		's': {i18n.G("STATIC"), i18n.G("Whether the remote is statically defined"), c.staticColumnData},
+		'g': {i18n.G("GLOBAL"), i18n.G("Whether the remote is global to the system"), c.globalColumnData},
+	})
 
 	cmd.RunE = c.run
-	cli.AddStringFlag(cmd.Flags(), &c.flagFormat, "format|f", c.global.defaultListFormat(), "", i18n.G(`Format (csv|json|table|yaml|compact|markdown), use suffix ",noheader" to disable headers and ",header" to enable it if missing, e.g. csv,header`))
-	cli.AddStringFlag(cmd.Flags(), &c.flagColumns, "columns|c", defaultRemoteColumns, "", i18n.G("Columns"))
-
-	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
-		return cli.ValidateFlagFormatForListOutput(cmd.Flag("format").Value.String())
-	}
 
 	return cmd
 }
 
-const defaultRemoteColumns = "nupaPsg"
-
-func (c *cmdRemoteList) parseColumns() ([]remoteColumn, error) {
-	columnsShorthandMap := map[rune]remoteColumn{
-		'n': {i18n.G("NAME"), c.remoteNameColumnData},
-		'u': {i18n.G("URL"), c.addrColumnData},
-		'p': {i18n.G("PROTOCOL"), c.protocolColumnData},
-		'a': {i18n.G("AUTH TYPE"), c.authTypeColumnData},
-		'P': {i18n.G("PUBLIC"), c.publicColumnData},
-		's': {i18n.G("STATIC"), c.staticColumnData},
-		'g': {i18n.G("GLOBAL"), c.globalColumnData},
-	}
-
-	columnList := strings.Split(c.flagColumns, ",")
-	columns := []remoteColumn{}
-
-	for _, columnEntry := range columnList {
-		if columnEntry == "" {
-			return nil, fmt.Errorf(i18n.G("Empty column entry (redundant, leading or trailing command) in '%s'"), c.flagColumns)
-		}
-
-		for _, columnRune := range columnEntry {
-			column, ok := columnsShorthandMap[columnRune]
-			if !ok {
-				return nil, fmt.Errorf(i18n.G("Unknown column shorthand char '%c' in '%s'"), columnRune, columnEntry)
-			}
-
-			columns = append(columns, column)
-		}
-	}
-
-	return columns, nil
-}
-
-func (c *cmdRemoteList) remoteNameColumnData(name string, _ config.Remote) string {
+func (c *cmdRemoteList) remoteNameColumnData(r remoteRowData) string {
 	conf := c.global.conf
 
-	strName := name
-	if name == conf.DefaultRemote {
-		strName = fmt.Sprintf("%s (%s)", name, i18n.G("current"))
+	strName := r.name
+	if r.name == conf.DefaultRemote {
+		strName = fmt.Sprintf("%s (%s)", r.name, i18n.G("current"))
 	}
 
 	return strName
 }
 
-func (c *cmdRemoteList) addrColumnData(_ string, rc config.Remote) string {
-	lines := make([]string, len(rc.Addrs))
-	for i, addr := range rc.Addrs {
-		if len(rc.Addrs) > 1 && addr == rc.LastWorkingAddr {
+func (c *cmdRemoteList) addrColumnData(r remoteRowData) string {
+	lines := make([]string, len(r.Addrs))
+	for i, addr := range r.Addrs {
+		if len(r.Addrs) > 1 && addr == r.LastWorkingAddr {
 			lines[i] = fmt.Sprintf("%s (%s)", addr, i18n.G("last"))
 		} else {
 			lines[i] = addr
@@ -1359,82 +1322,118 @@ func (c *cmdRemoteList) addrColumnData(_ string, rc config.Remote) string {
 	return strings.Join(lines, "\n")
 }
 
-func (c *cmdRemoteList) protocolColumnData(_ string, rc config.Remote) string {
-	return rc.Protocol
+func (c *cmdRemoteList) protocolColumnData(r remoteRowData) string {
+	return r.Protocol
 }
 
-func (c *cmdRemoteList) authTypeColumnData(_ string, rc config.Remote) string {
-	if rc.AuthType == "" {
-		if strings.HasPrefix(rc.Addrs[0], "unix:") {
-			rc.AuthType = "file access"
-		} else if rc.Protocol != "incus" {
-			rc.AuthType = "none"
+func (c *cmdRemoteList) authTypeColumnData(r remoteRowData) string {
+	if r.AuthType == "" {
+		if strings.HasPrefix(r.Addrs[0], "unix:") {
+			r.AuthType = "file access"
+		} else if r.Protocol != "incus" {
+			r.AuthType = "none"
 		} else {
-			rc.AuthType = api.AuthenticationMethodTLS
+			r.AuthType = api.AuthenticationMethodTLS
 		}
 	}
 
-	return rc.AuthType
+	return r.AuthType
 }
 
-func (c *cmdRemoteList) publicColumnData(_ string, rc config.Remote) string {
-	strPublic := i18n.G("NO")
-	if rc.Public {
-		strPublic = i18n.G("YES")
-	}
-
-	return strPublic
+func (c *cmdRemoteList) publicColumnData(r remoteRowData) string {
+	return yesNo(r.Public)
 }
 
-func (c *cmdRemoteList) staticColumnData(_ string, rc config.Remote) string {
-	strStatic := i18n.G("NO")
-	if rc.Static {
-		strStatic = i18n.G("YES")
-	}
-
-	return strStatic
+func (c *cmdRemoteList) staticColumnData(r remoteRowData) string {
+	return yesNo(r.Static)
 }
 
-func (c *cmdRemoteList) globalColumnData(_ string, rc config.Remote) string {
-	strGlobal := i18n.G("NO")
-	if rc.Global {
-		strGlobal = i18n.G("YES")
+func (c *cmdRemoteList) globalColumnData(r remoteRowData) string {
+	return yesNo(r.Global)
+}
+
+func (c *cmdRemoteList) remoteShouldShow(filters []string, name string, rc config.Remote) (bool, error) {
+	values := map[string][]string{
+		"name":      {name},
+		"url":       rc.Addrs,
+		"protocol":  {rc.Protocol},
+		"auth_type": {c.authTypeColumnData(remoteRowData{name, rc})},
+		"project":   {rc.Project},
+		"public":    {strconv.FormatBool(rc.Public)},
+		"static":    {strconv.FormatBool(rc.Static)},
+		"global":    {strconv.FormatBool(rc.Global)},
 	}
 
-	return strGlobal
+	for _, filter := range filters {
+		key, value, found := strings.Cut(filter, "=")
+		if !found {
+			// A bare keyword matches remote names starting with it, like the other list commands.
+			key = "name"
+			value = "^" + filter
+		}
+
+		candidates, ok := values[strings.ToLower(key)]
+		if !ok {
+			return false, fmt.Errorf(i18n.G("Unknown filter key %q"), key)
+		}
+
+		// Go has no full match mode, so anchor the expression unless the user did it already.
+		regexpValue := value
+		if !strings.Contains(value, "^") && !strings.Contains(value, "$") {
+			regexpValue = "^" + regexpValue + "$"
+		}
+
+		// Fall back to a literal comparison for invalid expressions.
+		r, err := regexp.Compile(regexpValue)
+
+		matched := false
+		for _, candidate := range candidates {
+			if err != nil {
+				matched = candidate == value
+			} else {
+				matched = r.MatchString(candidate)
+			}
+
+			if matched {
+				break
+			}
+		}
+
+		if !matched {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 func (c *cmdRemoteList) run(cmd *cobra.Command, args []string) error {
 	conf := c.global.conf
-	_, err := c.global.Parse(cmdRemoteListUsage, cmd, args)
+	parsed, err := c.global.Parse(cmdRemoteListUsage, cmd, args)
 	if err != nil {
 		return err
 	}
 
-	columns, err := c.parseColumns()
-	if err != nil {
-		return err
-	}
+	filters := parsed[0].StringList
 
 	// List the remotes
-	data := [][]string{}
+	remotes := map[string]config.Remote{}
+	var rows []remoteRowData
 	for name, rc := range conf.Remotes {
-		line := []string{}
-		for _, column := range columns {
-			line = append(line, column.Data(name, rc))
+		show, err := c.remoteShouldShow(filters, name, rc)
+		if err != nil {
+			return err
 		}
 
-		data = append(data, line)
+		if !show {
+			continue
+		}
+
+		remotes[name] = rc
+		rows = append(rows, remoteRowData{name, rc})
 	}
 
-	sort.Sort(cli.SortColumnsNaturally(data))
-
-	header := []string{}
-	for _, column := range columns {
-		header = append(header, column.Name)
-	}
-
-	return cli.RenderTable(os.Stdout, c.flagFormat, header, data, conf.Remotes)
+	return c.lister.run(rows, remotes)
 }
 
 // Rename.

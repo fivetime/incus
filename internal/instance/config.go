@@ -3,6 +3,7 @@ package instance
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,6 +29,15 @@ func isNvidiaConfigValue(value string) error {
 	return nil
 }
 
+// isOCIConfigValue rejects line breaks that would allow injecting arbitrary lines into the LXC config.
+func isOCIConfigValue(value string) error {
+	if strings.ContainsAny(value, "\r\n") {
+		return errors.New("OCI configuration values cannot contain line breaks")
+	}
+
+	return nil
+}
+
 // isResolvConfValue rejects line breaks that would allow injecting arbitrary lines into the generated resolv.conf.
 func isResolvConfValue(value string) error {
 	if strings.ContainsAny(value, "\r\n") {
@@ -39,6 +49,9 @@ func isResolvConfValue(value string) error {
 
 // ConfigVolatilePrefix indicates the prefix used for volatile config keys.
 const ConfigVolatilePrefix = "volatile."
+
+// volatileRebarSizeKey matches the volatile keys recording the original size of a resizable BAR.
+var volatileRebarSizeKey = regexp.MustCompile(`\.last_state\.rebar\.[0-5]\.size$`)
 
 // HugePageSizeKeys is a list of known hugepage size configuration keys.
 var HugePageSizeKeys = [...]string{"limits.hugepages.64KB", "limits.hugepages.1MB", "limits.hugepages.2MB", "limits.hugepages.1GB"}
@@ -65,7 +78,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	"boot.autostart": validate.Optional(validate.Or(validate.IsBool, validate.IsOneOf("last-state"))),
 
 	// gendoc:generate(entity=instance, group=boot, key=boot.autostart.delay)
-	// The number of seconds to wait after the instance started before starting the next one.
+	// The number of seconds to wait after the instance started before starting the next one in its project.
 	// ---
 	//  type: integer
 	//  defaultdesc: 0
@@ -77,6 +90,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// The instance with the highest value is started first.
 	// Instances without a priority set will be started (with some parallelism) ahead of
 	// instances with a priority set.
+	// The order only applies within a project, projects are started in parallel.
 	// ---
 	//  type: integer
 	//  liveupdate: no
@@ -85,6 +99,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 
 	// gendoc:generate(entity=instance, group=boot, key=boot.stop.priority)
 	// The instance with the highest value is shut down first.
+	// The order only applies within a project, projects are shut down in parallel.
 	// ---
 	//  type: integer
 	//  defaultdesc: 0
@@ -196,7 +211,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// ---
 	//  type: string
 	//  defaultdesc: `auto`
-	//  liveupdate: no
+	//  liveupdate: yes
 	//  shortdesc: What to do when evacuating the instance
 	"cluster.evacuate": validate.Optional(validate.IsOneOf("auto", "migrate", "live-migrate", "refresh-migrate", "stop", "stateful-stop", "force-stop")),
 
@@ -227,7 +242,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// See {ref}`instance-options-limits-cpu-container` for more information.
 	// ---
 	//  type: string
-	//  liveupdate: yes
+	//  liveupdate: yes (containers only)
 	//  shortdesc: Which NUMA nodes to place the instance CPUs on
 	"limits.cpu.nodes": validate.Optional(validate.Or(validate.IsValidCPUSet, validate.IsOneOf("0", "balanced"))),
 
@@ -238,7 +253,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// ---
 	//  type: integer
 	//  defaultdesc: `5` (medium)
-	//  liveupdate: yes
+	//  liveupdate: yes (containers only)
 	//  shortdesc: Priority of the instance's I/O requests
 	"limits.disk.priority": validate.Optional(validate.IsPriority),
 
@@ -310,7 +325,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// The specified entries are appended to the generated profile.
 	// ---
 	//  type: blob
-	//  liveupdate: yes
+	//  liveupdate: yes (containers only)
 	//  shortdesc: AppArmor profile entries
 	"raw.apparmor": validate.IsAny,
 
@@ -328,7 +343,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// ---
 	//  type: bool
 	//  defaultdesc: `true`
-	//  liveupdate: no
+	//  liveupdate: yes
 	//  shortdesc: Whether `/dev/incus` is present in the instance
 	"security.guestapi": validate.Optional(validate.IsBool),
 
@@ -374,7 +389,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// Override the SELinux file type used for labeling instance storage.
 	// ---
 	//	type: string
-	//	defaultdesc: auto-detected (`container_file_t` for containers, `qemu_image_t` for VMs)
+	//	defaultdesc: auto-detected (`container_file_t` for containers, `qemu_image_t` or `svirt_image_t` for VMs)
 	//	liveupdate: no
 	//	condition: container or virtual machine
 	//	shortdesc: SELinux file type override
@@ -384,7 +399,7 @@ var InstanceConfigKeysAny = map[string]func(value string) error{
 	// Override the SELinux process domain for the instance.
 	// ---
 	//	type: string
-	//	defaultdesc: auto-detected (`container_init_t` for containers, `qemu_t` for VMs)
+	//	defaultdesc: auto-detected (`container_init_t` or `spc_t` for containers, `qemu_t` or `svirt_t` for VMs)
 	//	liveupdate: no
 	//	condition: container or virtual machine
 	//	shortdesc: SELinux process domain override
@@ -976,7 +991,7 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	//  liveupdate: no
 	//  condition: OCI container
 	//  shortdesc: Entry point
-	"oci.entrypoint": validate.IsAny,
+	"oci.entrypoint": isOCIConfigValue,
 
 	// gendoc:generate(entity=instance, group=oci, key=oci.cwd)
 	// Override the working directory of an OCI container.
@@ -985,7 +1000,7 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 	//  liveupdate: no
 	//  condition: OCI container
 	//  shortdesc: Working directory
-	"oci.cwd": validate.Optional(validate.IsAbsFilePath),
+	"oci.cwd": validate.Optional(validate.IsAbsFilePath, isOCIConfigValue),
 
 	// gendoc:generate(entity=instance, group=oci, key=oci.gid)
 	// Override the GID of the process run in an OCI container.
@@ -1410,11 +1425,14 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
 // InstanceConfigKeysVM is a map of config key to validator. (keys applying to VM only).
 var InstanceConfigKeysVM = map[string]func(value string) error{
 	// gendoc:generate(entity=instance, group=boot, key=boot.pxe)
+	// This controls IPv4 and IPv6 PXE support in the UEFI firmware of the virtual machine.
 	//
+	// The option is read when the virtual machine starts and must be set on the instance itself, a value inherited from a profile is ignored.
 	// ---
 	//  type: bool
 	//  defaultdesc: no
-	//  liveupdate: yes
+	//  liveupdate: no
+	//  condition: virtual machine
 	//  shortdesc: Whether to enable PXE boot
 	"boot.pxe": validate.Optional(validate.IsBool),
 
@@ -1479,7 +1497,7 @@ var InstanceConfigKeysVM = map[string]func(value string) error{
 	// ---
 	//  type: string
 	//  defaultdesc: `true`
-	//  liveupdate: yes
+	//  liveupdate: no
 	//  condition: virtual machine
 	//  shortdesc: Control upper limit for hotplugged memory or disable memory hotplug.
 	"limits.memory.hotplug": validate.Optional(validate.Or(validate.IsBool, validate.IsSize)),
@@ -1555,7 +1573,7 @@ var InstanceConfigKeysVM = map[string]func(value string) error{
 	// ---
 	//  type: bool
 	//  defaultdesc: `true`
-	//  liveupdate: no
+	//  liveupdate: yes
 	//  condition: virtual machine
 	//  shortdesc: Whether the `incus-agent` is queried for state information and metrics
 	"security.agent.metrics": validate.Optional(validate.IsBool),
@@ -1858,6 +1876,55 @@ var ConfigDeviceVolatileKeys = map[string]func(value string) error{
 	//  shortdesc: SR-IOV virtual function original VLAN
 	"last_state.vf.vlan": validate.IsAny,
 
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.representor)
+	// The representor port name
+	// ---
+	//  type: string
+	//  shortdesc: Representor name
+	"last_state.representor": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.representor.mtu)
+	// The original representor MTU
+	// ---
+	//  type: string
+	//  shortdesc: Representor original MTU
+	"last_state.representor.mtu": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.representor.pvid)
+	// The original representor PVID
+	// ---
+	//  type: string
+	//  shortdesc: Representor original PVID
+	"last_state.representor.pvid": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.representor.tagged)
+	// The original representor tagged VLANs
+	// ---
+	//  type: string
+	//  shortdesc: Representor original tagged VLANs
+	"last_state.representor.tagged": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.representor.untagged)
+	// The original representor untagged VLANs
+	// ---
+	//  type: string
+	//  shortdesc: Representor original untagged VLANs
+	"last_state.representor.untagged": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.representor.up)
+	// The original representor state
+	// ---
+	//  type: string
+	//  shortdesc: Representor original state
+	"last_state.representor.up": validate.IsAny,
+
+	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.migratable)
+	// The original NIC migratable capability
+	// ---
+	//  type: string
+	//  shortdesc: NIC original migratable capability
+	"last_state.migratable": validate.IsAny,
+
 	// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.failover.host_name)
 	//
 	// ---
@@ -1969,6 +2036,15 @@ func ConfigKeyChecker(key string, instanceType api.InstanceType) (func(value str
 				return validator, nil
 			}
 		}
+
+		// gendoc:generate(entity=instance, group=volatile, key=volatile.<name>.last_state.rebar.<N>.size)
+		// The original size in bytes of resizable BAR `N` of the PCI device.
+		// ---
+		//  type: string
+		//  shortdesc: PCI original resizable BAR size
+		if volatileRebarSizeKey.MatchString(key) {
+			return validate.IsAny, nil
+		}
 	}
 
 	// gendoc:generate(entity=instance, group=miscellaneous, key=environment.*)
@@ -2005,7 +2081,7 @@ func ConfigKeyChecker(key string, instanceType api.InstanceType) (func(value str
 	// `SMBIOS Type 11` configuration keys.
 	// ---
 	//  type: string
-	//  liveupdate: yes
+	//  liveupdate: no
 	//  shortdesc: Free-form `SMBIOS Type 11` key/value
 	if strings.HasPrefix(key, "smbios11.") && instanceType == api.InstanceTypeAny || instanceType == api.InstanceTypeVM {
 		return validate.IsAny, nil
@@ -2146,7 +2222,7 @@ func ConfigKeyChecker(key string, instanceType api.InstanceType) (func(value str
 	// Systemd credential key/value pair passed as a read-only bind mount in containers and as `SMBIOS Type 11` data in virtual machines.
 	// ---
 	//  type: string
-	//  liveupdate: yes
+	//  liveupdate: yes (containers only)
 	//  shortdesc: Systemd credential key/value
 	if strings.HasPrefix(key, "systemd.credential.") {
 		return validate.IsAny, nil
@@ -2156,7 +2232,7 @@ func ConfigKeyChecker(key string, instanceType api.InstanceType) (func(value str
 	// Systemd credential key/value pair passed as a read-only bind mount in containers and as `SMBIOS Type 11` data in virtual machines. The value is Base64 encoded.
 	// ---
 	//  type: string
-	//  liveupdate: yes
+	//  liveupdate: yes (containers only)
 	//  shortdesc: Systemd credential key/value, where value is Base64 encoded
 	if strings.HasPrefix(key, "systemd.credential-binary.") {
 		return validate.IsBase64, nil

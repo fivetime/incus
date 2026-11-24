@@ -52,6 +52,11 @@ func ImagePath(volumePath string) string {
 	return filepath.Join(volumePath, imageDirectory)
 }
 
+// TemporaryRootPath returns the guest root filesystem a rescue boots from.
+func TemporaryRootPath(volumePath string) string {
+	return filepath.Join(volumePath, temporaryRoot)
+}
+
 func inode(root *os.Root, path string) (uint64, error) {
 	info, err := root.Lstat(path)
 	if err != nil {

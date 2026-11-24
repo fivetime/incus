@@ -426,11 +426,11 @@ func internalContainerHookLoadFromReference(s *state.State, r *http.Request) (in
 				return nil, err
 			}
 
-			// If DB not available, try loading from backup file.
-			logger.Warn("Failed loading instance from database, trying backup file", logger.Ctx{"project": projectName, "instance": instanceRef, "err": err})
+			// If DB not available, try loading from disk.
+			logger.Warn("Failed loading instance from database, trying disk", logger.Ctx{"project": projectName, "instance": instanceRef, "err": err})
 
 			instancePath := filepath.Join(internalUtil.VarPath("containers"), project.Instance(projectName, instanceRef))
-			inst, err = instance.LoadFromBackup(s, projectName, instancePath, false)
+			inst, err = instanceLoadFromDisk(s, instancetype.Container, projectName, instancePath)
 			if err != nil {
 				return nil, err
 			}
@@ -951,6 +951,13 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 				backupConf.Container.ExpandedDevices[k] = map[string]string{}
 			}
 
+			// An empty value unsets the key.
+			if value == "" {
+				delete(backupConf.Container.Devices[k], key)
+				delete(backupConf.Container.ExpandedDevices[k], key)
+				continue
+			}
+
 			backupConf.Container.Devices[k][key] = value
 			backupConf.Container.ExpandedDevices[k][key] = value
 		}
@@ -958,6 +965,13 @@ func internalImportFromBackup(ctx context.Context, s *state.State, projectName s
 
 	// Override config.
 	for key, value := range configMap {
+		// An empty value unsets the key.
+		if value == "" {
+			delete(backupConf.Container.Config, key)
+			delete(backupConf.Container.ExpandedConfig, key)
+			continue
+		}
+
 		backupConf.Container.Config[key] = value
 		backupConf.Container.ExpandedConfig[key] = value
 	}

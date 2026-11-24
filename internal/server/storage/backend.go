@@ -55,6 +55,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/state"
 	"github.com/lxc/incus/v7/internal/server/storage/drivers"
 	"github.com/lxc/incus/v7/internal/server/storage/memorypipe"
+	"github.com/lxc/incus/v7/internal/server/storage/rescue"
 	"github.com/lxc/incus/v7/internal/server/storage/s3"
 	"github.com/lxc/incus/v7/internal/server/storagematerializationattempt"
 	"github.com/lxc/incus/v7/internal/server/storagereleasereceipt"
@@ -756,11 +757,13 @@ func (b *backend) CreateInstance(inst instance.Instance, op *operations.Operatio
 	return nil
 }
 
-// stripMetadataLinks removes any symlink in the instance's metadata area (everything but the guest
-// rootfs) and returns the removed paths. Removing rather than just reporting neutralizes links that
-// reach the volume via a path (e.g. snapshot restore) that cannot be cleanly reverted.
-func stripMetadataLinks(instPath string) ([]string, error) {
+// stripMetadata removes anything in the instance's metadata area (everything but the guest rootfs)
+// that isn't a directory, a regular file or an allowed self-symlink, and returns the removed paths.
+// Removing rather than just reporting neutralizes entries that reach the volume via a path
+// (e.g. snapshot restore) that cannot be cleanly reverted.
+func stripMetadata(instPath string) ([]string, error) {
 	rootfsPath := filepath.Join(instPath, "rootfs")
+	rescueRootPath := rescue.TemporaryRootPath(instPath)
 
 	var removed []string
 
@@ -774,13 +777,23 @@ func stripMetadataLinks(instPath string) ([]string, error) {
 			return filepath.SkipDir
 		}
 
+		// Nor into the temporary guest root of an instance in rescue.
+		if path == rescueRootPath && d.IsDir() {
+			return filepath.SkipDir
+		}
+
+		// Keep directories and regular files.
+		if d.IsDir() || d.Type().IsRegular() {
+			return nil
+		}
+
+		// Keep the self-symlinks Incus itself maintains.
 		if d.Type()&fs.ModeSymlink != 0 {
 			relPath, err := filepath.Rel(instPath, path)
 			if err != nil {
 				return err
 			}
 
-			// Allow the links Incus itself maintains.
 			if relPath == "qemu.nvram" || relPath == "config/lxd-agent" {
 				target, err := os.Readlink(path)
 				if err != nil {
@@ -791,14 +804,15 @@ func stripMetadataLinks(instPath string) ([]string, error) {
 					return nil
 				}
 			}
-
-			err = os.Remove(path)
-			if err != nil {
-				return err
-			}
-
-			removed = append(removed, path)
 		}
+
+		// Remove everything else (disallowed symlinks, device nodes, pipes, sockets).
+		err = os.Remove(path)
+		if err != nil {
+			return err
+		}
+
+		removed = append(removed, path)
 
 		return nil
 	})
@@ -809,8 +823,8 @@ func stripMetadataLinks(instPath string) ([]string, error) {
 	return removed, nil
 }
 
-// stripInstanceMetadataLinks mounts the instance, strips disallowed metadata symlinks and errors if any were found.
-func (b *backend) stripInstanceMetadataLinks(inst instance.Instance, op *operations.Operation) error {
+// stripInstanceMetadata mounts the instance, strips disallowed metadata entries and errors if any were found.
+func (b *backend) stripInstanceMetadata(inst instance.Instance, op *operations.Operation) error {
 	volType, err := InstanceTypeToVolumeType(inst.Type())
 	if err != nil {
 		return err
@@ -823,14 +837,14 @@ func (b *backend) stripInstanceMetadataLinks(inst instance.Instance, op *operati
 
 	defer func() { _ = b.UnmountInstance(inst, op) }()
 
-	removed, err := stripMetadataLinks(drivers.GetVolumeMountPath(b.name, volType, project.Instance(inst.Project().Name, inst.Name())))
+	removed, err := stripMetadata(drivers.GetVolumeMountPath(b.name, volType, project.Instance(inst.Project().Name, inst.Name())))
 	if err != nil {
 		return err
 	}
 
 	if len(removed) > 0 {
-		b.logger.Warn("Removed disallowed symlinks from instance metadata", logger.Ctx{"instance": inst.Name(), "project": inst.Project().Name, "paths": removed})
-		return fmt.Errorf("Instance metadata contained disallowed symlinks: %v", removed)
+		b.logger.Warn("Removed disallowed entries from instance metadata", logger.Ctx{"instance": inst.Name(), "project": inst.Project().Name, "paths": removed})
+		return fmt.Errorf("Instance metadata contained disallowed entries: %v", removed)
 	}
 
 	return nil
@@ -915,13 +929,13 @@ func (b *backend) CreateInstanceFromBackup(srcBackup backup.Info, srcData io.Rea
 	}
 
 	// Strip unsafe symlinks before any host-side use of the metadata area.
-	removed, err := stripMetadataLinks(vol.MountPath())
+	removed, err := stripMetadata(vol.MountPath())
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if len(removed) > 0 {
-		return nil, nil, fmt.Errorf("Backup metadata contained disallowed symlinks: %v", removed)
+		return nil, nil, fmt.Errorf("Backup metadata contained disallowed entries: %v", removed)
 	}
 
 	err = b.ensureInstanceSymlink(instanceType, srcBackup.Project, srcBackup.Name, vol.MountPath())
@@ -939,8 +953,9 @@ func (b *backend) CreateInstanceFromBackup(srcBackup backup.Info, srcData io.Rea
 			return nil, nil, err
 		}
 
+		// The volume is removed by the revert too, so the symlink can't be left in place.
 		importRevert.Add(func() {
-			_ = b.removeInstanceSnapshotSymlinkIfUnused(instanceType, srcBackup.Project, srcBackup.Name)
+			_ = os.Remove(InstancePath(instanceType, srcBackup.Project, srcBackup.Name, true))
 		})
 	}
 
@@ -1358,7 +1373,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 
 		var migrationSnapshots []*migration.Snapshot
 		if snapshots {
-			migrationSnapshots, err = VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, inst.Project().Name, srcPool, contentType, volType, src.Name())
+			migrationSnapshots, err = VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, src.Project().Name, srcPool, contentType, volType, src.Name())
 			if err != nil {
 				return err
 			}
@@ -1373,7 +1388,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 		}
 
 		depSnapshots := snapshots && srcSnapName == ""
-		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, src.ExpandedDevices().CloneNative(), inst.Project().Name, depSnapshots, newDevices, nil, false)
+		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, src.ExpandedDevices().CloneNative(), src.Project().Name, depSnapshots, newDevices, nil, false)
 		if err != nil {
 			err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
 			return err
@@ -1401,7 +1416,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 
 			srcDependentVolumes = append(srcDependentVolumes, srcVol)
 
-			vol := localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], newDevices[*volWithType.Volume.DeviceName])
+			vol := localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], newDevices[volWithType.Volume.GetDeviceName()])
 			dstDependentVolumes = append(dstDependentVolumes, vol)
 		}
 
@@ -1465,7 +1480,7 @@ func (b *backend) CreateInstanceFromCopy(inst instance.Instance, src instance.In
 	}
 
 	// Strip unsafe symlinks, including any hidden in a copied-from snapshot.
-	err = b.stripInstanceMetadataLinks(inst, op)
+	err = b.stripInstanceMetadata(inst, op)
 	if err != nil {
 		return err
 	}
@@ -1674,7 +1689,7 @@ func (b *backend) RefreshCustomVolume(projectName string, srcProjectName string,
 
 		var migrationSnapshots []*migration.Snapshot
 		if snapshots {
-			migrationSnapshots, err = VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, projectName, srcPool, contentType, drivers.VolumeTypeCustom, srcVolName)
+			migrationSnapshots, err = VolumeSnapshotsToMigrationSnapshots(srcConfig.VolumeSnapshots, srcProjectName, srcPool, contentType, drivers.VolumeTypeCustom, srcVolName)
 			if err != nil {
 				return err
 			}
@@ -1973,7 +1988,7 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 		}
 
 		newDevices := inst.LocalDevices().CloneNative()
-		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, src.ExpandedDevices().CloneNative(), inst.Project().Name, snapshots, newDevices, nil, false)
+		dependentVolumesOffer, err := GenerateDependentVolumesOffer(b.state, srcConfig, src.ExpandedDevices().CloneNative(), src.Project().Name, snapshots, newDevices, nil, false)
 		if err != nil {
 			err := fmt.Errorf("Failed generating instance depending volumes offer: %w", err)
 			return err
@@ -1998,7 +2013,7 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 
 			srcDependentVolumes = append(srcDependentVolumes, srcVol)
 
-			vol := localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], newDevices[*volWithType.Volume.DeviceName])
+			vol := localMigration.ProtobufToDependentVolume(volWithType.Volume, volWithType.VolumeTypes[0], newDevices[volWithType.Volume.GetDeviceName()])
 			dstDependentVolumes = append(dstDependentVolumes, vol)
 		}
 
@@ -2066,7 +2081,7 @@ func (b *backend) RefreshInstance(inst instance.Instance, src instance.Instance,
 	}
 
 	// Strip unsafe symlinks materialized from the refresh source.
-	err = b.stripInstanceMetadataLinks(inst, op)
+	err = b.stripInstanceMetadata(inst, op)
 	if err != nil {
 		return err
 	}
@@ -2179,12 +2194,10 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 		return err
 	}
 
-	err = b.validateInstanceStorageMaterialization(inst, vol)
+	materialization, err := b.instanceStorageMaterializationBinding(inst, vol)
 	if err != nil {
 		return err
 	}
-
-	// Leave reverting on failure to caller, they are expected to call DeleteInstance().
 
 	// If the driver doesn't support optimized image volumes or the optimized image volume should not be used,
 	// create a new empty volume and populate it with the contents of the image archive.
@@ -2265,18 +2278,39 @@ func (b *backend) CreateInstanceFromImage(inst instance.Instance, fingerprint st
 		return err
 	}
 
+	// A materialization attempt owns the cleanup of its volume: the caller deletes the
+	// instance through DeleteInstance(), which honours the recorded storage identity.
+	if materialization == nil {
+		reverter.Add(func() { _ = b.driver.DeleteVolume(vol, op) })
+	}
+
 	err = b.ensureInstanceSymlink(inst.Type(), inst.Project().Name, inst.Name(), vol.MountPath())
 	if err != nil {
 		return err
 	}
 
+	reverter.Add(func() { _ = b.removeInstanceSymlink(inst.Type(), inst.Project().Name, inst.Name()) })
+
+	// Keep the volume mounted for the rest of the setup so remote pools only attach it once.
+	_, err = b.MountInstance(inst, op)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = b.UnmountInstance(inst, op) }()
+
 	// Strip unsafe symlinks introduced by the image.
-	err = b.stripInstanceMetadataLinks(inst, op)
+	err = b.stripInstanceMetadata(inst, op)
 	if err != nil {
 		return err
 	}
 
 	err = inst.DeferTemplateApply(instance.TemplateTriggerCreate)
+	if err != nil {
+		return err
+	}
+
+	err = b.UpdateInstanceBackupFile(inst, false, op)
 	if err != nil {
 		return err
 	}
@@ -2400,6 +2434,26 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 		return err
 	}
 
+	// A fresh copy isn't refreshing anything, so a record with no volume behind it is a leftover.
+	// Look the volume up with its recorded config: a cephext volume is only found through it.
+	if dbVol != nil && !args.Refresh && !isRemoteClusterMove {
+		leftoverExists, err := b.driver.HasVolume(b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, inst.Name()), dbVol.Config))
+		if err != nil {
+			return err
+		}
+
+		if !leftoverExists {
+			l.Warn("Removing volume record left without a volume on storage")
+
+			err = VolumeDBDelete(b, inst.Project().Name, inst.Name(), volType)
+			if err != nil {
+				return err
+			}
+
+			dbVol = nil
+		}
+	}
+
 	// Prefer using existing volume config (to allow mounting existing volume correctly).
 	if dbVol != nil {
 		volumeConfig = dbVol.Config
@@ -2490,6 +2544,13 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 	// Create new volume database records when the storage pool is changed or
 	// when it is not a remote cluster move.
 	if !isRemoteClusterMove || args.StoragePool != "" {
+		// Keys the driver fills in for a volume of this type.
+		driverKeys := b.GetVolume(volType, contentType, volStorageName, map[string]string{})
+		err = b.driver.FillVolumeConfig(driverKeys)
+		if err != nil {
+			return fmt.Errorf("Failed filling volume config: %w", err)
+		}
+
 		for i, snapshot := range args.Snapshots {
 			snapName := snapshot.GetName()
 			newSnapshotName := drivers.GetSnapshotVolumeName(inst.Name(), snapName)
@@ -2508,7 +2569,26 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 				if len(srcInfo.Config.VolumeSnapshots) > i && srcInfo.Config.VolumeSnapshots[i] != nil && srcInfo.Config.VolumeSnapshots[i].Name == snapName {
 					// Check if snapshot volume config is available then use it.
 					snapDescription = srcInfo.Config.VolumeSnapshots[i].Description
-					snapConfig = srcInfo.Config.VolumeSnapshots[i].Config
+					snapConfig = maps.Clone(srcInfo.Config.VolumeSnapshots[i].Config)
+
+					// Snapshots from another kind of pool lack the keys this pool fills in for the parent.
+					if args.MigrationType.FSType == migration.MigrationFSType_RSYNC || args.MigrationType.FSType == migration.MigrationFSType_BLOCK_AND_RSYNC {
+						if snapConfig == nil {
+							snapConfig = map[string]string{}
+						}
+
+						for k := range driverKeys.Config() {
+							_, ok := snapConfig[k]
+							if ok || k == "size" {
+								continue
+							}
+
+							v, ok := vol.Config()[k]
+							if ok {
+								snapConfig[k] = v
+							}
+						}
+					}
 
 					if srcInfo.Config.VolumeSnapshots[i].ExpiresAt != nil {
 						snapExpiryDate = *srcInfo.Config.VolumeSnapshots[i].ExpiresAt
@@ -2661,7 +2741,7 @@ func (b *backend) CreateInstanceFromMigration(inst instance.Instance, conn io.Re
 
 	// Strip unsafe symlinks from migrated data, skipping intra-cluster moves (no new data, may not be locally mountable).
 	if !isRemoteClusterMove {
-		err = b.stripInstanceMetadataLinks(inst, op)
+		err = b.stripInstanceMetadata(inst, op)
 		if err != nil {
 			return err
 		}
@@ -2737,6 +2817,8 @@ func (b *backend) RenameInstance(inst instance.Instance, newName string, op *ope
 		if err != nil {
 			return err
 		}
+
+		reverter.Add(func() { _ = b.qcow2Rename(vol, inst.Name(), inst.Project().Name, nil) })
 	}
 
 	// Rename each snapshot DB record to have the new parent volume prefix.
@@ -4349,8 +4431,9 @@ func (b *backend) MountInstance(inst instance.Instance, op *operations.Operation
 		return nil, fmt.Errorf("Failed getting disk path: %w", err)
 	}
 
+	// Only block volumes have a qcow2 image, filesystem volumes just inherit the key from the pool.
 	backingPaths := []string{}
-	if vol.Config()["block.type"] == drivers.BlockVolumeTypeQcow2 {
+	if vol.IsVMBlock() && vol.Config()["block.type"] == drivers.BlockVolumeTypeQcow2 {
 		// Get snapshots.
 		volSnaps, err := VolumeDBSnapshotsGet(b, inst.Project().Name, inst.Name(), vol.Type())
 		if err != nil {
@@ -4471,6 +4554,143 @@ func (b *backend) unmountInstance(inst instance.Instance, op *operations.Operati
 	return nil
 }
 
+// instanceRootVolume returns the effective root volume of an instance.
+func (b *backend) instanceRootVolume(inst instance.Instance) (drivers.Volume, error) {
+	volType, err := InstanceTypeToVolumeType(inst.Type())
+	if err != nil {
+		return drivers.Volume{}, err
+	}
+
+	dbVol, err := VolumeDBGet(b, inst.Project().Name, inst.Name(), volType)
+	if err != nil {
+		return drivers.Volume{}, err
+	}
+
+	vol := b.GetVolume(volType, InstanceContentType(inst), project.Instance(inst.Project().Name, inst.Name()), dbVol.Config)
+	err = b.applyInstanceRootDiskOverrides(inst, &vol)
+	if err != nil {
+		return drivers.Volume{}, err
+	}
+
+	return vol, nil
+}
+
+// dependentVolume is a dependent volume of an instance along with the pool holding it.
+type dependentVolume struct {
+	pool *backend
+	vol  drivers.Volume
+}
+
+// instanceDependentVolumes returns the dependent volumes attached to an instance.
+func (b *backend) instanceDependentVolumes(inst instance.Instance) ([]dependentVolume, error) {
+	storageProjectName, err := project.StorageVolumeProject(b.state.DB.Cluster, inst.Project().Name, db.StoragePoolVolumeTypeCustom)
+	if err != nil {
+		return nil, err
+	}
+
+	var vols []dependentVolume
+
+	err = inst.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {
+		diskPool, err := LoadByName(b.state, dev.Config["pool"])
+		if err != nil {
+			return fmt.Errorf("Failed loading storage pool: %w", err)
+		}
+
+		diskBackend, ok := diskPool.(*backend)
+		if !ok {
+			return errors.New("Dependent volume pool is not a backend")
+		}
+
+		volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
+
+		dbVol, err := VolumeDBGet(diskBackend, storageProjectName, volName, drivers.VolumeTypeCustom)
+		if err != nil {
+			return err
+		}
+
+		diskVol := diskBackend.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(dbVol.ContentType), project.StorageVolume(storageProjectName, volName), dbVol.Config)
+		vols = append(vols, dependentVolume{pool: diskBackend, vol: diskVol})
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return vols, nil
+}
+
+// SetInstanceAccessMode switches the storage locks of an instance and its dependent volumes to the given access mode.
+func (b *backend) SetInstanceAccessMode(inst instance.Instance, mode drivers.VolumeAccessMode, op *operations.Operation) error {
+	l := b.logger.AddContext(logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "mode": mode})
+	l.Debug("SetInstanceAccessMode started")
+	defer l.Debug("SetInstanceAccessMode finished")
+
+	revertMode := drivers.VolumeAccessModeShared
+	if mode == drivers.VolumeAccessModeShared {
+		revertMode = drivers.VolumeAccessModeExclusive
+	}
+
+	depVols, err := b.instanceDependentVolumes(inst)
+	if err != nil {
+		return err
+	}
+
+	reverter := revert.New()
+	defer reverter.Fail()
+
+	// Switch the dependent volumes before the instance volume.
+	for _, depVol := range depVols {
+		err = depVol.pool.driver.SetVolumeAccessMode(depVol.vol, mode)
+		if err != nil {
+			return err
+		}
+
+		reverter.Add(func() { _ = depVol.pool.driver.SetVolumeAccessMode(depVol.vol, revertMode) })
+	}
+
+	vol, err := b.instanceRootVolume(inst)
+	if err != nil {
+		return err
+	}
+
+	err = b.driver.SetVolumeAccessMode(vol, mode)
+	if err != nil {
+		return err
+	}
+
+	reverter.Success()
+
+	return nil
+}
+
+// IsInstanceLocked checks whether the instance volume or any of its dependent volumes is locked by another cluster member.
+func (b *backend) IsInstanceLocked(inst instance.Instance, op *operations.Operation) (bool, error) {
+	vol, err := b.instanceRootVolume(inst)
+	if err != nil {
+		return false, err
+	}
+
+	locked, err := b.driver.IsVolumeLocked(vol)
+	if err != nil || locked {
+		return locked, err
+	}
+
+	depVols, err := b.instanceDependentVolumes(inst)
+	if err != nil {
+		return false, err
+	}
+
+	for _, depVol := range depVols {
+		locked, err := depVol.pool.driver.IsVolumeLocked(depVol.vol)
+		if err != nil || locked {
+			return locked, err
+		}
+	}
+
+	return false, nil
+}
+
 // getInstanceDisk returns the location of the disk.
 func (b *backend) getInstanceDisk(inst instance.Instance) (string, error) {
 	if inst.Type() != instancetype.VM {
@@ -4538,6 +4758,15 @@ func (b *backend) CreateInstanceSnapshot(inst instance.Instance, src instance.In
 		return err
 	}
 
+	// Lock this operation to ensure that the only one snapshot is made at the time.
+	// Other operations will wait for this one to finish.
+	unlock, err := locking.Lock(context.TODO(), drivers.OperationLockName("CreateInstanceSnapshot", b.name, volType, contentType, src.Name()))
+	if err != nil {
+		return err
+	}
+
+	defer unlock()
+
 	reverter := revert.New()
 	defer reverter.Fail()
 
@@ -4550,7 +4779,21 @@ func (b *backend) CreateInstanceSnapshot(inst instance.Instance, src instance.In
 	reverter.Add(func() { _ = VolumeDBDelete(b, inst.Project().Name, inst.Name(), volType) })
 
 	// Some driver backing stores require that running instances be frozen during snapshot.
-	if b.driver.Info().RunningCopyFreeze && src.IsRunning() && !src.IsFrozen() {
+	freeze := b.driver.Info().RunningCopyFreeze && src.IsRunning() && !src.IsFrozen()
+
+	// QEMU can switch all qcow2 disks of a running VM to their new overlay at once, so no need to pause it.
+	var batch *qcow2SnapshotBatch
+	if freeze && !inst.IsStateful() && b.qcow2SnapshotBatchable(src, srcDBVol) {
+		var endBatch func()
+		batch, endBatch = newQcow2SnapshotBatch()
+
+		// Runs before the reverter so dependent disks are reverted before the root disk.
+		defer endBatch()
+
+		freeze = false
+	}
+
+	if freeze {
 		// Freeze the processes.
 		err = src.Freeze()
 		if err != nil {
@@ -4571,15 +4814,6 @@ func (b *backend) CreateInstanceSnapshot(inst instance.Instance, src instance.In
 	if err != nil {
 		return err
 	}
-
-	// Lock this operation to ensure that the only one snapshot is made at the time.
-	// Other operations will wait for this one to finish.
-	unlock, err := locking.Lock(context.TODO(), drivers.OperationLockName("CreateInstanceSnapshot", b.name, vol.Type(), contentType, src.Name()))
-	if err != nil {
-		return err
-	}
-
-	defer unlock()
 
 	err = b.driver.CreateVolumeSnapshot(vol, op)
 	if err != nil {
@@ -4602,14 +4836,18 @@ func (b *backend) CreateInstanceSnapshot(inst instance.Instance, src instance.In
 
 		// parentVol should already be prepared as an overlay by CreateVolumeSnapshot.
 		// vol will be used as the base.
-		err = b.qcow2CreateSnapshot(parentVol, vol, src.Project().Name, src, rootDiskName, inst.IsStateful(), op)
+		undo, err := b.qcow2CreateSnapshot(parentVol, vol, src.Project().Name, src, rootDiskName, inst.IsStateful(), batch, op)
 		if err != nil {
 			return err
 		}
 
-		reverter.Add(func() {
-			_ = b.qcow2DeleteSnapshot(parentVol, vol, src.Project().Name, src, rootDiskName, nil)
-		})
+		if undo != nil {
+			reverter.Add(undo)
+		} else {
+			reverter.Add(func() {
+				_ = b.qcow2DeleteSnapshot(parentVol, vol, src.Project().Name, src, rootDiskName, nil)
+			})
+		}
 	}
 
 	err = b.ensureInstanceSnapshotSymlink(inst.Type(), inst.Project().Name, inst.Name())
@@ -4632,14 +4870,27 @@ func (b *backend) CreateInstanceSnapshot(inst instance.Instance, src instance.In
 		volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
 
 		_, snapshotName, _ := api.GetParentAndSnapshotName(inst.Name())
-		err = diskPool.CreateCustomVolumeSnapshot(storageProjectName, volName, snapshotName, time.Time{}, inst.IsStateful(), op)
+		if batch != nil {
+			diskBackend, ok := diskPool.(*backend)
+			if !ok {
+				return errors.New("Pool is not a backend")
+			}
+
+			err = diskBackend.createCustomVolumeSnapshot(storageProjectName, volName, snapshotName, time.Time{}, inst.IsStateful(), batch, op)
+		} else {
+			err = diskPool.CreateCustomVolumeSnapshot(storageProjectName, volName, snapshotName, time.Time{}, inst.IsStateful(), op)
+		}
+
 		if err != nil {
 			return fmt.Errorf("Failed to create device snapshot for volume %q: %w", volName, err)
 		}
 
-		reverter.Add(func() {
-			_ = diskPool.DeleteCustomVolumeSnapshot(storageProjectName, fmt.Sprintf("%s/%s", volName, snapshotName), nil)
-		})
+		// Batched snapshots are reverted by the batch until it's committed.
+		if batch == nil {
+			reverter.Add(func() {
+				_ = diskPool.DeleteCustomVolumeSnapshot(storageProjectName, fmt.Sprintf("%s/%s", volName, snapshotName), nil)
+			})
+		}
 
 		return nil
 	})
@@ -4647,8 +4898,52 @@ func (b *backend) CreateInstanceSnapshot(inst instance.Instance, src instance.In
 		return err
 	}
 
+	// Switch all disks at once, nothing can fail after this.
+	if batch != nil {
+		err = src.SwitchQcow2Snapshots(batch.switches)
+		if err != nil {
+			return err
+		}
+
+		batch.committed = true
+	}
+
 	reverter.Success()
 	return nil
+}
+
+// qcow2SnapshotBatchable returns whether the root and dependent disks of a VM are all qcow2 so they can be
+// snapshotted in a single batch.
+func (b *backend) qcow2SnapshotBatchable(inst instance.Instance, rootVol *db.StorageVolume) bool {
+	if inst.Type() != instancetype.VM || rootVol.Config["block.type"] != drivers.BlockVolumeTypeQcow2 {
+		return false
+	}
+
+	storageProjectName, err := project.StorageVolumeProject(b.state.DB.Cluster, inst.Project().Name, db.StoragePoolVolumeTypeCustom)
+	if err != nil {
+		return false
+	}
+
+	err = inst.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {
+		diskPool, err := LoadByName(b.state, dev.Config["pool"])
+		if err != nil {
+			return err
+		}
+
+		volName, _ := internalInstance.SplitVolumeSource(dev.Config["source"])
+		vol, err := VolumeDBGet(diskPool, storageProjectName, volName, drivers.VolumeTypeCustom)
+		if err != nil {
+			return err
+		}
+
+		if vol.ContentType != db.StoragePoolVolumeContentTypeNameBlock || vol.Config["block.type"] != drivers.BlockVolumeTypeQcow2 {
+			return errors.New("Not a qcow2 volume")
+		}
+
+		return nil
+	})
+
+	return err == nil
 }
 
 // RenameInstanceSnapshot renames an instance snapshot.
@@ -4704,12 +4999,38 @@ func (b *backend) RenameInstanceSnapshot(inst instance.Instance, newName string,
 	// Rename storage volume snapshot.
 	snapVol := b.GetVolume(volType, contentType, volStorageName, srcDBVol.Config)
 
-	if parentDBVol.Config["block.type"] == drivers.BlockVolumeTypeQcow2 {
-		parentVol := b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, parentName), parentDBVol.Config)
-		err = b.qcow2RenameSnapshot(parentVol, snapVol, newVolName, inst.Project().Name, op)
+	parentInst, err := instance.LoadByProjectAndName(b.state, inst.Project().Name, parentName)
+	if err != nil {
+		return err
+	}
+
+	isQcow2 := parentDBVol.Config["block.type"] == drivers.BlockVolumeTypeQcow2
+	running := isQcow2 && parentInst.IsRunning()
+
+	// A running instance keeps its qcow2 snapshots mounted under their name.
+	if running {
+		mountedSnapVol := b.GetVolume(volType, contentType, volStorageName, parentDBVol.Config)
+		err = b.qcow2UnmountRunningSnapshot(mountedSnapVol, op)
 		if err != nil {
 			return err
 		}
+
+		reverter.Add(func() { _ = b.driver.MountVolumeSnapshot(mountedSnapVol, op) })
+	}
+
+	if isQcow2 {
+		rootDiskName, _, err := internalInstance.GetRootDiskDevice(parentInst.ExpandedDevices().CloneNative())
+		if err != nil {
+			return err
+		}
+
+		parentVol := b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, parentName), parentDBVol.Config)
+		cleanup, err := b.qcow2RenameSnapshot(parentVol, snapVol, newVolName, inst.Project().Name, parentInst, rootDiskName, op)
+		if err != nil {
+			return err
+		}
+
+		reverter.Add(cleanup)
 	}
 
 	err = b.driver.RenameVolumeSnapshot(snapVol, newName, op)
@@ -4722,6 +5043,16 @@ func (b *backend) RenameInstanceSnapshot(inst instance.Instance, newName string,
 		newSnapVol := b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, newVolName), nil)
 		_ = b.driver.RenameVolumeSnapshot(newSnapVol, oldSnapshotName, op)
 	})
+
+	if running {
+		newSnapVol := b.GetVolume(volType, contentType, project.Instance(inst.Project().Name, newVolName), parentDBVol.Config)
+		err = b.driver.MountVolumeSnapshot(newSnapVol, op)
+		if err != nil {
+			return err
+		}
+
+		reverter.Add(func() { _ = b.qcow2UnmountRunningSnapshot(newSnapVol, op) })
+	}
 
 	err = b.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		// Rename DB volume record.
@@ -4737,11 +5068,6 @@ func (b *backend) RenameInstanceSnapshot(inst instance.Instance, newName string,
 			return tx.RenameStoragePoolVolume(ctx, inst.Project().Name, newVolName, inst.Name(), volDBType, b.ID())
 		})
 	})
-
-	parentInst, err := instance.LoadByProjectAndName(b.state, inst.Project().Name, parentName)
-	if err != nil {
-		return err
-	}
 
 	// Rename the matching snapshots of the dependent volumes.
 	err = parentInst.ForEachDependentDiskType(func(dev deviceConfig.DeviceNamed) error {
@@ -5020,7 +5346,7 @@ func (b *backend) RestoreInstanceSnapshot(inst instance.Instance, src instance.I
 	// Strip unsafe symlinks from restored content on all success paths (a snapshot may hide them and restore can't be reverted).
 	defer func() {
 		if err == nil {
-			err = b.stripInstanceMetadataLinks(inst, op)
+			err = b.stripInstanceMetadata(inst, op)
 		}
 	}()
 
@@ -5527,15 +5853,15 @@ func (b *backend) ensureImage(l logger.Logger, fingerprint string, op *operation
 			}
 
 			imgVol.SetConfigSize(newVolSize)
+			hinted := b.applyImageSizeHint(l, imgVol, image)
 
 			// Try applying the current size policy to the existing volume. If it is the same the
 			// driver should make no changes, and if not then attempt to resize it to the new policy.
 			l.Debug("Setting image volume size", logger.Ctx{"size": imgVol.ConfigSize()})
 			err = b.driver.SetVolumeQuota(imgVol, imgVol.ConfigSize(), false, op)
-			if errors.Is(err, drivers.ErrCannotBeShrunk) || errors.Is(err, drivers.ErrNotSupported) {
-				// If the driver cannot resize the existing image volume to the new policy size
-				// then delete the image volume and try to recreate using the new policy settings.
-				l.Debug("Volume size of pool has changed since cached image volume created and cached volume cannot be resized, regenerating image volume")
+			if errors.Is(err, drivers.ErrCannotBeShrunk) || errors.Is(err, drivers.ErrNotSupported) || (err != nil && hinted) {
+				// If the existing image volume can't be resized to the new size, regenerate it.
+				l.Debug("Cached image volume cannot be resized to the current size policy, regenerating image volume", logger.Ctx{"err": err})
 				err = b.DeleteImage(fingerprint, op)
 				if err != nil {
 					return false, err
@@ -5617,8 +5943,24 @@ func (b *backend) ensureImage(l logger.Logger, fingerprint string, op *operation
 		_ = b.state.Authorizer.DeleteStoragePoolVolume(b.state.ShutdownCtx, api.ProjectDefaultName, b.Name(), drivers.VolumeTypeImage.Singular(), fingerprint, location)
 	})
 
-	err = b.driver.CreateVolume(imgVol, &volFiller, op)
+	// Apply the image's size hint, it isn't stored so it's re-evaluated each time the image volume is used.
+	newImgVol := imgVol.Clone()
+	hinted := b.applyImageSizeHint(l, newImgVol, image)
+
+	// Size a VM image volume from the image up front so the driver creates it at its final size.
+	if contentType == drivers.ContentTypeBlock {
+		err = b.applyImageVirtualSize(l, newImgVol, fingerprint)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	err = b.driver.CreateVolume(newImgVol, &volFiller, op)
 	if err != nil {
+		if hinted {
+			return false, fmt.Errorf("Failed creating image volume using volume.size_hint %q: %w", image.Properties["volume.size_hint"], err)
+		}
+
 		return false, err
 	}
 
@@ -5638,6 +5980,63 @@ func (b *backend) ensureImage(l logger.Logger, fingerprint string, op *operation
 
 	reverter.Success()
 	return false, nil
+}
+
+// applyImageSizeHint applies the image's size hint to an image volume.
+// Returns true if the volume's size was changed.
+func (b *backend) applyImageSizeHint(l logger.Logger, imgVol drivers.Volume, image *api.Image) bool {
+	// gendoc:generate(entity=image, group=volume, key=volume.size_hint)
+	// Size of the cached image volume. For a container image on a block backed storage pool, it is used
+	// when it is smaller than the pool's `volume.size` (or the default size). For a virtual machine image,
+	// it is used when it is larger than that size, so the volume doesn't need a resize after unpacking.
+	// It is ignored if invalid or smaller than the image file, and doesn't affect instance volume sizes.
+	// ---
+	//  type: string
+	//  shortdesc: Size of the cached image volume
+	size, err := imgVol.ConfigSizeFromHint(image.Properties["volume.size_hint"], image.Size)
+	if err != nil {
+		l.Warn("Ignoring invalid image size hint", logger.Ctx{"err": err})
+		return false
+	}
+
+	if size == imgVol.ConfigSize() {
+		return false
+	}
+
+	l.Debug("Using image size hint for image volume", logger.Ctx{"size": size})
+	imgVol.SetConfigSize(size)
+
+	return true
+}
+
+// applyImageVirtualSize sizes a VM image volume to hold the image's virtual size.
+func (b *backend) applyImageVirtualSize(l logger.Logger, imgVol drivers.Volume, fingerprint string) error {
+	// A unified image has to be unpacked before its qcow2 can be read, so only split images are sized up front.
+	imgPath := internalUtil.VarPath("images", fingerprint) + ".rootfs"
+	if !util.PathExists(imgPath) {
+		return nil
+	}
+
+	virtualSize, err := ImageVirtualSize(b.state.OS, imgPath)
+	if err != nil {
+		return err
+	}
+
+	srcVol := drivers.NewVolume(nil, "", drivers.VolumeTypeImage, drivers.ContentTypeBlock, "", map[string]string{"volatile.rootfs.size": fmt.Sprintf("%d", virtualSize)}, nil)
+
+	size, err := imgVol.ConfigSizeFromSource(srcVol)
+	if err != nil {
+		return err
+	}
+
+	if size == imgVol.ConfigSize() {
+		return nil
+	}
+
+	l.Debug("Using image virtual size for image volume", logger.Ctx{"size": size})
+	imgVol.SetConfigSize(size)
+
+	return nil
 }
 
 // shouldUseOptimizedImage determines if an optimized image should be used based on the provided volume config.
@@ -7337,6 +7736,34 @@ func (b *backend) UpdateCustomVolume(projectName string, volName string, newDesc
 			}
 		}
 
+		followInstance, ok := changedConfig["migration.follow_instance"]
+		if ok && util.IsTrue(followInstance) {
+			err = VolumeUsedByProfileDevices(b.state, b.name, projectName, &curVol.StorageVolume, func(profileID int64, profile api.Profile, project api.Project, usedByDevices []string) error {
+				return errors.New("Cannot set migration.follow_instance on a custom storage volume attached to a profile")
+			})
+			if err != nil {
+				return err
+			}
+
+			usedByInstances := 0
+			err = VolumeUsedByInstanceDevices(b.state, b.name, projectName, &curVol.StorageVolume, true, func(inst db.InstanceArgs, project api.Project, usedByDevices []string) error {
+				if inst.Type != instancetype.VM {
+					return errors.New("Cannot set migration.follow_instance on a custom storage volume attached to a container")
+				}
+
+				usedByInstances++
+
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+
+			if usedByInstances > 1 {
+				return errors.New("Cannot set migration.follow_instance on a custom storage volume attached to more than one instance")
+			}
+		}
+
 		curVol := b.GetVolume(drivers.VolumeTypeCustom, contentType, volStorageName, curVol.Config)
 		if !userOnly {
 			err = b.driver.UpdateVolume(curVol, changedConfig)
@@ -7770,8 +8197,9 @@ func (b *backend) MountCustomVolume(projectName, volName string, op *operations.
 		return nil, err
 	}
 
+	// Only block volumes have a qcow2 image, filesystem volumes just inherit the key from the pool.
 	backingPaths := []string{}
-	if vol.Config()["block.type"] == drivers.BlockVolumeTypeQcow2 {
+	if vol.IsCustomBlock() && vol.Config()["block.type"] == drivers.BlockVolumeTypeQcow2 {
 		// Get snapshots.
 		_, volName := project.StorageVolumeParts(vol.Name())
 		volSnaps, err := VolumeDBSnapshotsGet(b, projectName, volName, vol.Type())
@@ -7930,6 +8358,11 @@ func (b *backend) ImportCustomVolume(projectName string, poolVol *backupConfig.C
 
 // CreateCustomVolumeSnapshot creates a snapshot of a custom volume.
 func (b *backend) CreateCustomVolumeSnapshot(projectName, volName string, newSnapshotName string, newExpiryDate time.Time, instanceStateful bool, op *operations.Operation) error {
+	return b.createCustomVolumeSnapshot(projectName, volName, newSnapshotName, newExpiryDate, instanceStateful, nil, op)
+}
+
+// createCustomVolumeSnapshot creates a snapshot of a custom volume, as part of the batch if any.
+func (b *backend) createCustomVolumeSnapshot(projectName, volName string, newSnapshotName string, newExpiryDate time.Time, instanceStateful bool, batch *qcow2SnapshotBatch, op *operations.Operation) error {
 	l := b.logger.AddContext(logger.Ctx{"project": projectName, "volName": volName, "newSnapshotName": newSnapshotName, "newExpiryDate": newExpiryDate})
 	l.Debug("CreateCustomVolumeSnapshot started")
 	defer l.Debug("CreateCustomVolumeSnapshot finished")
@@ -7999,7 +8432,12 @@ func (b *backend) CreateCustomVolumeSnapshot(projectName, volName string, newSna
 		return err
 	}
 
-	defer unlock()
+	// A batched volume isn't switched until the batch is committed, keep it locked until then.
+	if batch != nil {
+		batch.unlocks = append(batch.unlocks, unlock)
+	} else {
+		defer unlock()
+	}
 
 	// Create the snapshot on the storage device.
 	err = b.driver.CreateVolumeSnapshot(vol, op)
@@ -8021,12 +8459,18 @@ func (b *backend) CreateCustomVolumeSnapshot(projectName, volName string, newSna
 
 		// parentVol should already be prepared as an overlay by CreateVolumeSnapshot.
 		// vol will be used as the base.
-		err = b.qcow2CreateSnapshot(parentVolume, vol, projectName, inst, devName, instanceStateful, op)
+		undo, err := b.qcow2CreateSnapshot(parentVolume, vol, projectName, inst, devName, instanceStateful, batch, op)
 		if err != nil {
 			return err
 		}
 
-		reverter.Add(func() { _ = b.qcow2DeleteSnapshot(parentVolume, vol, projectName, inst, devName, nil) })
+		if undo != nil {
+			// The batch switches the disk, until then this snapshot can only be reverted.
+			reverter.Add(undo)
+			batch.reverter.Add(reverter.Clone().Fail)
+		} else {
+			reverter.Add(func() { _ = b.qcow2DeleteSnapshot(parentVolume, vol, projectName, inst, devName, nil) })
+		}
 	}
 
 	b.state.Events.SendLifecycle(projectName, lifecycle.StorageVolumeSnapshotCreated.Event(vol, string(vol.Type()), projectName, op, logger.Ctx{"type": vol.Type()}))
@@ -8067,12 +8511,35 @@ func (b *backend) RenameCustomVolumeSnapshot(projectName, volName string, newSna
 	vol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, volume.Config)
 	newVolName := drivers.GetSnapshotVolumeName(parentName, newSnapshotName)
 
+	reverter := revert.New()
+	defer reverter.Fail()
+
+	running := false
 	if parentVolume.Config["block.type"] == drivers.BlockVolumeTypeQcow2 {
-		parentVol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(parentVolume.ContentType), project.StorageVolume(projectName, parentName), parentVolume.Config)
-		err = b.qcow2RenameSnapshot(parentVol, vol, newVolName, projectName, op)
+		inst, devName, err := b.volumeUsedByRunningInstance(parentVolume, projectName)
 		if err != nil {
 			return err
 		}
+
+		// A running instance keeps its qcow2 snapshots mounted under their name.
+		running = inst != nil
+		if running {
+			mountedVol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), volStorageName, parentVolume.Config)
+			err = b.qcow2UnmountRunningSnapshot(mountedVol, op)
+			if err != nil {
+				return err
+			}
+
+			reverter.Add(func() { _ = b.driver.MountVolumeSnapshot(mountedVol, op) })
+		}
+
+		parentVol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(parentVolume.ContentType), project.StorageVolume(projectName, parentName), parentVolume.Config)
+		cleanup, err := b.qcow2RenameSnapshot(parentVol, vol, newVolName, projectName, inst, devName, op)
+		if err != nil {
+			return err
+		}
+
+		reverter.Add(cleanup)
 	}
 
 	err = b.driver.RenameVolumeSnapshot(vol, newSnapshotName, op)
@@ -8080,18 +8547,30 @@ func (b *backend) RenameCustomVolumeSnapshot(projectName, volName string, newSna
 		return err
 	}
 
+	newVolStorageName := project.StorageVolume(projectName, newVolName)
+	reverter.Add(func() {
+		newVol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), newVolStorageName, nil)
+		_ = b.driver.RenameVolumeSnapshot(newVol, oldSnapshotName, op)
+	})
+
+	if running {
+		newVol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), newVolStorageName, parentVolume.Config)
+		err = b.driver.MountVolumeSnapshot(newVol, op)
+		if err != nil {
+			return err
+		}
+
+		reverter.Add(func() { _ = b.qcow2UnmountRunningSnapshot(newVol, op) })
+	}
+
 	err = b.state.DB.Cluster.Transaction(context.TODO(), func(ctx context.Context, tx *db.ClusterTx) error {
 		return tx.RenameStoragePoolVolume(ctx, projectName, volName, newVolName, db.StoragePoolVolumeTypeCustom, b.ID())
 	})
 	if err != nil {
-		// Get the volume name on storage.
-		newVolStorageName := project.StorageVolume(projectName, newVolName)
-
-		// Revert rename.
-		newVol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(volume.ContentType), newVolStorageName, nil)
-		_ = b.driver.RenameVolumeSnapshot(newVol, oldSnapshotName, op)
 		return err
 	}
+
+	reverter.Success()
 
 	b.state.Events.SendLifecycle(projectName, lifecycle.StorageVolumeSnapshotRenamed.Event(vol, string(vol.Type()), projectName, op, logger.Ctx{"old_name": oldSnapshotName}))
 
@@ -8549,7 +9028,14 @@ func (b *backend) UpdateInstanceBackupFile(inst instance.Instance, snapshots boo
 
 		// Write the YAML
 		path := filepath.Join(inst.Path(), "backup.yaml")
-		f, err := root.OpenFile("backup.yaml", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o400)
+
+		// Remove any existing entry first so we never write through a planted hard link.
+		err = root.Remove("backup.yaml")
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+
+		f, err := root.OpenFile("backup.yaml", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
 		if err != nil {
 			return fmt.Errorf("Failed to create file %q: %w", path, err)
 		}
@@ -9426,6 +9912,16 @@ func (b *backend) CreateCustomVolumeFromBackup(srcBackup backup.Info, srcData io
 			_, snapName, _ = api.GetParentAndSnapshotName(snapshot.Name)
 		}
 
+		// The name is used as a path segment and must match the backup content.
+		err = validate.IsAPIName(snapName, false)
+		if err != nil {
+			return fmt.Errorf("Invalid snapshot name: %w", err)
+		}
+
+		if !slices.Contains(srcBackup.Snapshots, snapName) {
+			return fmt.Errorf("Snapshot %q in index doesn't match backup content", snapName)
+		}
+
 		fullSnapName := drivers.GetSnapshotVolumeName(srcBackup.Name, snapName)
 		snapVolStorageName := project.StorageVolume(srcBackup.Project, fullSnapName)
 		snapVol := b.GetVolume(drivers.VolumeTypeCustom, drivers.ContentType(srcBackup.Config.Volume.ContentType), snapVolStorageName, snapshot.Config)
@@ -9747,11 +10243,37 @@ func (b *backend) qcow2Rename(vol drivers.Volume, newVolName string, projectName
 	return nil
 }
 
+// qcow2SnapshotBatch collects the disks of a running VM so they all switch to their new overlay at once.
+type qcow2SnapshotBatch struct {
+	switches  []instance.Qcow2SnapshotSwitch
+	reverter  *revert.Reverter
+	unlocks   []locking.UnlockFunc
+	committed bool
+}
+
+// newQcow2SnapshotBatch returns a new snapshot batch and a function ending it, which reverts what was
+// prepared unless it was committed and then releases the batch's volume locks.
+func newQcow2SnapshotBatch() (*qcow2SnapshotBatch, func()) {
+	batch := &qcow2SnapshotBatch{reverter: revert.New()}
+
+	return batch, func() {
+		if !batch.committed {
+			batch.reverter.Fail()
+		}
+
+		for _, unlock := range batch.unlocks {
+			unlock()
+		}
+	}
+}
+
 // qcow2CreateSnapshot creates the QCOW2 volume snapshot.
-func (b *backend) qcow2CreateSnapshot(vol drivers.Volume, snapVol drivers.Volume, projectName string, inst instance.Instance, devName string, stateful bool, op *operations.Operation) error {
+// With a batch and a running instance, the disk is only prepared and the returned hook reverts that
+// preparation, it must be kept until the batch is committed.
+func (b *backend) qcow2CreateSnapshot(vol drivers.Volume, snapVol drivers.Volume, projectName string, inst instance.Instance, devName string, stateful bool, batch *qcow2SnapshotBatch, op *operations.Operation) (revert.Hook, error) {
 	// Return if this is not a qcow2 image.
 	if vol.Config()["block.type"] != drivers.BlockVolumeTypeQcow2 {
-		return nil
+		return nil, nil
 	}
 
 	reverter := revert.New()
@@ -9762,73 +10284,96 @@ func (b *backend) qcow2CreateSnapshot(vol drivers.Volume, snapVol drivers.Volume
 		fsVol := snapVol.NewVMBlockFilesystemVolume()
 		err := drivers.Qcow2CreateConfigSnapshot(fsParentVol, fsVol, op)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		reverter.Add(func() { _ = drivers.Qcow2DeleteConfigSnapshot(fsParentVol, fsVol, nil) })
 	}
 
+	running := inst != nil && inst.IsRunning()
+	if !running || stateful {
+		batch = nil
+	}
+
 	// For a running instance, mount the snapshot to increase the volume's refCount.
 	// The increased refCount protects against deallocating a volume that is
 	// currently in use by the instance.
-	if inst != nil && inst.IsRunning() {
+	if running {
 		err := b.driver.MountVolumeSnapshot(snapVol, op)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		reverter.Add(func() { _, _ = b.driver.UnmountVolumeSnapshot(snapVol, nil) })
+		// Until the instance switches to the new overlay, the snapshot volume is still its disk and must stay active.
+		reverter.Add(func() {
+			snapVol.MountRefCountDecrement()
+			if snapVol.IsVMBlock() {
+				_, _ = b.driver.UnmountVolumeSnapshot(snapVol.NewVMBlockFilesystemVolume(), nil)
+			}
+		})
 	}
 
 	snapVolDevPath, err := b.driver.GetQcow2BackingFilePath(snapVol)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	parentDiskPath, err := b.driver.GetVolumeDiskPath(vol)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = vol.MountWithSnapshotsTask(func(_ string, _ map[string]string, parentOp *operations.Operation) error {
-		if inst != nil && inst.IsRunning() {
+		if running {
 			// Use the snapshot's virtual size as the new volume is still blank.
 			imgInfo, err := drivers.Qcow2Info(snapVolDevPath)
 			if err != nil {
 				return err
 			}
 
-			err = drivers.Qcow2Create(parentDiskPath, "", int64(imgInfo.VirtualSize))
-			if err != nil {
-				return err
+			// A batched overlay records its backing file now, as there's no chance to do it once it's in use.
+			if batch != nil {
+				return drivers.Qcow2CreateOverlay(parentDiskPath, snapVolDevPath, int64(imgInfo.VirtualSize))
 			}
-		} else {
-			err = drivers.Qcow2Create(parentDiskPath, snapVolDevPath, 0)
-			if err != nil {
-				return err
-			}
+
+			return drivers.Qcow2Create(parentDiskPath, "", int64(imgInfo.VirtualSize))
 		}
 
-		return nil
+		return drivers.Qcow2Create(parentDiskPath, snapVolDevPath, 0)
 	}, op)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if inst != nil && inst.IsRunning() {
+	if running {
+		if batch != nil {
+			sw, cleanup, err := inst.PrepareQcow2Snapshot(parentDiskPath, devName)
+			if err != nil {
+				return nil, err
+			}
+
+			reverter.Add(cleanup)
+			batch.switches = append(batch.switches, sw)
+
+			undo := reverter.Clone().Fail
+			reverter.Success()
+
+			return undo, nil
+		}
+
 		_, snapshotName, isSnap := api.GetParentAndSnapshotName(snapVol.Name())
 		if !isSnap {
-			return errors.New("Volume name must be a snapshot")
+			return nil, errors.New("Volume name must be a snapshot")
 		}
 
 		err = inst.CreateQcow2Snapshot(parentDiskPath, devName, snapshotName, snapVolDevPath, stateful)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	reverter.Success()
-	return nil
+	return nil, nil
 }
 
 // qcow2CanRestoreSnapshot checks if a qcow2 snapshot can be restored.
@@ -9953,32 +10498,108 @@ func (b *backend) qcow2RestoreSnapshot(vol drivers.Volume, snapVol drivers.Volum
 }
 
 // qcow2RenameSnapshot renames the QCOW2 volume snapshot.
-func (b *backend) qcow2RenameSnapshot(vol drivers.Volume, snapVol drivers.Volume, newVolName string, projectName string, op *operations.Operation) error {
+func (b *backend) qcow2RenameSnapshot(vol drivers.Volume, snapVol drivers.Volume, newVolName string, projectName string, inst instance.Instance, devName string, op *operations.Operation) (revert.Hook, error) {
 	// Return if this is not a qcow2 image.
 	if vol.Config()["block.type"] != drivers.BlockVolumeTypeQcow2 {
-		return nil
+		return func() {}, nil
 	}
+
+	reverter := revert.New()
+	defer reverter.Fail()
 
 	newSnapVol := b.GetVolume(vol.Type(), vol.ContentType(), ProjectVolume(projectName, newVolName, vol.Type()), nil)
 	newSnapVolDiskPath, err := b.driver.GetQcow2BackingFilePath(newSnapVol)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	snapVolDiskPath, err := b.driver.GetQcow2BackingFilePath(snapVol)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Get snapshots.
 	_, volName := project.StorageVolumeParts(vol.Name())
 	volSnaps, err := VolumeDBSnapshotsGet(b, projectName, volName, vol.Type())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	// QEMU holds the chain of a running instance open, so it has to update the child itself.
+	if inst != nil && inst.IsRunning() {
+		_, snapName, _ := api.GetParentAndSnapshotName(snapVol.Name())
+
+		snapIndex := -1
+		for index, snap := range volSnaps {
+			_, currentSnapName, _ := api.GetParentAndSnapshotName(snap.Name)
+			if currentSnapName == snapName {
+				snapIndex = index
+				break
+			}
+		}
+
+		err = inst.RenameQcow2Snapshot(devName, snapIndex, newSnapVolDiskPath)
+		if err != nil {
+			return nil, err
+		}
+
+		reverter.Add(func() { _ = inst.RenameQcow2Snapshot(devName, snapIndex, snapVolDiskPath) })
+	} else {
+		err = b.qcow2RebaseRenamedSnapshot(vol, snapVolDiskPath, newSnapVolDiskPath, volSnaps, projectName, op)
+		if err != nil {
+			return nil, err
+		}
+
+		reverter.Add(func() {
+			_ = b.qcow2RebaseRenamedSnapshot(vol, newSnapVolDiskPath, snapVolDiskPath, volSnaps, projectName, nil)
+		})
+	}
+
+	if vol.IsVMBlock() {
+		fsParentVol := vol.NewVMBlockFilesystemVolume()
+		fsVol := snapVol.NewVMBlockFilesystemVolume()
+		_, oldName, _ := api.GetParentAndSnapshotName(snapVol.Name())
+		_, newName, _ := api.GetParentAndSnapshotName(newVolName)
+		err = drivers.Qcow2RenameConfigSnapshot(fsParentVol, fsVol, newName, op)
+		if err != nil {
+			return nil, err
+		}
+
+		reverter.Add(func() {
+			_ = drivers.Qcow2RenameConfigSnapshot(fsParentVol, newSnapVol.NewVMBlockFilesystemVolume(), oldName, nil)
+		})
+	}
+
+	cleanup := reverter.Clone().Fail
+	reverter.Success()
+
+	return cleanup, nil
+}
+
+// qcow2UnmountRunningSnapshot drops the mount a running instance holds on a qcow2 snapshot, which stays active in its backing chain.
+func (b *backend) qcow2UnmountRunningSnapshot(snapVol drivers.Volume, op *operations.Operation) error {
+	snapVol.MountRefCountDecrement()
+
+	if snapVol.IsVMBlock() {
+		fsVol := snapVol.NewVMBlockFilesystemVolume()
+		_, err := b.driver.UnmountVolumeSnapshot(fsVol, op)
+		if err != nil {
+			if linux.IsMountPoint(fsVol.MountPath()) {
+				fsVol.MountRefCountIncrement()
+			}
+
+			snapVol.MountRefCountIncrement()
+			return err
+		}
+	}
+
+	return nil
+}
+
+// qcow2RebaseRenamedSnapshot points the qcow2 images backed by a renamed snapshot at its new path.
+func (b *backend) qcow2RebaseRenamedSnapshot(vol drivers.Volume, snapVolDiskPath string, newSnapVolDiskPath string, volSnaps []db.StorageVolumeArgs, projectName string, op *operations.Operation) error {
 	// Update the metadata of the parent if it points to a renamed volume.
-	err = vol.MountWithSnapshotsTask(func(_ string, _ map[string]string, op *operations.Operation) error {
+	return vol.MountWithSnapshotsTask(func(_ string, _ map[string]string, op *operations.Operation) error {
 		parentDiskPath, err := b.driver.GetVolumeDiskPath(vol)
 		if err != nil {
 			return err
@@ -10019,21 +10640,6 @@ func (b *backend) qcow2RenameSnapshot(vol drivers.Volume, snapVol drivers.Volume
 
 		return nil
 	}, op)
-	if err != nil {
-		return err
-	}
-
-	if vol.IsVMBlock() {
-		fsParentVol := vol.NewVMBlockFilesystemVolume()
-		fsVol := snapVol.NewVMBlockFilesystemVolume()
-		_, newName, _ := api.GetParentAndSnapshotName(newVolName)
-		err = drivers.Qcow2RenameConfigSnapshot(fsParentVol, fsVol, newName, op)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // qcow2DeleteSnapshot deletes the QCOW2 volume snapshot.
@@ -10193,16 +10799,6 @@ func (b *backend) qcow2Resize(inst instance.Instance, vol drivers.Volume, size s
 		return nil
 	}
 
-	volDiskPath, err := b.driver.GetVolumeDiskPath(vol)
-	if err != nil {
-		return err
-	}
-
-	imgInfo, err := drivers.Qcow2Info(volDiskPath)
-	if err != nil {
-		return err
-	}
-
 	sizeBytes, err := units.ParseByteSizeString(size)
 	if err != nil {
 		return err
@@ -10217,33 +10813,46 @@ func (b *backend) qcow2Resize(inst instance.Instance, vol drivers.Volume, size s
 	// Round the size to closest minSizeBytes bytes.
 	sizeBytes = drivers.RoundAbove(minSizeBytes, sizeBytes)
 
-	if sizeBytes <= int64(imgInfo.VirtualSize) {
-		return fmt.Errorf("Qcow2 volume cannot be shrunk")
-	}
-
-	err = drivers.Qcow2Resize(volDiskPath, sizeBytes)
-	if err != nil {
-		return err
-	}
-
-	// Move the GPT alt header to the end of the guest disk.
-	if vol.IsVMBlock() {
-		nbdPath, err := drivers.ConnectQemuNbd(volDiskPath, "qcow2", "", false)
+	// The volume of a stopped instance is deactivated, mount it with the snapshots backing it for the resize.
+	return vol.MountWithSnapshotsTask(func(_ string, _ map[string]string, _ *operations.Operation) error {
+		volDiskPath, err := b.driver.GetVolumeDiskPath(vol)
 		if err != nil {
 			return err
 		}
 
-		defer func() {
-			_ = drivers.DisconnectQemuNbdWait(nbdPath)
-		}()
-
-		err = drivers.MoveGPTAltHeader(b.logger, nbdPath)
+		imgInfo, err := drivers.Qcow2Info(volDiskPath)
 		if err != nil {
 			return err
 		}
-	}
 
-	return nil
+		if sizeBytes <= int64(imgInfo.VirtualSize) {
+			return fmt.Errorf("Qcow2 volume cannot be shrunk")
+		}
+
+		err = drivers.Qcow2Resize(volDiskPath, sizeBytes)
+		if err != nil {
+			return err
+		}
+
+		// Move the GPT alt header to the end of the guest disk.
+		if vol.IsVMBlock() {
+			nbdPath, err := drivers.ConnectQemuNbd(volDiskPath, "qcow2", "", false)
+			if err != nil {
+				return err
+			}
+
+			defer func() {
+				_ = drivers.DisconnectQemuNbdWait(nbdPath)
+			}()
+
+			err = drivers.MoveGPTAltHeader(b.logger, nbdPath)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}, op)
 }
 
 // qcow2BackingPaths returns information about the backing chain of a qcow2 image.
@@ -10302,6 +10911,23 @@ func (b *backend) qcow2BackingPaths(vol drivers.Volume, diskPath string, project
 	}
 
 	return backingPaths, nil
+}
+
+// qcow2BlockIndexes returns the position of each snapshot of a qcow2 volume in its block chain, oldest first,
+// along with the position of the volume itself.
+func (b *backend) qcow2BlockIndexes(vol drivers.Volume, projectName string, volName string) (map[string]int, int, error) {
+	volSnaps, err := VolumeDBSnapshotsGet(b, projectName, volName, vol.Type())
+	if err != nil {
+		return nil, 0, err
+	}
+
+	indexes := make(map[string]int, len(volSnaps))
+	for i, snap := range volSnaps {
+		_, snapName, _ := api.GetParentAndSnapshotName(snap.Name)
+		indexes[snapName] = i
+	}
+
+	return indexes, len(volSnaps), nil
 }
 
 // qcow2MigrateVolume migrates QCOW2 volume.
@@ -10487,17 +11113,29 @@ func (b *backend) qcow2MigrateVolume(s *state.State, vol drivers.Volume, project
 		}, op)
 	}
 
-	// blockIndex identifies the block device by position rather than name.
-	// QEMU is unaware of snapshot names, but both snapshots and block
-	// devices are ordered from oldest to newest, allowing the index to
-	// reliably select the correct block device to export.
-	blockIndex := 0
+	// QEMU is unaware of snapshot names, so block devices are selected by their position in the chain,
+	// which a refresh can't derive from the snapshots it sends.
+	blockIndexes, volBlockIndex, err := b.qcow2BlockIndexes(vol, projectName, parentVolName)
+	if err != nil {
+		return err
+	}
+
+	// A snapshot being sent as the volume sits at its own position in the chain.
+	if vol.IsSnapshot() {
+		_, snapName, _ := api.GetParentAndSnapshotName(volName)
+		volBlockIndex = blockIndexes[snapName]
+	}
 
 	// Send all snapshots to target.
 	for _, snapName := range volSrcArgs.Snapshots {
 		snapshot, err := vol.NewSnapshot(snapName)
 		if err != nil {
 			return err
+		}
+
+		blockIndex, ok := blockIndexes[snapName]
+		if !ok {
+			return fmt.Errorf("Snapshot %q not found in the block chain of %q", snapName, vol.Name())
 		}
 
 		// Send snapshot to target (ensure local snapshot volume is mounted if needed).
@@ -10521,8 +11159,6 @@ func (b *backend) qcow2MigrateVolume(s *state.State, vol drivers.Volume, project
 		if err != nil {
 			return err
 		}
-
-		blockIndex += 1
 	}
 
 	// Send volume to target (ensure local volume is mounted if needed).
@@ -10535,7 +11171,7 @@ func (b *backend) qcow2MigrateVolume(s *state.State, vol drivers.Volume, project
 		}
 
 		if vol.IsVMBlock() || (drivers.IsContentBlock(vol.ContentType()) && vol.Type() == drivers.VolumeTypeCustom) {
-			err := sendBlockVol(vol, conn, blockIndex)
+			err := sendBlockVol(vol, conn, volBlockIndex)
 			if err != nil {
 				return err
 			}
@@ -10707,7 +11343,7 @@ func (b *backend) qcow2CreateVolumeFromMigration(vol drivers.Volume, projectName
 				return err
 			}
 
-			err = b.qcow2CreateSnapshot(vol, snapVol, projectName, nil, "", false, op)
+			_, err = b.qcow2CreateSnapshot(vol, snapVol, projectName, nil, "", false, nil, op)
 			if err != nil {
 				return err
 			}
@@ -10851,7 +11487,12 @@ func (b *backend) qcow2BackupVolume(vol drivers.Volume, dbVol *db.StorageVolume,
 		return nbdPath, cleanup, nil
 	}
 
-	blockIndex := 0
+	// QEMU is unaware of snapshot names, so block devices are selected by their position in the chain.
+	blockIndexes, volBlockIndex, err := b.qcow2BlockIndexes(vol, projectName, dbVol.Name)
+	if err != nil {
+		return err
+	}
+
 	// Handle snapshots.
 	if len(snapshots) > 0 {
 		for _, snapName := range snapshots {
@@ -10859,6 +11500,11 @@ func (b *backend) qcow2BackupVolume(vol drivers.Volume, dbVol *db.StorageVolume,
 			snapVol, err := vol.NewSnapshot(snapName)
 			if err != nil {
 				return err
+			}
+
+			blockIndex, ok := blockIndexes[snapName]
+			if !ok {
+				return fmt.Errorf("Snapshot %q not found in the block chain of %q", snapName, vol.Name())
 			}
 
 			err = vol.MountWithSnapshotsTask(func(parentMountPath string, snapsMountPath map[string]string, op *operations.Operation) error {
@@ -10886,7 +11532,7 @@ func (b *backend) qcow2BackupVolume(vol drivers.Volume, dbVol *db.StorageVolume,
 
 	// Copy the main volume itself.
 	err = vol.MountWithSnapshotsTask(func(mountPath string, _ map[string]string, op *operations.Operation) error {
-		diskPath, cleanup, err := getDiskPath(vol, blockIndex)
+		diskPath, cleanup, err := getDiskPath(vol, volBlockIndex)
 		if err != nil {
 			return err
 		}
@@ -11002,7 +11648,7 @@ func (b *backend) qcow2UnpackVolume(vol drivers.Volume, snapshots []string, srcD
 			return nil, nil, err
 		}
 
-		err = b.qcow2CreateSnapshot(vol, snapVol, "", nil, "", false, op)
+		_, err = b.qcow2CreateSnapshot(vol, snapVol, "", nil, "", false, nil, op)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -11322,6 +11968,22 @@ func (b *backend) createDependentVolumesFromMigration(inst instance.Instance, co
 		}
 
 		b.logger.Debug("Creating dependent volume from migration", logger.Ctx{"name": dependentVol.Name, "type": dependentVol.MigrationType, "size": dependentVol.VolumeSize})
+
+		// Validate the volume name as it's used as a path segment.
+		err = validate.IsAPIName(dependentVol.Name, false)
+		if err != nil {
+			return nil, fmt.Errorf("Invalid dependent volume name: %w", err)
+		}
+
+		// Enforce the target project's storage pool restrictions.
+		if !project.StoragePoolAllowed(inst.Project().Config, dependentVol.Pool) {
+			return nil, fmt.Errorf("Storage pool %q not allowed for project %q", dependentVol.Pool, inst.Project().Name)
+		}
+
+		// The offer and index headers both come from the source, don't assume they match.
+		if info == nil || info.Config == nil || len(info.Config.DependentVolumes) <= idx || info.Config.DependentVolumes[idx] == nil || info.Config.DependentVolumes[idx].Volume == nil {
+			return nil, errors.New("Bad dependent volume definition found in index header")
+		}
 
 		// During a refresh only the new snapshots should be received. The root volume's
 		// args.Snapshots list has already been reduced to the snapshots the target is

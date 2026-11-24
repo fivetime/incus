@@ -8,8 +8,8 @@ import (
 )
 
 // TestMigrationHeaderFieldNumbers pins the wire numbers of the fields this
-// fork adds to MigrationHeader, and of upstream's blockFeatures and
-// multifdChannels, which the fork moved off 15 and 16. Deployed fork servers
+// fork adds to MigrationHeader, and of upstream's blockFeatures,
+// multifdChannels and dirtyBitmaps, which the fork moved off 15, 16 and 17. Deployed fork servers
 // read and write these numbers, so an upstream merge that reuses one must be
 // resolved, not taken as is.
 func TestMigrationHeaderFieldNumbers(t *testing.T) {
@@ -22,6 +22,7 @@ func TestMigrationHeaderFieldNumbers(t *testing.T) {
 		"cephDriver":      18,
 		"blockFeatures":   19,
 		"multifdChannels": 20,
+		"dirtyBitmaps":    21,
 	} {
 		field := fields.ByName(name)
 		require.NotNil(t, field, name)

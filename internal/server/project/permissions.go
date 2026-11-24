@@ -423,8 +423,8 @@ func restoreRestrictedVolatileConfig(project api.Project, instanceType instancet
 			continue
 		}
 
-		// Idmap keys describe the on-disk state of the snapshot and so must come from it.
-		if strings.HasPrefix(key, "volatile.idmap.") || key == "volatile.last_state.idmap" {
+		// The on-disk idmap state must come from the snapshot, its allocation is replaced on restore.
+		if key == "volatile.last_state.idmap" {
 			continue
 		}
 
@@ -470,6 +470,24 @@ func AllowVolumeCreation(tx *db.ClusterTx, projectName string, poolName string, 
 	err = checkRestrictionsAndAggregateLimits(tx, info)
 	if err != nil {
 		return fmt.Errorf("Failed checking if volume creation allowed: %w", err)
+	}
+
+	return nil
+}
+
+// AllowBucketCreation returns an error if the project's storage pool restrictions forbid the pool.
+func AllowBucketCreation(tx *db.ClusterTx, projectName string, poolName string) error {
+	info, err := fetchProject(tx, projectName, true)
+	if err != nil {
+		return err
+	}
+
+	if info == nil {
+		return nil
+	}
+
+	if !StoragePoolAllowed(info.Project.Config, poolName) {
+		return fmt.Errorf("Storage pool %q not allowed for project %q", poolName, projectName)
 	}
 
 	return nil
@@ -1199,6 +1217,7 @@ func isContainerLowLevelOptionForbidden(key string) bool {
 	}
 
 	if slices.Contains([]string{
+		"boot.autostart.delay",
 		"boot.host_shutdown_action",
 		"boot.host_shutdown_timeout",
 		"linux.kernel_modules",
@@ -1226,6 +1245,7 @@ func isContainerLowLevelOptionForbidden(key string) bool {
 // Return true if a low-level VM option is forbidden.
 func isVMLowLevelOptionForbidden(key string) bool {
 	return slices.Contains([]string{
+		"boot.autostart.delay",
 		"boot.host_shutdown_action",
 		"boot.host_shutdown_timeout",
 		"limits.memory.hugepages",
@@ -1458,8 +1478,13 @@ func AllowProjectUpdate(tx *db.ClusterTx, projectName string, config map[string]
 	// instances.
 	aggregateKeys := []string{}
 
-	for _, key := range changed {
-		if strings.HasPrefix(key, "restricted.") {
+	// Restrictions only apply to restricted projects, so only check them there.
+	if util.IsTrue(config["restricted"]) {
+		for _, key := range changed {
+			if !strings.HasPrefix(key, "restricted.") {
+				continue
+			}
+
 			project := api.Project{
 				Name: projectName,
 				ProjectPut: api.ProjectPut{
@@ -1472,9 +1497,11 @@ func AllowProjectUpdate(tx *db.ClusterTx, projectName string, config map[string]
 				return fmt.Errorf("Conflict detected when changing %q in project %q: %w", key, projectName, err)
 			}
 
-			continue
+			break
 		}
+	}
 
+	for _, key := range changed {
 		switch key {
 		case "limits.instances":
 			err := validateTotalInstanceCountLimit(info.Instances, config[key], projectName)
@@ -1705,14 +1732,24 @@ func fetchProject(tx *db.ClusterTx, projectName string, skipIfNoLimits bool) (*p
 		dbInstanceIDs = append(dbInstanceIDs, dbInstance.ID)
 	}
 
+	dbInstanceConfigs, err := cluster.GetConfig(ctx, tx.Tx(), "instances", "instance", cluster.ConfigFilter{ReferenceID: dbInstanceIDs})
+	if err != nil {
+		return nil, fmt.Errorf("Fetch instance configs from database: %w", err)
+	}
+
 	dbInstanceDevices, err := cluster.GetDevices(ctx, tx.Tx(), "instances", "instance", cluster.DeviceFilter{ReferenceID: dbInstanceIDs})
 	if err != nil {
 		return nil, fmt.Errorf("Fetch instance devices from database: %w", err)
 	}
 
+	dbInstanceProfiles, err := cluster.GetAllInstanceProfiles(ctx, tx.Tx())
+	if err != nil {
+		return nil, fmt.Errorf("Fetch instance profiles from database: %w", err)
+	}
+
 	instances := make([]api.Instance, 0, len(dbInstances))
 	for _, inst := range dbInstances {
-		apiInstance, err := inst.ToAPI(ctx, tx.Tx(), dbInstanceDevices, dbProfileConfigs, dbProfileDevices)
+		apiInstance, err := inst.ToAPI(ctx, tx.Tx(), dbInstanceConfigs, dbInstanceDevices, dbInstanceProfiles, dbProfileConfigs, dbProfileDevices)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get API data for instance %q in project %q: %w", inst.Name, inst.Project, err)
 		}
@@ -2071,16 +2108,29 @@ func AllowSnapshotCreation(p *api.Project) error {
 	return nil
 }
 
-// GetRestrictedClusterGroups returns a slice of restricted cluster groups for the given project.
+// GetRestrictedClusterGroups returns the cluster groups a restricted project is limited to.
 func GetRestrictedClusterGroups(p *api.Project) []string {
+	if util.IsFalseOrEmpty(p.Config["restricted"]) {
+		return nil
+	}
+
 	return util.SplitNTrimSpace(p.Config["restricted.cluster.groups"], ",", -1, true)
+}
+
+// NoCandidateMemberError returns the error for an instance that couldn't be placed on any cluster member.
+func NoCandidateMemberError(p *api.Project) error {
+	clusterGroupsAllowed := GetRestrictedClusterGroups(p)
+	if len(clusterGroupsAllowed) > 1 {
+		return api.StatusErrorf(http.StatusBadRequest, "Couldn't find a cluster member for the instance, target one of the project's cluster groups: %s", strings.Join(clusterGroupsAllowed, ", "))
+	}
+
+	return api.StatusErrorf(http.StatusInternalServerError, "Couldn't find a cluster member for the instance")
 }
 
 // AllowClusterMember returns nil if the given project is allowed to use the cluster member.
 func AllowClusterMember(p *api.Project, member *db.NodeInfo) error {
 	clusterGroupsAllowed := GetRestrictedClusterGroups(p)
-
-	if util.IsTrue(p.Config["restricted"]) && len(clusterGroupsAllowed) > 0 {
+	if len(clusterGroupsAllowed) > 0 {
 		for _, memberGroupName := range member.Groups {
 			if slices.Contains(clusterGroupsAllowed, memberGroupName) {
 				return nil
@@ -2096,12 +2146,6 @@ func AllowClusterMember(p *api.Project, member *db.NodeInfo) error {
 // AllowClusterGroup returns nil if the given project is allowed to use the cluster groupName.
 func AllowClusterGroup(p *api.Project, groupName string) error {
 	clusterGroupsAllowed := GetRestrictedClusterGroups(p)
-
-	// Skip the check if the project is not restricted
-	if util.IsFalseOrEmpty(p.Config["restricted"]) {
-		return nil
-	}
-
 	if len(clusterGroupsAllowed) > 0 && !slices.Contains(clusterGroupsAllowed, groupName) {
 		return fmt.Errorf("Project isn't allowed to use this cluster group: %q", groupName)
 	}
@@ -2163,6 +2207,14 @@ func CheckTarget(ctx context.Context, authorizer auth.Authorizer, r *http.Reques
 		targetGroupName = after
 	} else {
 		targetMemberName = target
+	}
+
+	// A project restricted to a single cluster group targets it by default.
+	if target == "" {
+		clusterGroupsAllowed := GetRestrictedClusterGroups(p)
+		if len(clusterGroupsAllowed) == 1 {
+			targetGroupName = clusterGroupsAllowed[0]
+		}
 	}
 
 	// Check manual cluster member targeting restrictions.

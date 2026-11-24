@@ -45,7 +45,7 @@ User keys can be used in search.
 ```{config:option} attached devices-disk
 :default: "`true`"
 :required: "no"
-:shortdesc: "Only for VMs: Whether the disk is attached or ejected"
+:shortdesc: "Only for VMs: Whether the disk is attached or ejected (only for custom ISO volumes)"
 :type: "bool"
 
 ```
@@ -79,7 +79,14 @@ User keys can be used in search.
 :required: "no"
 :shortdesc: "Specifies if the disk is instance dependent"
 :type: "bool"
+A dependent disk ties a custom storage volume to the instance.
+The volume is snapshotted, restored, copied, moved, exported and deleted together with the instance.
 
+A dependent volume cannot be attached to another instance or snapshotted on its own.
+It cannot use `security.shared` or any `snapshots.*` option, and a volume that already has snapshots cannot be made dependent.
+
+When the instance moves to another cluster member, dependent volumes on shared storage are taken over rather than transferred.
+Live migration is not supported with dependent file system volumes.
 ```
 
 ```{config:option} initial.* devices-disk
@@ -127,7 +134,7 @@ to use `virtiofs` if possible (`migration.stateful` not set to `true` and host s
 :required: "no"
 :shortdesc: "Only for VMs: Override the caching mode for the device"
 :type: "string"
-This controls what bus a disk device should be attached to.
+This controls the caching mode used for the disk device.
 
 For block devices (disks), this is one of:
 - `none` (default)
@@ -207,7 +214,7 @@ For file systems (shared directories or custom volumes), this is one of:
 ```
 
 ```{config:option} path devices-disk
-:required: "yes"
+:required: "for file system disks"
 :shortdesc: "Path inside the instance where the disk will be mounted (only for file system disk devices)"
 :type: "string"
 This controls which path inside the instance the disk should be mounted on.
@@ -215,6 +222,8 @@ This controls which path inside the instance the disk should be mounted on.
 With containers, this option supports mounting file system disk devices, and paths and single files within them.
 
 With VMs, this option supports mounting file system disk devices and paths within them. Mounting single files is not supported.
+
+The path is required for file system disks (`/` identifies the root disk). It cannot be set for block or ISO disks attached to VMs.
 ```
 
 ```{config:option} pool devices-disk
@@ -295,7 +304,7 @@ With VMs, this option supports mounting file system disk devices and paths withi
 :default: "``"
 :required: "no"
 :shortdesc: "Only for VMs: Set the disk World Wide Name (only supported on `virtio-scsi` bus)"
-:type: "bool"
+:type: "string"
 
 ```
 
@@ -460,6 +469,13 @@ With VMs, this option supports mounting file system disk devices and paths withi
 ```{config:option} productid devices-gpu_physical
 :required: "no"
 :shortdesc: "The product ID of the GPU device"
+:type: "string"
+
+```
+
+```{config:option} rebar.<N>.size devices-gpu_physical
+:required: "no"
+:shortdesc: "Size to set resizable BAR `N` to before passing the GPU to the VM, for example `8GiB` (VM only)"
 :type: "string"
 
 ```
@@ -1945,6 +1961,13 @@ The custom policy routing table ID to add IPv6 static routes to (in addition to 
 
 ```
 
+```{config:option} variant devices-nic_sriov
+:required: "no"
+:shortdesc: "VFIO variant to use (registers the NIC with the generic `vfio-pci` driver if unset, or with `mlx5_vfio_pci` if set to `mlx5`)"
+:type: "string"
+
+```
+
 ```{config:option} vendorid devices-nic_sriov
 :required: "no"
 :shortdesc: "The vendor ID of the parent host device"
@@ -1973,6 +1996,13 @@ The custom policy routing table ID to add IPv6 static routes to (in addition to 
 :required: "no"
 :shortdesc: "Whether to expose the device's option ROM to the VM"
 :type: "bool"
+
+```
+
+```{config:option} rebar.<N>.size devices-pci
+:required: "no"
+:shortdesc: "Size to set resizable BAR `N` to before passing the device to the VM (for example `8GiB`)"
+:type: "string"
 
 ```
 
@@ -2297,6 +2327,17 @@ The custom policy routing table ID to add IPv6 static routes to (in addition to 
 ```
 
 <!-- config group image-requirements end -->
+<!-- config group image-volume start -->
+```{config:option} volume.size_hint image-volume
+:shortdesc: "Size of the cached image volume"
+:type: "string"
+Size of the cached image volume. For a container image on a block backed storage pool, it is used
+when it is smaller than the pool's `volume.size` (or the default size). For a virtual machine image,
+it is used when it is larger than that size, so the volume doesn't need a resize after unpacking.
+It is ignored if invalid or smaller than the image file, and doesn't affect instance volume sizes.
+```
+
+<!-- config group image-volume end -->
 <!-- config group instance-boot start -->
 ```{config:option} boot.autorestart instance-boot
 :liveupdate: "no"
@@ -2317,7 +2358,7 @@ If unset or set to `last-state`, restores the last state.
 :liveupdate: "no"
 :shortdesc: "Delay after starting the instance"
 :type: "integer"
-The number of seconds to wait after the instance started before starting the next one.
+The number of seconds to wait after the instance started before starting the next one in its project.
 ```
 
 ```{config:option} boot.autostart.priority instance-boot
@@ -2327,6 +2368,7 @@ The number of seconds to wait after the instance started before starting the nex
 The instance with the highest value is started first.
 Instances without a priority set will be started (with some parallelism) ahead of
 instances with a priority set.
+The order only applies within a project, projects are started in parallel.
 ```
 
 ```{config:option} boot.host_shutdown_action instance-boot
@@ -2348,11 +2390,14 @@ Number of seconds to wait for the instance to shut down before it is force-stopp
 ```
 
 ```{config:option} boot.pxe instance-boot
+:condition: "virtual machine"
 :defaultdesc: "no"
-:liveupdate: "yes"
+:liveupdate: "no"
 :shortdesc: "Whether to enable PXE boot"
 :type: "bool"
+This controls IPv4 and IPv6 PXE support in the UEFI firmware of the virtual machine.
 
+The option is read when the virtual machine starts and must be set on the instance itself, a value inherited from a profile is ignored.
 ```
 
 ```{config:option} boot.stop.priority instance-boot
@@ -2361,6 +2406,7 @@ Number of seconds to wait for the instance to shut down before it is force-stopp
 :shortdesc: "What order to shut down the instances in"
 :type: "integer"
 The instance with the highest value is shut down first.
+The order only applies within a project, projects are shut down in parallel.
 ```
 
 <!-- config group instance-boot end -->
@@ -2470,7 +2516,7 @@ For virtual machines, set this option to `true` to set the name and MTU of the d
 
 ```{config:option} cluster.evacuate instance-miscellaneous
 :defaultdesc: "`auto`"
-:liveupdate: "no"
+:liveupdate: "yes"
 :shortdesc: "What to do when evacuating the instance"
 :type: "string"
 The `cluster.evacuate` provides control over how instances are handled when a cluster member is being
@@ -2522,21 +2568,21 @@ Specify the kernel modules as a comma-separated list.
 ```
 
 ```{config:option} smbios11.* instance-miscellaneous
-:liveupdate: "yes"
+:liveupdate: "no"
 :shortdesc: "Free-form `SMBIOS Type 11` key/value"
 :type: "string"
 `SMBIOS Type 11` configuration keys.
 ```
 
 ```{config:option} systemd.credential-binary.* instance-miscellaneous
-:liveupdate: "yes"
+:liveupdate: "yes (containers only)"
 :shortdesc: "Systemd credential key/value, where value is Base64 encoded"
 :type: "string"
 Systemd credential key/value pair passed as a read-only bind mount in containers and as `SMBIOS Type 11` data in virtual machines. The value is Base64 encoded.
 ```
 
 ```{config:option} systemd.credential.* instance-miscellaneous
-:liveupdate: "yes"
+:liveupdate: "yes (containers only)"
 :shortdesc: "Systemd credential key/value"
 :type: "string"
 Systemd credential key/value pair passed as a read-only bind mount in containers and as `SMBIOS Type 11` data in virtual machines.
@@ -2665,7 +2711,7 @@ Base64-encoded variable value to set when generating the NVRAM, optionally prefi
 ```
 
 ```{config:option} raw.apparmor instance-raw
-:liveupdate: "yes"
+:liveupdate: "yes (containers only)"
 :shortdesc: "AppArmor profile entries"
 :type: "blob"
 The specified entries are appended to the generated profile.
@@ -2769,7 +2815,7 @@ See {ref}`instance-options-limits-cpu-container` for more information.
 ```
 
 ```{config:option} limits.cpu.nodes instance-resource-limits
-:liveupdate: "yes"
+:liveupdate: "yes (containers only)"
 :shortdesc: "Which NUMA nodes to place the instance CPUs on"
 :type: "string"
 A comma-separated list of NUMA node IDs or ranges to place the instance CPUs on.
@@ -2792,7 +2838,7 @@ See {ref}`instance-options-limits-cpu-container` for more information.
 
 ```{config:option} limits.disk.priority instance-resource-limits
 :defaultdesc: "`5` (medium)"
-:liveupdate: "yes"
+:liveupdate: "yes (containers only)"
 :shortdesc: "Priority of the instance's I/O requests"
 :type: "integer"
 Controls how much priority to give to the instance's I/O requests when under load.
@@ -2868,7 +2914,7 @@ If it is `soft`, the instance can exceed its memory limit when extra host memory
 ```{config:option} limits.memory.hotplug instance-resource-limits
 :condition: "virtual machine"
 :defaultdesc: "`true`"
-:liveupdate: "yes"
+:liveupdate: "no"
 :shortdesc: "Control upper limit for hotplugged memory or disable memory hotplug."
 :type: "string"
 If this option is set to `false`, disable memory hotplug entirely.
@@ -2983,7 +3029,7 @@ This option accepts signatures armored with `SIGNATURE` in addition to certifica
 ```{config:option} security.agent.metrics instance-security
 :condition: "virtual machine"
 :defaultdesc: "`true`"
-:liveupdate: "no"
+:liveupdate: "yes"
 :shortdesc: "Whether the `incus-agent` is queried for state information and metrics"
 :type: "bool"
 
@@ -3048,7 +3094,7 @@ When enabling this option, set {config:option}`instance-security:security.secure
 
 ```{config:option} security.guestapi instance-security
 :defaultdesc: "`true`"
-:liveupdate: "no"
+:liveupdate: "yes"
 :shortdesc: "Whether `/dev/incus` is present in the instance"
 :type: "bool"
 See {ref}`dev-incus` for more information.
@@ -3152,7 +3198,7 @@ When disabling this option, consider enabling {config:option}`instance-security:
 
 ```{config:option} security.selinux.domain instance-security
 :condition: "container or virtual machine"
-:defaultdesc: "auto-detected (`container_init_t` for containers, `qemu_t` for VMs)"
+:defaultdesc: "auto-detected (`container_init_t` or `spc_t` for containers, `qemu_t` or `svirt_t` for VMs)"
 :liveupdate: "no"
 :shortdesc: "SELinux process domain override"
 :type: "string"
@@ -3187,7 +3233,7 @@ Values set via profiles are ignored.
 
 ```{config:option} security.selinux.type instance-security
 :condition: "container or virtual machine"
-:defaultdesc: "auto-detected (`container_file_t` for containers, `qemu_image_t` for VMs)"
+:defaultdesc: "auto-detected (`container_file_t` for containers, `qemu_image_t` or `svirt_image_t` for VMs)"
 :liveupdate: "no"
 :shortdesc: "SELinux file type override"
 :type: "string"
@@ -3531,6 +3577,12 @@ The original MAC that was used when moving a physical device into an instance.
 Comma-separated list of the last used IP addresses of the network device.
 ```
 
+```{config:option} volatile.<name>.last_state.migratable instance-volatile
+:shortdesc: "NIC original migratable capability"
+:type: "string"
+The original NIC migratable capability
+```
+
 ```{config:option} volatile.<name>.last_state.mtu instance-volatile
 :shortdesc: "Network device original MTU"
 :type: "string"
@@ -3553,6 +3605,48 @@ The parent host device used when allocating a PCI device to an instance.
 :shortdesc: "PCI parent slot name"
 :type: "string"
 The parent host device PCI slot name.
+```
+
+```{config:option} volatile.<name>.last_state.rebar.<N>.size instance-volatile
+:shortdesc: "PCI original resizable BAR size"
+:type: "string"
+The original size in bytes of resizable BAR `N` of the PCI device.
+```
+
+```{config:option} volatile.<name>.last_state.representor instance-volatile
+:shortdesc: "Representor name"
+:type: "string"
+The representor port name
+```
+
+```{config:option} volatile.<name>.last_state.representor.mtu instance-volatile
+:shortdesc: "Representor original MTU"
+:type: "string"
+The original representor MTU
+```
+
+```{config:option} volatile.<name>.last_state.representor.pvid instance-volatile
+:shortdesc: "Representor original PVID"
+:type: "string"
+The original representor PVID
+```
+
+```{config:option} volatile.<name>.last_state.representor.tagged instance-volatile
+:shortdesc: "Representor original tagged VLANs"
+:type: "string"
+The original representor tagged VLANs
+```
+
+```{config:option} volatile.<name>.last_state.representor.untagged instance-volatile
+:shortdesc: "Representor original untagged VLANs"
+:type: "string"
+The original representor untagged VLANs
+```
+
+```{config:option} volatile.<name>.last_state.representor.up instance-volatile
+:shortdesc: "Representor original state"
+:type: "string"
+The original representor state
 ```
 
 ```{config:option} volatile.<name>.last_state.usb.bus instance-volatile
@@ -5180,6 +5274,12 @@ User keys can be used in search.
 
 ```
 
+```{config:option} variant network_sriov-common
+:shortdesc: "VFIO variant to use (registers `sriov` NICs with the generic `vfio-pci` driver if unset, or with `mlx5_vfio_pci` if set to `mlx5`)"
+:type: "string"
+
+```
+
 ```{config:option} vlan network_sriov-common
 :condition: "-"
 :shortdesc: "The VLAN ID to attach to"
@@ -5361,6 +5461,7 @@ Possible values are `allow` or `block`.
 :shortdesc: "Cluster groups that can be targeted"
 :type: "string"
 If specified, this option prevents targeting cluster groups other than the provided ones.
+When a single group is listed, instances created without a target are placed in that group.
 ```
 
 ```{config:option} restricted.cluster.target project-restricted
@@ -5877,7 +5978,8 @@ Specify the number of seconds after which an unresponsive member is considered o
 :scope: "global"
 :shortdesc: "Maximum number of instances to move during one re-balancing run"
 :type: "integer"
-
+Only virtual machines that can be live-migrated are moved.
+A re-balancing run stops once this number of instances has been moved.
 ```
 
 ```{config:option} cluster.rebalance.cooldown server-cluster
@@ -5885,7 +5987,8 @@ Specify the number of seconds after which an unresponsive member is considered o
 :scope: "global"
 :shortdesc: "Amount of time during which an instance will not be moved again"
 :type: "string"
-
+An instance moved by a re-balancing run is not considered again until this amount of time has passed.
+The value is a sequence of space-separated `<integer><unit>` fields, with the unit being one of `S`, `M`, `H`, `d`, `w`, `m` or `y`.
 ```
 
 ```{config:option} cluster.rebalance.interval server-cluster
@@ -5893,7 +5996,8 @@ Specify the number of seconds after which an unresponsive member is considered o
 :scope: "global"
 :shortdesc: "How often (in minutes) to consider re-balancing things. 0 to disable (default)"
 :type: "integer"
-
+On every run, the cluster leader scores each online cluster member by averaging its memory usage and its 1-minute load average relative to its CPU count, both as percentages.
+Members are compared per CPU architecture, and virtual machines are live-migrated from the most loaded member to less loaded ones.
 ```
 
 ```{config:option} cluster.rebalance.threshold server-cluster
@@ -5901,7 +6005,8 @@ Specify the number of seconds after which an unresponsive member is considered o
 :scope: "global"
 :shortdesc: "Percentage load difference between most and least busy server needed to trigger a migration"
 :type: "integer"
-
+The difference is the gap between the scores of the most and least loaded servers, as a percentage of the score of the most loaded one.
+This must be a number between `10` and `100`.
 ```
 
 <!-- config group server-cluster end -->
@@ -6937,13 +7042,6 @@ has completed.
 
 <!-- config group storage_linstor-common end -->
 <!-- config group storage_lvm-common start -->
-```{config:option} block.type storage_lvm-common
-:condition: "block-based volume"
-:default: "same as `volume.block.type`"
-:shortdesc: "Type of the block volume"
-
-```
-
 ```{config:option} lvm.metadata_size storage_lvm-common
 :default: "`0` (auto)"
 :scope: "global"
@@ -7129,6 +7227,14 @@ has completed.
 :default: "same as `volume.initial.uid` or `0`"
 :shortdesc: "UID of the volume owner in the instance"
 :type: "int"
+
+```
+
+```{config:option} migration.follow_instance storage_volume_btrfs-common
+:condition: "custom volume"
+:default: "`false`"
+:shortdesc: "Move the volume along with the virtual machine it's attached to when it moves to another cluster member"
+:type: "bool"
 
 ```
 
@@ -7444,6 +7550,14 @@ has completed.
 
 ```
 
+```{config:option} migration.follow_instance storage_volume_dir-common
+:condition: "custom volume"
+:default: "`false`"
+:shortdesc: "Move the volume along with the virtual machine it's attached to when it moves to another cluster member"
+:type: "bool"
+
+```
+
 ```{config:option} security.shared storage_volume_dir-common
 :condition: "custom block volume"
 :default: "same as `volume.security.shared` or `false`"
@@ -7687,6 +7801,15 @@ has completed.
 
 ```
 
+```{config:option} block.type storage_volume_lvm-common
+:condition: "`lvmcluster` driver, VM or custom volume with content type `block`"
+:default: "same as `volume.block.type` or `qcow2`"
+:shortdesc: "Type of the block volume"
+:type: "string"
+Possible values are `qcow2` and `raw`.
+The type cannot be changed after the volume is created.
+```
+
 ```{config:option} initial.gid storage_volume_lvm-common
 :condition: "custom volume with content type `filesystem`"
 :default: "same as `volume.initial.gid` or `0`"
@@ -7711,8 +7834,16 @@ has completed.
 
 ```
 
+```{config:option} lvm.snapshots.chunk_size storage_volume_lvm-common
+:condition: "pool without a thin pool"
+:default: "same as `volume.lvm.snapshots.chunk_size` or LVM's default (4KiB)"
+:shortdesc: "Copy-on-write chunk size of new snapshots (power of two between 4KiB and 512KiB)"
+:type: "string"
+
+```
+
 ```{config:option} lvm.stripes storage_volume_lvm-common
-:condition: "-"
+:condition: "pool not using a thin pool (`lvm.use_thinpool=false` or `lvmcluster` driver)"
 :default: "same as `volume.lvm.stripes`"
 :shortdesc: "Number of stripes to use for new volumes (or thin pool volume)"
 :type: "string"
@@ -7720,7 +7851,7 @@ has completed.
 ```
 
 ```{config:option} lvm.stripes.size storage_volume_lvm-common
-:condition: "-"
+:condition: "pool not using a thin pool (`lvm.use_thinpool=false` or `lvmcluster` driver)"
 :default: "same as `volume.lvm.stripes.size`"
 :shortdesc: "Size of stripes to use (at least 4096 bytes and multiple of 512 bytes)"
 :type: "string"
@@ -7728,9 +7859,18 @@ has completed.
 ```
 
 ```{config:option} lvmcluster.remove_snapshots storage_volume_lvm-common
-:condition: "-"
+:condition: "`lvmcluster` driver"
 :default: "same as `volume.lvmcluster.remove_snapshots` or `false`"
 :shortdesc: "Remove snapshots as needed"
+:type: "bool"
+Only the most recent snapshot of a `qcow2` volume can be restored.
+When this option is enabled, restoring an older snapshot deletes all the snapshots taken after it.
+```
+
+```{config:option} migration.follow_instance storage_volume_lvm-common
+:condition: "custom volume"
+:default: "`false`"
+:shortdesc: "Move the volume along with the virtual machine it's attached to when it moves to another cluster member"
 :type: "bool"
 
 ```
@@ -7983,6 +8123,14 @@ has completed.
 :default: "same as `volume.initial.uid` or `0`"
 :shortdesc: "UID of the volume owner in the instance"
 :type: "int"
+
+```
+
+```{config:option} migration.follow_instance storage_volume_zfs-common
+:condition: "custom volume"
+:default: "`false`"
+:shortdesc: "Move the volume along with the virtual machine it's attached to when it moves to another cluster member"
+:type: "bool"
 
 ```
 

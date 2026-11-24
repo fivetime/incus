@@ -94,6 +94,15 @@ const ContentTypeBlock = ContentType("block")
 // ContentTypeISO indicates the volume will be an ISO which is read-only, and uses the ISO 9660 filesystem.
 const ContentTypeISO = ContentType("iso")
 
+// VolumeAccessMode indicates how a volume is locked between cluster members.
+type VolumeAccessMode string
+
+// VolumeAccessModeShared allows other cluster members to activate the volume.
+const VolumeAccessModeShared = VolumeAccessMode("shared")
+
+// VolumeAccessModeExclusive restricts activation of the volume to the local cluster member.
+const VolumeAccessModeExclusive = VolumeAccessMode("exclusive")
+
 // VolumePostHook function returned from a storage action that should be run later to complete the action.
 type VolumePostHook func(vol Volume) error
 
@@ -548,6 +557,11 @@ func (v Volume) IsVMBlock() bool {
 	return (v.volType == VolumeTypeVM || v.volType == VolumeTypeImage) && v.contentType == ContentTypeBlock
 }
 
+// IsVMFilesystem returns true if volume is the filesystem volume paired with a VM or VM image block volume.
+func (v Volume) IsVMFilesystem() bool {
+	return (v.volType == VolumeTypeVM || v.volType == VolumeTypeImage) && v.contentType == ContentTypeFS
+}
+
 // IsCustomBlock returns true if volume is a custom block volume.
 func (v Volume) IsCustomBlock() bool {
 	return (v.volType == VolumeTypeCustom && v.contentType == ContentTypeBlock)
@@ -599,8 +613,8 @@ func (v Volume) SetConfigStateSize(size string) {
 // ConfigBlockFilesystem returns the filesystem to use for block volumes. Returns config value "block.filesystem"
 // if defined in volume or pool's volume config, otherwise the DefaultFilesystem.
 func (v Volume) ConfigBlockFilesystem() string {
-	blockType := v.ExpandedConfig("block.type")
-	if blockType != "" && blockType == BlockVolumeTypeQcow2 && v.contentType == ContentTypeFS {
+	// The filesystem volume of a qcow2 VM holds its config on btrfs.
+	if v.IsVMFilesystem() && v.ExpandedConfig("block.type") == BlockVolumeTypeQcow2 {
 		return "btrfs"
 	}
 
@@ -615,7 +629,7 @@ func (v Volume) ConfigBlockFilesystem() string {
 // ConfigBlockMountOptions returns the filesystem mount options to use for block volumes. Returns config value
 // "block.mount_options" if defined in volume or pool's volume config, otherwise defaultFilesystemMountOptions.
 func (v Volume) ConfigBlockMountOptions() string {
-	if v.ExpandedConfig("block.type") == BlockVolumeTypeQcow2 && !v.mountFullFilesystem {
+	if v.IsVMFilesystem() && v.ExpandedConfig("block.type") == BlockVolumeTypeQcow2 && !v.mountFullFilesystem {
 		_, snapName, isSnap := api.GetParentAndSnapshotName(v.name)
 		subvol := Qcow2ConfigVolumeBase
 		if isSnap {
@@ -652,6 +666,54 @@ func (v Volume) ConfigSize() string {
 
 	// Return defined size or empty string if not defined.
 	return size
+}
+
+// ConfigSizeFromHint returns the size to use for a new image volume given the image's size hint.
+// A block backed filesystem volume uses the hint when it's smaller than ConfigSize, a block volume
+// when it's larger, so the hint only ever saves space or avoids a resize after unpacking.
+// An error is returned if the hint is invalid or smaller than minSizeBytes.
+func (v Volume) ConfigSizeFromHint(sizeHint string, minSizeBytes int64) (string, error) {
+	size := v.ConfigSize()
+
+	if sizeHint == "" {
+		return size, nil
+	}
+
+	if v.contentType == ContentTypeFS && !v.IsBlockBacked() {
+		return size, nil
+	}
+
+	if v.contentType != ContentTypeFS && v.contentType != ContentTypeBlock {
+		return size, nil
+	}
+
+	hintBytes, err := units.ParseByteSizeString(sizeHint)
+	if err != nil {
+		return "", fmt.Errorf("Invalid size hint %q: %w", sizeHint, err)
+	}
+
+	if hintBytes <= 0 {
+		return "", fmt.Errorf("Invalid size hint %q: Must be greater than zero", sizeHint)
+	}
+
+	if hintBytes < minSizeBytes {
+		return "", fmt.Errorf("Invalid size hint %q: Smaller than the image (%d bytes)", sizeHint, minSizeBytes)
+	}
+
+	sizeBytes, err := units.ParseByteSizeString(size)
+	if err != nil {
+		return "", err
+	}
+
+	if v.contentType == ContentTypeFS && hintBytes >= sizeBytes {
+		return size, nil
+	}
+
+	if v.contentType == ContentTypeBlock && hintBytes <= sizeBytes {
+		return size, nil
+	}
+
+	return fmt.Sprintf("%d", hintBytes), nil
 }
 
 // ConfigSizeFromSource derives the volume size to use for a new volume when copying from a source volume.

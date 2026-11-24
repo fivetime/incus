@@ -604,6 +604,11 @@ func (m *Monitor) MigrateIncomingUnix(path string) error {
 
 // MigrateIncomingWait waits for the incoming migration to complete or fail.
 func (m *Monitor) MigrateIncomingWait(ctx context.Context) error {
+	// Listen for status change events (sent when the "events" migration capability is set),
+	// falling back to polling when they're not available.
+	chEvent, cancel := m.listenForEvent(EventMigration)
+	defer cancel()
+
 	for {
 		// Prepare the response.
 		var resp struct {
@@ -634,7 +639,23 @@ func (m *Monitor) MigrateIncomingWait(ctx context.Context) error {
 			return err
 		}
 
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			// Query the job one last time before giving up.
+			continue
+		case data := <-chEvent:
+			status, ok := data["status"].(string)
+			if ok {
+				if status == "failed" {
+					return errors.New("Migrate incoming call failed")
+				}
+
+				if status == "completed" {
+					return nil
+				}
+			}
+		case <-time.After(1 * time.Second):
+		}
 	}
 }
 
@@ -681,6 +702,27 @@ func (m *Monitor) GetCPUs() ([]int, error) {
 	}
 
 	return pids, nil
+}
+
+// GetIOThreads returns the IDs of the iothread objects.
+func (m *Monitor) GetIOThreads() ([]string, error) {
+	var resp struct {
+		Return []struct {
+			ID string `json:"id"`
+		} `json:"return"`
+	}
+
+	err := m.Run("query-iothreads", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(resp.Return))
+	for _, thread := range resp.Return {
+		ids = append(ids, thread.ID)
+	}
+
+	return ids, nil
 }
 
 // GetMemorySizeBytes returns the current size of the base memory in bytes.
@@ -1164,65 +1206,46 @@ func (m *Monitor) NBDServerStart(listenPath string, maxConnections int) (net.Con
 		MaxConnections int `json:"max-connections"`
 	}
 
-	listenAddress := listenPath
-	if listenAddress == "" {
-		// Create abstract unix listener.
-		listener, err := net.Listen("unix", "")
-		if err != nil {
-			return nil, fmt.Errorf("Failed creating unix listener: %w", err)
-		}
+	// QEMU may have dropped privileges, bind the socket ourselves and pass the FD.
+	err := os.Remove(listenPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("Failed to remove stale socket %q: %w", listenPath, err)
+	}
 
-		// Get the random address, and then close the listener, and pass the address for use with nbd-server-start.
-		listenAddress = listener.Addr().String()
-		_ = listener.Close()
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: listenPath, Net: "unix"})
+	if err != nil {
+		return nil, fmt.Errorf("Failed creating unix listener: %w", err)
+	}
 
-		args.Addr.Type = "unix"
-		args.Addr.Data = map[string]any{
-			"path":     strings.TrimPrefix(listenAddress, "@"),
-			"abstract": true,
-		}
-	} else {
-		// QEMU may have dropped privileges, bind the socket ourselves and pass the FD.
-		err := os.Remove(listenPath)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("Failed to remove stale socket %q: %w", listenPath, err)
-		}
+	listener.SetUnlinkOnClose(false)
 
-		listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: listenPath, Net: "unix"})
-		if err != nil {
-			return nil, fmt.Errorf("Failed creating unix listener: %w", err)
-		}
+	listenerFile, err := listener.File()
+	_ = listener.Close()
+	if err != nil {
+		return nil, fmt.Errorf("Failed getting listener file descriptor: %w", err)
+	}
 
-		listener.SetUnlinkOnClose(false)
+	defer func() { _ = listenerFile.Close() }()
 
-		listenerFile, err := listener.File()
-		_ = listener.Close()
-		if err != nil {
-			return nil, fmt.Errorf("Failed getting listener file descriptor: %w", err)
-		}
+	err = m.SendFile(listenPath, listenerFile)
+	if err != nil {
+		return nil, fmt.Errorf("Failed sending listener file descriptor: %w", err)
+	}
 
-		defer func() { _ = listenerFile.Close() }()
-
-		err = m.SendFile(listenPath, listenerFile)
-		if err != nil {
-			return nil, fmt.Errorf("Failed sending listener file descriptor: %w", err)
-		}
-
-		args.Addr.Type = "fd"
-		args.Addr.Data = map[string]any{
-			"str": listenPath,
-		}
+	args.Addr.Type = "fd"
+	args.Addr.Data = map[string]any{
+		"str": listenPath,
 	}
 
 	args.MaxConnections = maxConnections
 
-	err := m.Run("nbd-server-start", args, nil)
+	err = m.Run("nbd-server-start", args, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// Connect to the NBD server and return the connection.
-	conn, err := net.Dial("unix", listenAddress)
+	conn, err := net.Dial("unix", listenPath)
 	if err != nil {
 		return nil, fmt.Errorf("Failed connecting to NBD server: %w", err)
 	}
@@ -1460,6 +1483,44 @@ func (m *Monitor) BlockNodeSize(nodeName string) (int64, error) {
 	}
 
 	return 0, fmt.Errorf("Block node %q not found", nodeName)
+}
+
+// BlockNodeFile describes the file behind a block node.
+type BlockNodeFile struct {
+	VirtualSize int64
+	ClusterSize int64
+	ExtendedL2  bool
+}
+
+// GetBlockNodeFile returns the file details of the given block node.
+func (m *Monitor) GetBlockNodeFile(nodeName string) (*BlockNodeFile, error) {
+	var resp struct {
+		Return []struct {
+			NodeName string `json:"node-name"`
+			Image    struct {
+				VirtualSize    int64 `json:"virtual-size"`
+				ClusterSize    int64 `json:"cluster-size"`
+				FormatSpecific struct {
+					Data struct {
+						ExtendedL2 bool `json:"extended-l2"`
+					} `json:"data"`
+				} `json:"format-specific"`
+			} `json:"image"`
+		} `json:"return"`
+	}
+
+	err := m.Run("query-named-block-nodes", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, node := range resp.Return {
+		if node.NodeName == nodeName {
+			return &BlockNodeFile{VirtualSize: node.Image.VirtualSize, ClusterSize: node.Image.ClusterSize, ExtendedL2: node.Image.FormatSpecific.Data.ExtendedL2}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Block node %q not found", nodeName)
 }
 
 // BlockNodeDirtyBitmaps returns the dirty bitmaps of the given block node.

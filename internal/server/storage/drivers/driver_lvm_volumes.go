@@ -77,7 +77,7 @@ func (d *lvm) CreateVolume(vol Volume, filler *VolumeFiller, op *operations.Oper
 		if err != nil {
 			return err
 		}
-	} else if vol.ContentType() == ContentTypeFS && vol.ExpandedConfig("block.type") == BlockVolumeTypeQcow2 {
+	} else if vol.IsVMFilesystem() && vol.ExpandedConfig("block.type") == BlockVolumeTypeQcow2 {
 		err = Qcow2CreateConfig(vol, op)
 		if err != nil {
 			return err
@@ -211,6 +211,19 @@ func (d *lvm) CreateVolumeFromMigration(vol Volume, conn io.ReadWriteCloser, vol
 			return err
 		}
 
+		reverter := revert.New()
+		defer reverter.Fail()
+
+		// The source keeps using the volume until the live migration completes.
+		if volTargetArgs.Live && d.exclusiveVolume(vol) {
+			err := d.activateVolumeShared(vol)
+			if err != nil {
+				return err
+			}
+
+			reverter.Add(func() { _, _ = d.deactivateVolume(vol) })
+		}
+
 		if vol.IsVMBlock() {
 			fsVol := vol.NewVMBlockFilesystemVolume()
 			err := d.CreateVolumeFromMigration(fsVol, conn, volTargetArgs, preFiller, op)
@@ -219,6 +232,7 @@ func (d *lvm) CreateVolumeFromMigration(vol Volume, conn io.ReadWriteCloser, vol
 			}
 		}
 
+		reverter.Success()
 		return nil
 	}
 
@@ -423,8 +437,9 @@ func (d *lvm) HasVolume(vol Volume) (bool, error) {
 func (d *lvm) FillVolumeConfig(vol Volume) error {
 	// Copy volume.* configuration options from pool.
 	// Exclude "block.filesystem", "block.mount_options", and "block.create_options" as they depend on volume type (handled below).
-	// Exclude "lvm.stripes", "lvm.stripes.size" as they only work on non-thin storage pools (handled below).
-	err := d.fillVolumeConfig(&vol, "block.filesystem", "block.mount_options", "block.create_options", "lvm.stripes", "lvm.stripes.size")
+	// Exclude "lvm.stripes", "lvm.stripes.size" and "lvm.snapshots.chunk_size" as they only work on non-thin storage pools (handled below).
+	// Exclude "block.type" as it only applies to block volumes (handled below).
+	err := d.fillVolumeConfig(&vol, "block.filesystem", "block.mount_options", "block.create_options", "lvm.stripes", "lvm.stripes.size", "lvm.snapshots.chunk_size", "block.type")
 	if err != nil {
 		return err
 	}
@@ -461,6 +476,11 @@ func (d *lvm) FillVolumeConfig(vol Volume) error {
 	}
 
 	if d.clustered && (vol.IsVMBlock() || vol.IsCustomBlock()) {
+		// Inherit the block type from the pool if not set.
+		if vol.config["block.type"] == "" {
+			vol.config["block.type"] = d.config["volume.block.type"]
+		}
+
 		// Set default block type to qcow2.
 		if vol.config["block.type"] == "" {
 			vol.config["block.type"] = BlockVolumeTypeQcow2
@@ -480,6 +500,10 @@ func (d *lvm) FillVolumeConfig(vol Volume) error {
 
 		if vol.config["lvm.stripes.size"] == "" && d.config["volume.lvm.stripes.size"] != "" {
 			vol.config["lvm.stripes.size"] = d.config["volume.lvm.stripes.size"]
+		}
+
+		if vol.config["lvm.snapshots.chunk_size"] == "" && d.config["volume.lvm.snapshots.chunk_size"] != "" {
+			vol.config["lvm.snapshots.chunk_size"] = d.config["volume.lvm.snapshots.chunk_size"]
 		}
 	}
 
@@ -520,7 +544,7 @@ func (d *lvm) commonVolumeRules() map[string]func(value string) error {
 		//
 		// ---
 		//  type: string
-		//  condition: -
+		//  condition: pool not using a thin pool (`lvm.use_thinpool=false` or `lvmcluster` driver)
 		//  default: same as `volume.lvm.stripes`
 		//  shortdesc: Number of stripes to use for new volumes (or thin pool volume)
 		"lvm.stripes": validate.Optional(validate.IsUint32),
@@ -529,27 +553,38 @@ func (d *lvm) commonVolumeRules() map[string]func(value string) error {
 		//
 		// ---
 		//  type: string
-		//  condition: -
+		//  condition: pool not using a thin pool (`lvm.use_thinpool=false` or `lvmcluster` driver)
 		//  default: same as `volume.lvm.stripes.size`
 		//  shortdesc: Size of stripes to use (at least 4096 bytes and multiple of 512 bytes)
 		"lvm.stripes.size": validate.Optional(validate.IsSize),
+
+		// gendoc:generate(entity=storage_volume_lvm, group=common, key=lvm.snapshots.chunk_size)
+		//
+		// ---
+		//  type: string
+		//  condition: pool without a thin pool
+		//  default: same as `volume.lvm.snapshots.chunk_size` or LVM's default (4KiB)
+		//  shortdesc: Copy-on-write chunk size of new snapshots (power of two between 4KiB and 512KiB)
+		"lvm.snapshots.chunk_size": validate.Optional(validateLVMSnapshotChunkSize),
 	}
 
 	if d.clustered {
-		// gendoc:generate(entity=storage_lvm, group=common, key=block.type)
-		//
+		// gendoc:generate(entity=storage_volume_lvm, group=common, key=block.type)
+		// Possible values are `qcow2` and `raw`.
+		// The type cannot be changed after the volume is created.
 		// ---
-		//  type:string
-		//  condition: block-based volume
-		//  default: same as `volume.block.type`
+		//  type: string
+		//  condition: `lvmcluster` driver, VM or custom volume with content type `block`
+		//  default: same as `volume.block.type` or `qcow2`
 		//  shortdesc: Type of the block volume
 		rules["block.type"] = validate.Optional(validate.IsOneOf(BlockVolumeTypeRaw, BlockVolumeTypeQcow2))
 
 		// gendoc:generate(entity=storage_volume_lvm, group=common, key=lvmcluster.remove_snapshots)
-		//
+		// Only the most recent snapshot of a `qcow2` volume can be restored.
+		// When this option is enabled, restoring an older snapshot deletes all the snapshots taken after it.
 		// ---
 		//  type: bool
-		//  condition: -
+		//  condition: `lvmcluster` driver
 		//  default: same as `volume.lvmcluster.remove_snapshots` or `false`
 		//  shortdesc: Remove snapshots as needed
 		rules["lvmcluster.remove_snapshots"] = validate.Optional(validate.IsBool)
@@ -583,6 +618,14 @@ func (d *lvm) ValidateVolume(vol Volume, removeUnknownKeys bool) error {
 	//  condition: custom volume with content type `filesystem`
 	//  default: same as `volume.initial.uid` or `0`
 	//  shortdesc: UID of the volume owner in the instance
+
+	// gendoc:generate(entity=storage_volume_lvm, group=common, key=migration.follow_instance)
+	//
+	// ---
+	//  type: bool
+	//  condition: custom volume
+	//  default: `false`
+	//  shortdesc: Move the volume along with the virtual machine it's attached to when it moves to another cluster member
 
 	// gendoc:generate(entity=storage_volume_lvm, group=common, key=security.shared)
 	//
@@ -680,8 +723,16 @@ func (d *lvm) ValidateVolume(vol Volume, removeUnknownKeys bool) error {
 		return errors.New("lvm.stripes.size cannot be used with thin pool volumes")
 	}
 
+	if d.usesThinpool() && vol.config["lvm.snapshots.chunk_size"] != "" {
+		return errors.New("lvm.snapshots.chunk_size cannot be used with thin pool volumes")
+	}
+
 	if vol.config["block.type"] == BlockVolumeTypeQcow2 && util.IsTrue(vol.config["security.shared"]) {
 		return errors.New("QCOW2 volume type is incompatible with the 'security.shared' option.")
+	}
+
+	if vol.config["block.type"] != "" && !IsContentBlock(vol.contentType) {
+		return errors.New("block.type can only be used with block volumes")
 	}
 
 	return nil
@@ -852,7 +903,7 @@ func (d *lvm) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool, op
 			}
 		} else if sizeBytes > oldSizeBytes {
 			// Get exclusive mode if active.
-			release, err := d.acquireExclusive(vol)
+			release, err := d.acquireExclusiveIfActive(vol)
 			if err != nil {
 				return err
 			}
@@ -899,8 +950,8 @@ func (d *lvm) SetVolumeQuota(vol Volume, size string, allowUnsafeResize bool, op
 			}
 		}
 
-		// Get exclusive mode.
-		release, err := d.acquireExclusive(vol)
+		// Get exclusive mode if active.
+		release, err := d.acquireExclusiveIfActive(vol)
 		if err != nil {
 			return err
 		}
@@ -1321,17 +1372,23 @@ func (d *lvm) RenameVolume(vol Volume, newVolName string, op *operations.Operati
 				return err
 			}
 
-			releaseSnap, err := d.acquireExclusive(snapVol)
+			wasActive, err := d.lvActive(snapVol)
+			if err != nil {
+				return err
+			}
+
+			_, err = d.acquireExclusive(snapVol)
 			if err != nil {
 				return err
 			}
 
 			err = d.renameLogicalVolume(snapVolPath, newSnapVolPath)
 			if err != nil {
+				d.restoreActivation(snapVol, wasActive)
 				return err
 			}
 
-			releaseSnap()
+			d.restoreActivation(NewVolume(d, d.name, vol.volType, vol.contentType, newSnapVolName, snapVol.config, snapVol.poolConfig), wasActive)
 
 			reverter.Add(func() { _ = d.renameLogicalVolume(newSnapVolPath, snapVolPath) })
 		}
@@ -1385,54 +1442,98 @@ func (d *lvm) RenameVolume(vol Volume, newVolName string, op *operations.Operati
 	}, false, op)
 }
 
+// SetVolumeAccessMode switches the lock of an active volume to the given access mode.
+func (d *lvm) SetVolumeAccessMode(vol Volume, mode VolumeAccessMode) error {
+	// Custom block volumes get switched both ways when their dependent setting changes.
+	if !d.clustered || vol.IsSnapshot() || (vol.volType != VolumeTypeVM && !vol.IsCustomBlock()) {
+		return nil
+	}
+
+	activation := "ey"
+	revertActivation := "sy"
+	if mode == VolumeAccessModeShared {
+		activation = "sy"
+		revertActivation = "ey"
+	}
+
+	// Switch the VM's config volume before its block volume.
+	vols := []Volume{vol}
+	if vol.IsVMBlock() {
+		vols = []Volume{vol.NewVMBlockFilesystemVolume(), vol}
+	}
+
+	lvmActivation.Lock()
+	defer lvmActivation.Unlock()
+
+	reverter := revert.New()
+	defer reverter.Fail()
+
+	for _, v := range vols {
+		volPath := d.lvmPath(d.config["lvm.vg_name"], v.volType, v.contentType, v.name)
+		volDevPath, err := d.lvmDevPath(volPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		if volDevPath == "" {
+			continue
+		}
+
+		_, err = subprocess.RunCommand("lvchange", "--activate", activation, "--ignoreactivationskip", volPath)
+		if err != nil {
+			return fmt.Errorf("Failed to switch lock mode of LVM logical volume %q: %w", volPath, err)
+		}
+
+		reverter.Add(func() {
+			_, _ = subprocess.RunCommand("lvchange", "--activate", revertActivation, "--ignoreactivationskip", volPath)
+		})
+	}
+
+	reverter.Success()
+
+	return nil
+}
+
+// IsVolumeLocked checks whether a volume is locked by another cluster member.
+func (d *lvm) IsVolumeLocked(vol Volume) (bool, error) {
+	if !d.clustered {
+		return false, nil
+	}
+
+	vols := []Volume{vol}
+	if vol.IsVMBlock() {
+		vols = append(vols, vol.NewVMBlockFilesystemVolume())
+	}
+
+	lvmActivation.Lock()
+	defer lvmActivation.Unlock()
+
+	for _, v := range vols {
+		volPath := d.lvmPath(d.config["lvm.vg_name"], v.volType, v.contentType, v.name)
+
+		// A local shared activation doesn't tell whether another member also holds the volume.
+		_, err := subprocess.RunCommand("lvchange", "--activate", "ey", "--ignoreactivationskip", volPath)
+		if err != nil {
+			runError, ok := errors.AsType[subprocess.RunError](err)
+			if ok && strings.Contains(runError.StdErr().String(), "locked by other host") {
+				return true, nil
+			}
+
+			return false, fmt.Errorf("Failed to activate LVM logical volume %q: %w", volPath, err)
+		}
+
+		_, err = subprocess.TryRunCommand("lvchange", "--activate", "n", "--ignoreactivationskip", volPath)
+		if err != nil {
+			return false, fmt.Errorf("Failed to deactivate LVM logical volume %q: %w", volPath, err)
+		}
+	}
+
+	return false, nil
+}
+
 // MigrateVolume sends a volume for migration.
 func (d *lvm) MigrateVolume(vol Volume, conn io.ReadWriteCloser, volSrcArgs *migration.VolumeSourceArgs, op *operations.Operation) error {
 	if d.clustered && volSrcArgs.ClusterMove && !volSrcArgs.StorageMove {
-		// Ensure the volume allows shared access.
-		if vol.volType == VolumeTypeVM || vol.IsCustomBlock() {
-			lvmActivation.Lock()
-			defer lvmActivation.Unlock()
-
-			// Block volume.
-			volPath := d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.Name())
-			volDevPath, err := d.lvmDevPath(volPath)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-
-			if volDevPath != "" {
-				if vol.Type() == VolumeTypeVM || vol.ContentType() == ContentTypeBlock || vol.ContentType() == ContentTypeISO {
-					_, err := subprocess.RunCommand("lvchange", "--activate", "sy", "--ignoreactivationskip", volPath)
-					if err != nil {
-						return err
-					}
-				} else {
-					_, err := subprocess.RunCommand("lvchange", "--activate", "ey", "--ignoreactivationskip", volPath)
-					if err != nil {
-						return err
-					}
-				}
-			}
-
-			// Filesystem volume.
-			if vol.IsVMBlock() {
-				fsVol := vol.NewVMBlockFilesystemVolume()
-
-				volPath := d.lvmPath(d.config["lvm.vg_name"], fsVol.volType, fsVol.contentType, fsVol.Name())
-				volDevPath, err := d.lvmDevPath(volPath)
-				if err != nil && !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-
-				if volDevPath != "" {
-					_, err := subprocess.RunCommand("lvchange", "--activate", "sy", "--ignoreactivationskip", volPath)
-					if err != nil {
-						return err
-					}
-				}
-			}
-		}
-
 		return nil // When performing a cluster member move don't do anything on the source member.
 	}
 
@@ -1631,7 +1732,7 @@ func (d *lvm) MountVolumeSnapshot(snapVol Volume, op *operations.Operation) erro
 		mountVol := snapVol
 		mountFlags, mountOptions := linux.ResolveMountOptions(strings.Split(mountVol.ConfigBlockMountOptions(), ","))
 
-		isQcow2 := snapVol.ExpandedConfig("block.type") == BlockVolumeTypeQcow2
+		isQcow2 := snapVol.IsVMFilesystem() && snapVol.ExpandedConfig("block.type") == BlockVolumeTypeQcow2
 		if isQcow2 {
 			parentName, _, _ := api.GetParentAndSnapshotName(snapVol.name)
 			mountVol = NewVolume(d, d.name, snapVol.volType, snapVol.contentType, parentName, snapVol.config, snapVol.poolConfig)
@@ -2083,7 +2184,7 @@ func (d *lvm) RestoreVolume(vol Volume, snapshotName string, op *operations.Oper
 
 		// Only resize when needed as newer LVM fails to grow snapshots already at full CoW capacity.
 		if needsGrow {
-			_, err = subprocess.TryRunCommand("lvresize", "-l", "+100%ORIGIN", "-f", snapLVPath)
+			_, err = lvmTryRunCommand("lvresize", "-l", "+100%ORIGIN", "-f", snapLVPath)
 			if err != nil {
 				return err
 			}
@@ -2099,7 +2200,7 @@ func (d *lvm) RestoreVolume(vol Volume, snapshotName string, op *operations.Oper
 
 		// Only resize when needed as newer LVM fails to grow snapshots already at full CoW capacity.
 		if needsGrow {
-			_, err = subprocess.TryRunCommand("lvresize", "-l", "+100%ORIGIN", "-f", snapLVPath)
+			_, err = lvmTryRunCommand("lvresize", "-l", "+100%ORIGIN", "-f", snapLVPath)
 			if err != nil {
 				return err
 			}
@@ -2168,12 +2269,19 @@ func (d *lvm) RenameVolumeSnapshot(snapVol Volume, newSnapshotName string, op *o
 	newSnapVolName := GetSnapshotVolumeName(parentName, newSnapshotName)
 	newVolPath := d.lvmPath(d.config["lvm.vg_name"], snapVol.volType, snapVol.contentType, newSnapVolName)
 
-	release, err := d.acquireExclusive(snapVol)
+	wasActive, err := d.lvActive(snapVol)
 	if err != nil {
 		return err
 	}
 
-	defer release()
+	_, err = d.acquireExclusive(snapVol)
+	if err != nil {
+		return err
+	}
+
+	// The lock is released under whichever name the volume ends up with.
+	lockedVol := snapVol
+	defer func() { d.restoreActivation(lockedVol, wasActive) }()
 
 	reverter := revert.New()
 	defer reverter.Fail()
@@ -2183,7 +2291,11 @@ func (d *lvm) RenameVolumeSnapshot(snapVol Volume, newSnapshotName string, op *o
 		return fmt.Errorf("Error renaming LVM logical volume: %w", err)
 	}
 
-	reverter.Add(func() { _ = d.renameLogicalVolume(newVolPath, volPath) })
+	lockedVol = NewVolume(d, d.name, snapVol.volType, snapVol.contentType, newSnapVolName, snapVol.config, snapVol.poolConfig)
+	reverter.Add(func() {
+		_ = d.renameLogicalVolume(newVolPath, volPath)
+		lockedVol = snapVol
+	})
 
 	oldPath := snapVol.MountPath()
 	newPath := GetVolumeMountPath(d.name, snapVol.volType, newSnapVolName)
@@ -2197,12 +2309,19 @@ func (d *lvm) RenameVolumeSnapshot(snapVol Volume, newSnapshotName string, op *o
 		reverter.Add(func() { _ = os.Rename(newPath, oldPath) })
 	}
 
-	// For VMs, also rename the snapshot filesystem volume.
+	// For VMs, also rename the snapshot filesystem volume (qcow2 snapshots have none, their config is a subvolume of the parent's).
 	if snapVol.IsVMBlock() {
 		fsVol := snapVol.NewVMBlockFilesystemVolume()
-		err = d.RenameVolumeSnapshot(fsVol, newSnapshotName, op)
+		fsVolExists, err := d.logicalVolumeExists(d.lvmPath(d.config["lvm.vg_name"], fsVol.volType, fsVol.contentType, fsVol.name))
 		if err != nil {
 			return err
+		}
+
+		if fsVolExists {
+			err = d.RenameVolumeSnapshot(fsVol, newSnapshotName, op)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

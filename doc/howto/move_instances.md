@@ -20,6 +20,9 @@ In both cases, you don't need to specify the source remote if it is your default
 If you want to move the instance to a specific cluster member, specify it with the `--target` flag.
 In this case, do not specify the source and target remote.
 
+When a virtual machine moves to another cluster member, custom volumes on a local storage pool that have `migration.follow_instance` set to `true` are moved along with it.
+Such a volume can only be attached to a single virtual machine.
+
 You can add the `--mode` flag to choose a transfer mode, depending on your network setup:
 
 `pull` (default)
@@ -54,8 +57,11 @@ A live migration within a cluster can also move the instance to another project,
 `--target-project` with `--target`.
 The instance must move to a different cluster member, and its devices must resolve to the same
 set in the target project, because a running instance can't be given a different device set.
-Attached custom volumes don't follow the instance and must be moved separately, except for those
-marked `dependent`, which move with it.
+Attached custom volumes marked `dependent` move with the instance, other custom volumes don't.
+If the two projects don't share their custom volumes ({config:option}`project-features:features.storage.volumes`),
+the move is refused while a custom volume that isn't `dependent` is attached.
+If they do share them, the move is refused for an instance with a `dependent` volume on a storage pool
+that is available from all cluster members.
 
 (live-migration-containers)=
 ### Live migration for containers

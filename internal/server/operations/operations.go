@@ -107,11 +107,13 @@ type Operation struct {
 	entitlement auth.Entitlement
 	dbOpType    operationtype.Type
 	requestor   *api.EventLifecycleRequestor
+	request     *http.Request
 	logger      logger.Logger
 
 	// Those functions are called at various points in the Operation lifecycle
 	onRun     func(*Operation) error
 	onCancel  func(*Operation) error
+	running   bool
 	onConnect func(*Operation, *http.Request, http.ResponseWriter) error
 
 	// Indicates if operation has finished.
@@ -219,6 +221,10 @@ func (op *Operation) SetEventServer(eventServer *events.Server) {
 // SetRequestor sets a requestor for this operation from an http.Request.
 func (op *Operation) SetRequestor(r *http.Request) {
 	op.requestor = request.CreateRequestor(r)
+
+	// Keep a copy that outlives the HTTP request for later permission checks.
+	op.request = r.Clone(context.WithoutCancel(r.Context()))
+	op.request.Body = http.NoBody
 }
 
 // IsSameRequestor compares the current request requestor to that stored (if any).
@@ -240,11 +246,17 @@ func (op *Operation) IsSameRequestor(r *http.Request) bool {
 // CopyRequestor sets a requestor to match that of another operation.
 func (op *Operation) CopyRequestor(otherOp *Operation) {
 	op.requestor = otherOp.requestor
+	op.request = otherOp.request
 }
 
 // Requestor returns the initial requestor for this operation.
 func (op *Operation) Requestor() *api.EventLifecycleRequestor {
 	return op.requestor
+}
+
+// Request returns a copy of the request which created this operation, if any.
+func (op *Operation) Request() *http.Request {
+	return op.request
 }
 
 func (op *Operation) done() {
@@ -307,11 +319,20 @@ func (op *Operation) Start() error {
 	op.status = api.Running
 
 	if op.onRun != nil {
+		op.running = true
+
 		go func(op *Operation) {
 			err := op.onRun(op)
 			if err != nil {
+				// A cancelled operation still records why its run ended.
 				op.lock.Lock()
-				op.status = api.Failure
+				op.running = false
+				if op.status == api.Cancelling || op.status == api.Cancelled {
+					op.status = api.Cancelled
+				} else {
+					op.status = api.Failure
+				}
+
 				op.err = err
 				op.lock.Unlock()
 				op.done()
@@ -327,6 +348,7 @@ func (op *Operation) Start() error {
 			}
 
 			op.lock.Lock()
+			op.running = false
 			op.status = api.Success
 			op.lock.Unlock()
 			op.done()
@@ -388,7 +410,10 @@ func (op *Operation) Cancel() (chan error, error) {
 			err := onCancel(op)
 			if err != nil {
 				op.lock.Lock()
-				op.status = oldStatus
+				if op.status == api.Cancelling {
+					op.status = oldStatus
+				}
+
 				op.lock.Unlock()
 				chanCancel <- err
 
@@ -402,10 +427,19 @@ func (op *Operation) Cancel() (chan error, error) {
 				return
 			}
 
+			// A running function completes the operation itself so its result isn't lost.
 			op.lock.Lock()
-			op.status = api.Cancelled
+			running := op.running
+			if op.status == api.Cancelling {
+				op.status = api.Cancelled
+			}
+
 			op.lock.Unlock()
-			op.done()
+
+			if !running {
+				op.done()
+			}
+
 			chanCancel <- nil
 
 			op.logger.Debug("Cancelled operation")
@@ -430,9 +464,17 @@ func (op *Operation) Cancel() (chan error, error) {
 
 	if !hasOnCancel {
 		op.lock.Lock()
-		op.status = api.Cancelled
+		running := op.running
+		if op.status == api.Cancelling {
+			op.status = api.Cancelled
+		}
+
 		op.lock.Unlock()
-		op.done()
+
+		if !running {
+			op.done()
+		}
+
 		chanCancel <- nil
 	}
 
@@ -462,8 +504,11 @@ func (op *Operation) Connect(r *http.Request, w http.ResponseWriter) (chan error
 
 	chanConnect := make(chan error, 1)
 
+	// Capture the handler under the lock, done() clears it once the operation finishes.
+	onConnect := op.onConnect
+
 	go func(op *Operation, chanConnect chan error) {
-		err := op.onConnect(op, r, w)
+		err := onConnect(op, r, w)
 		if err != nil {
 			chanConnect <- err
 
@@ -480,6 +525,14 @@ func (op *Operation) Connect(r *http.Request, w http.ResponseWriter) (chan error
 	op.logger.Debug("Connecting to operation")
 
 	return chanConnect, nil
+}
+
+// Cancelable returns whether the operation can be canceled.
+func (op *Operation) Cancelable() bool {
+	op.lock.Lock()
+	defer op.lock.Unlock()
+
+	return op.mayCancel()
 }
 
 func (op *Operation) mayCancel() bool {
@@ -500,7 +553,19 @@ func (op *Operation) mayCancel() bool {
 
 // Render renders the operation structure.
 // Returns URL of operation and operation info.
+// connectSecretKeys are the websocket operation metadata keys holding per-connection
+// secrets. They're returned to the operation's creator in the synchronous create
+// response but stripped from every other render, so they're never broadcast on the
+// event stream or exposed through operation queries.
+var connectSecretKeys = []string{api.SecretNameControl, api.SecretNameFilesystem, "fds"}
+
+// Render renders the operation for events and API queries, with any websocket
+// connection secrets removed.
 func (op *Operation) Render() (string, *api.Operation, error) {
+	return op.render(false)
+}
+
+func (op *Operation) render(connectSecrets bool) (string, *api.Operation, error) {
 	// Setup the resource URLs
 	renderedResources := make(map[string][]string)
 	resources := op.resources
@@ -523,6 +588,13 @@ func (op *Operation) Render() (string, *api.Operation, error) {
 	// Make a read-only copy of the metadata to avoid concurrent reads/writes.
 	metadata := map[string]any{}
 	maps.Copy(metadata, op.metadata)
+
+	// Keep websocket connection secrets out of every render but the create response.
+	if !connectSecrets && op.class == OperationClassWebsocket {
+		for _, key := range connectSecretKeys {
+			delete(metadata, key)
+		}
+	}
 
 	// Put together the response struct.
 	retOp := &api.Operation{

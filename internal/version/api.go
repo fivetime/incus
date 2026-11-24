@@ -603,6 +603,12 @@ var APIExtensions = []string{
 	"nic_sriov_migration",
 	"auth_tls_jwt_cookie",
 	"cluster_healing_delay",
+	"storage_volume_migration_follow_instance",
+	"nic_sriov_migration_native",
+	"pci_rebar",
+	"image_volume_size_hint",
+	"network_allocations_project",
+	"storage_lvm_snapshot_chunk_size",
 
 	// Fork-only extensions. Keep these after every upstream entry so that
 	// merging upstream only ever conflicts at this boundary, and so an

@@ -523,9 +523,13 @@ test_clustering_containers() {
         ! INCUS_DIR="${INCUS_TWO_DIR}" incus move egg --target node3 --stateless || false
         INCUS_DIR="${INCUS_ONE_DIR}" incus info egg | grep -q "Location: node1"
         INCUS_DIR="${INCUS_TWO_DIR}" incus stop -f egg
+
+        # Put it back where the rest of the test expects it.
+        INCUS_DIR="${INCUS_TWO_DIR}" incus move egg --target node3
+        INCUS_DIR="${INCUS_ONE_DIR}" incus info egg | grep -q "Location: node3"
     fi
 
-    # Create backup and attempt to move container. Move should fail and container should remain on node1.
+    # Create backup and attempt to move container. Move should fail and container should remain on node3.
     INCUS_DIR="${INCUS_THREE_DIR}" incus query -X POST --wait -d '{\"name\":\"foo\"}' /1.0/instances/egg/backups
     ! INCUS_DIR="${INCUS_THREE_DIR}" incus move egg --target node2 || false
     INCUS_DIR="${INCUS_THREE_DIR}" incus info egg | grep -q "Location: node3"
@@ -675,6 +679,14 @@ test_clustering_storage() {
         INCUS_DIR="${INCUS_TWO_DIR}" incus storage volume show pool1 vol2 | grep -q node2
         INCUS_DIR="${INCUS_ONE_DIR}" incus storage volume rename pool1 vol2 vol3 --target=node2
         INCUS_DIR="${INCUS_TWO_DIR}" incus storage volume show pool1 vol3 | grep -q node2
+
+        # Check volume state is reachable from a member not holding the volume.
+        INCUS_DIR="${INCUS_ONE_DIR}" incus project create statep -c features.storage.volumes=true
+        INCUS_DIR="${INCUS_ONE_DIR}" incus storage volume create pool1 volstate --project statep --target=node1
+        INCUS_DIR="${INCUS_TWO_DIR}" incus query "/1.0/storage-pools/pool1/volumes/custom/volstate/state?project=statep"
+        INCUS_DIR="${INCUS_TWO_DIR}" incus query "/1.0/storage-pools/pool1/volumes/custom/volstate/state?project=statep&target=node1"
+        INCUS_DIR="${INCUS_ONE_DIR}" incus storage volume delete pool1 volstate --project statep --target=node1
+        INCUS_DIR="${INCUS_ONE_DIR}" incus project delete statep
 
         # Delete pool and check cleaned up.
         INCUS_DIR="${INCUS_ONE_DIR}" incus storage volume delete pool1 vol1 --target=node1
@@ -3149,6 +3161,31 @@ test_clustering_evacuation() {
     INCUS_DIR="${INCUS_TWO_DIR}" incus info c6 | grep -q "Status: RUNNING"
     INCUS_DIR="${INCUS_TWO_DIR}" incus info c6 | grep -q "Location: node2"
 
+    # Instances going through a stop and start cycle follow the boot order of their project.
+    INCUS_DIR="${INCUS_ONE_DIR}" incus project create evac -c features.images=false -c features.profiles=false
+    INCUS_DIR="${INCUS_ONE_DIR}" incus launch testimage o1 --target=node1 -s pool1 -c cluster.evacuate=migrate -c boot.host_shutdown_timeout=1 -c boot.stop.priority=1 -c boot.autostart.priority=2 -c boot.autostart.delay=15
+    INCUS_DIR="${INCUS_ONE_DIR}" incus launch testimage o2 --target=node1 -s pool1 -c cluster.evacuate=migrate -c boot.host_shutdown_timeout=1 -c boot.stop.priority=2 -c boot.autostart.priority=1
+    INCUS_DIR="${INCUS_ONE_DIR}" incus launch testimage o3 --project evac --target=node1 -s pool1 -c cluster.evacuate=migrate -c boot.host_shutdown_timeout=1 -c boot.autostart.priority=1
+
+    (INCUS_CLI_TIMEOUT=600 INCUS_DIR="${INCUS_TWO_DIR}" stdbuf -oL incus monitor --all-projects --type=lifecycle --format=json > "${TEST_DIR}/events.log" 2>&1) &
+    MONITOR=$!
+    sleep 2
+
+    INCUS_DIR="${INCUS_TWO_DIR}" incus cluster evacuate node1 --force
+    INCUS_DIR="${INCUS_TWO_DIR}" incus cluster restore node1 --force
+    sleep 2
+    kill "${MONITOR}" || true
+
+    jq -r 'select(.metadata.action == "instance-stopped") | .metadata.source' "${TEST_DIR}/events.log" | grep -E '/o[12]' | head -2 | tr '\n' ' ' | grep -qF '/1.0/instances/o2 /1.0/instances/o1 '
+    jq -r 'select(.metadata.action == "instance-started") | .metadata.source' "${TEST_DIR}/events.log" | grep -E '/o[12]' | tr '\n' ' ' | grep -qF '/1.0/instances/o1 /1.0/instances/o2 /1.0/instances/o1 /1.0/instances/o2 '
+
+    # The delay of one project doesn't hold up another.
+    jq -r 'select(.metadata.action == "instance-started") | .metadata.source' "${TEST_DIR}/events.log" | grep -E '/o[123]' | head -3 | tail -1 | grep -qF '/1.0/instances/o2'
+
+    INCUS_DIR="${INCUS_TWO_DIR}" incus rm -f o1 o2
+    INCUS_DIR="${INCUS_TWO_DIR}" incus rm -f o3 --project evac
+    INCUS_DIR="${INCUS_TWO_DIR}" incus project delete evac
+
     # Clean up
     INCUS_DIR="${INCUS_TWO_DIR}" incus rm -f c1
     INCUS_DIR="${INCUS_TWO_DIR}" incus rm -f c2
@@ -3668,14 +3705,38 @@ test_clustering_groups() {
     incus project create foo -c features.images=false -c restricted=true -c restricted.cluster.groups=blah
     incus profile show default | incus profile edit default --project foo
 
-    # Check cannot create instance in restricted project that only allows blah group, when the only member that
-    # exists in the blah group also has scheduler.instance=group set (so it must be targeted via group or directly).
-    ! incus init testimage cluster:c1 --project foo || false
+    # Check that a restricted project allowing only the blah group targets it by default, reaching the member
+    # that has scheduler.instance=group set.
+    incus init testimage cluster:c1 --project foo
+    incus info cluster:c1 --project foo | grep -q "Location: node2"
+    [ "$(incus config get cluster:c1 volatile.cluster.group --project foo)" = "blah" ]
+    incus delete -f c1 --project foo
+
+    # Check that the allowed groups only apply while the project is restricted.
+    incus project set foo restricted=false
+    incus init testimage cluster:c1 --project foo
+    incus info cluster:c1 --project foo | grep -q "Location: node1"
+    [ "$(incus config get cluster:c1 volatile.cluster.group --project foo)" = "" ]
+    incus delete -f c1 --project foo
+    incus project set foo restricted=true
 
     # Check cannot create instance in restricted project when targeting a member that isn't in the restricted
     # project's allowed cluster groups list.
     ! incus init testimage cluster:c1 --project foo --target=node1 || false
     ! incus init testimage cluster:c1 --project foo --target=@foobar2 || false
+
+    # Check that a restricted project allowing several groups without any member accepting untargeted instances
+    # tells the user to target one of the groups.
+    incus cluster group create cluster:baz
+    incus cluster group assign cluster:node3 baz
+    incus project set foo restricted.cluster.groups=blah,baz
+    incus init testimage cluster:c1 --project foo 2>&1 | grep -F "target one of the project's cluster groups: blah, baz"
+    incus init testimage cluster:c1 --project foo --target=node3
+    incus info cluster:c1 --project foo | grep -q "Location: node3"
+    incus delete -f c1 --project foo
+    incus project set foo restricted.cluster.groups=blah
+    incus cluster group assign cluster:node3 default
+    incus cluster group delete cluster:baz
 
     # Check can create instance in restricted project when not targeting any specific member, but that it will only
     # be created on members within the project's allowed cluster groups list.
@@ -4118,6 +4179,9 @@ test_clustering_healing() {
     grep cluster-member-offline "${TEST_DIR}/events.log" | grep -q 'members/node3'
     ! grep -q cluster-member-healed "${TEST_DIR}/events.log" || false
     INCUS_DIR="${INCUS_ONE_DIR}" incus cluster list -f csv | grep node3 | grep -q OFFLINE
+
+    # Healing must also recover a member which died during its own evacuation.
+    INCUS_DIR="${INCUS_ONE_DIR}" incus admin sql global "UPDATE nodes SET state=3 WHERE name='node3'"
 
     # The evacuation only starts once the delay has elapsed.
     for _ in $(seq 240); do

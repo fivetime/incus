@@ -306,6 +306,17 @@ test_remote_admin() {
     incus_remote remote rename foo bar
     incus_remote remote list | grep 'bar'
     incus_remote remote list | grep -v 'foo'
+
+    # Filtering
+    [ "$(incus_remote remote list -f csv -c n ba)" = "bar (current)" ]
+    [ "$(incus_remote remote list -f csv -c n 'name=^b.*')" = "bar (current)" ]
+    incus_remote remote list -f csv -c n "url=https://${INCUS_ADDR}" | grep -q "^bar "
+    ! incus_remote remote list -f csv -c n "url=https://${INCUS_ADDR}" | grep -qx local || false
+    incus_remote remote list -f csv -c n protocol=incus auth_type=tls | grep -q "^bar "
+    ! incus_remote remote list -f csv -c n protocol=incus auth_type=tls | grep -qx local || false
+    ! incus_remote remote list -f csv -c n public=true | grep -q "^bar " || false
+    [ "$(incus_remote remote list -f csv -c n static=false 'name=^b.*')" = "bar (current)" ]
+    ! incus_remote remote list bogus=true || false
     [ "$(incus_remote remote get-default)" = "bar" ]
 
     ! incus_remote remote remove bar || false
@@ -598,6 +609,12 @@ test_remote_keepalive() {
     # The proxy keeps working once an events client is gone.
     incus exec localhost:c1 -- true
     [ "$(pgrep -fc "incus remote proxy localhost: ${INCUS_CONF}/keepalive/localhost.socket")" -eq 1 ]
+
+    # Image commands go through the proxy too, so an unusable client key doesn't matter.
+    cp "${INCUS_CONF}/client.key" "${TEST_DIR}/keepalive.key"
+    echo garbage > "${INCUS_CONF}/client.key"
+    incus_remote image list localhost: -f csv -c l | grep -qx testimage
+    cp "${TEST_DIR}/keepalive.key" "${INCUS_CONF}/client.key"
 
     incus_remote remote set-keepalive localhost 0
     for pid in $(pgrep -f "incus remote proxy localhost: ${INCUS_CONF}/keepalive/localhost.socket"); do

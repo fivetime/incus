@@ -117,6 +117,18 @@ SELECT nodes.id, nodes.address
 	defer logger.WarnOnError(rows.Close, "Failed to close rows")
 
 	if !rows.Next() {
+		_ = rows.Close()
+
+		// Report a missing project rather than a missing instance.
+		_, err := cluster.GetProject(ctx, c.tx, project)
+		if err != nil {
+			if api.StatusErrorCheck(err) {
+				return "", err
+			}
+
+			return "", fmt.Errorf("Failed loading project %q: %w", project, err)
+		}
+
 		return "", api.StatusErrorf(http.StatusNotFound, "Instance not found")
 	}
 
@@ -156,6 +168,11 @@ type Instance struct {
 // If localOnly is set, only instances on the local member are returned.
 // If nameLike is set, only instances whose name matches that SQL LIKE pattern (backslash escaped) are returned.
 func (c *ClusterTx) GetInstancesByMemberAddress(ctx context.Context, offlineThreshold time.Duration, projects []string, localOnly bool, nameLike string) (map[string][]Instance, error) {
+	refTime, err := c.heartbeatRefTime(ctx, offlineThreshold)
+	if err != nil {
+		return nil, err
+	}
+
 	args := make([]any, 0, len(projects)+2)
 	var q strings.Builder
 
@@ -207,7 +224,7 @@ func (c *ClusterTx) GetInstancesByMemberAddress(ctx context.Context, offlineThre
 
 		if memberID == c.nodeID {
 			memberAddress = ""
-		} else if nodeIsOffline(offlineThreshold, memberHeartbeat, time.Time{}) {
+		} else if nodeIsOffline(offlineThreshold, memberHeartbeat, refTime) {
 			memberAddress = "0.0.0.0"
 		}
 

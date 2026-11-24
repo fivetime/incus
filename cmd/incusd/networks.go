@@ -409,6 +409,12 @@ func networksPost(d *Daemon, r *http.Request) response.Response {
 		return response.SmartError(err)
 	}
 
+	// Authorize against the project the network is actually created in.
+	err = s.Authorizer.CheckPermission(r.Context(), r, auth.ObjectProject(projectName), auth.EntitlementCanCreateNetworks)
+	if err != nil {
+		return response.SmartError(err)
+	}
+
 	networkCreateLock.Lock()
 	defer networkCreateLock.Unlock()
 
@@ -1212,16 +1218,15 @@ func doNetworkGet(s *state.State, r *http.Request, allNodes bool, projectName st
 	} else if util.PathExists(fmt.Sprintf("/sys/class/net/%s/bonding", apiNet.Name)) {
 		apiNet.Type = "bond"
 	} else {
-		vswitch, err := s.OVS()
-		if err != nil {
-			return api.Network{}, fmt.Errorf("Failed to connect to OVS: %w", err)
-		}
+		apiNet.Type = "unknown"
 
-		_, err = vswitch.GetBridge(context.TODO(), apiNet.Name)
+		// Check for an Open vSwitch bridge when Open vSwitch is available.
+		vswitch, err := s.OVS()
 		if err == nil {
-			apiNet.Type = "bridge"
-		} else {
-			apiNet.Type = "unknown"
+			_, err = vswitch.GetBridge(context.TODO(), apiNet.Name)
+			if err == nil {
+				apiNet.Type = "bridge"
+			}
 		}
 	}
 
@@ -1882,8 +1887,10 @@ func networkLeasesGet(d *Daemon, r *http.Request) response.Response {
 	return response.SyncResponse(true, leases)
 }
 
-func networkStartup(s *state.State) error {
+func networkStartup(stateFunc func() *state.State) error {
 	var err error
+
+	s := stateFunc()
 
 	// Cleanup leftover OVS ports.
 	vswitch, err := s.OVS()
@@ -2109,6 +2116,9 @@ func networkStartup(s *state.State) error {
 					return
 				case <-t.C:
 					t.Stop()
+
+					// Refresh the state as the daemon may have finished starting since.
+					s = stateFunc()
 
 					tryInstancesStart := initInPriorityOrder(false)
 

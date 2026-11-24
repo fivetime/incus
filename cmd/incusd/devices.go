@@ -7,10 +7,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -183,6 +185,13 @@ func deviceNetlinkListener() (chan []string, chan device.USBEvent, chan device.U
 					return strings.Repeat("0", l-len(s)) + s
 				}
 
+				// Kernel uevents don't carry the serial, so read it from sysfs.
+				serial := ""
+				content, err := os.ReadFile(filepath.Join("/sys", props["DEVPATH"], "serial"))
+				if err == nil {
+					serial = strings.TrimSpace(string(content))
+				}
+
 				usb, err := device.USBNewEvent(
 					props["ACTION"],
 					/* udev doesn't zero pad these, while
@@ -191,7 +200,7 @@ func deviceNetlinkListener() (chan []string, chan device.USBEvent, chan device.U
 					 */
 					zeroPad(parts[0], 4),
 					zeroPad(parts[1], 4),
-					props["SERIAL"],
+					serial,
 					major,
 					minor,
 					busnum,
@@ -673,12 +682,58 @@ func deviceEventListener(stateFunc func() *state.State) {
 func devicesRegister(instances []instance.Instance) {
 	logger.Debug("Registering running instances")
 
+	// Checking a VM reconnects its monitor, so spread the instances over workers to keep startup short.
+	queue := make(chan instance.Instance)
+	wg := sync.WaitGroup{}
+
+	for range min(len(instances), max(runtime.NumCPU()/2, 1)) {
+		wg.Go(func() {
+			for inst := range queue {
+				if !inst.IsRunning() { // For VMs this will also trigger a connection to the QMP socket if running.
+					continue
+				}
+
+				inst.RegisterDevices()
+			}
+		})
+	}
+
 	for _, inst := range instances {
-		if !inst.IsRunning() { // For VMs this will also trigger a connection to the QMP socket if running.
+		queue <- inst
+	}
+
+	close(queue)
+	wg.Wait()
+}
+
+// devicesRegisterPools re-registers the disk devices of running instances that use the given pools.
+// Their registration failed at startup if the pool wasn't available at the time.
+func devicesRegisterPools(s *state.State, instances []instance.Instance, poolNames []string) {
+	for _, inst := range instances {
+		if !inst.IsRunning() {
 			continue
 		}
 
-		inst.RegisterDevices()
+		for _, entry := range inst.ExpandedDevices().Sorted() {
+			if entry.Config["type"] != "disk" || !slices.Contains(poolNames, entry.Config["pool"]) {
+				continue
+			}
+
+			err := device.Register(inst, s, entry.Name, entry.Config, func() map[string]string {
+				volatile := make(map[string]string)
+				prefix := fmt.Sprintf("volatile.%s.", entry.Name)
+				for k, v := range inst.LocalConfig() {
+					if strings.HasPrefix(k, prefix) {
+						volatile[strings.TrimPrefix(k, prefix)] = v
+					}
+				}
+
+				return volatile
+			})
+			if err != nil {
+				logger.Error("Failed to register device", logger.Ctx{"project": inst.Project().Name, "instance": inst.Name(), "device": entry.Name, "err": err})
+			}
+		}
 	}
 }
 

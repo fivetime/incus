@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	internalInstance "github.com/lxc/incus/v7/internal/instance"
 	"github.com/lxc/incus/v7/internal/linux"
 	"github.com/lxc/incus/v7/internal/server/locking"
 	"github.com/lxc/incus/v7/internal/server/operations"
@@ -39,6 +38,33 @@ const lvmSnapshotSeparator = "-"
 
 // lvmEscapedHyphen used to escape hyphens in volume names to avoid conflicts with lvmSnapshotSeparator.
 const lvmEscapedHyphen = "--"
+
+// lvmPermanentErrors are LVM failures that retrying can't fix.
+var lvmPermanentErrors = []string{"insufficient free space", "already exists", "failed to find logical volume"}
+
+// lvmTryRunCommand runs an LVM command, retrying on failures that may be transient.
+func lvmTryRunCommand(name string, args ...string) (string, error) {
+	var output string
+	var err error
+
+	for attempt := range 20 {
+		if attempt > 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		output, err = subprocess.RunCommandCLocale(name, args...)
+		if err == nil {
+			return output, nil
+		}
+
+		msg := strings.ToLower(err.Error())
+		if slices.ContainsFunc(lvmPermanentErrors, func(permErr string) bool { return strings.Contains(msg, permErr) }) {
+			return output, err
+		}
+	}
+
+	return output, err
+}
 
 // lvmThinpoolDefaultName is the default name for the thinpool volume.
 const lvmThinpoolDefaultName = "IncusThinPool"
@@ -137,10 +163,15 @@ func (d *lvm) sanlockVolumeGroups(excludeName string) ([]string, error) {
 	return vgNames, nil
 }
 
+// sanlockLVPath returns the device mapper path of the sanlock lease volume of the given shared volume group.
+func (d *lvm) sanlockLVPath(vgName string) string {
+	return filepath.Join("/dev/mapper", linux.PathNameEncode(vgName)+"-lvmlock")
+}
+
 // sanlockHasGlobalLock checks whether the given shared volume group hosts the sanlock global lock.
 // The volume group's sanlock lease volume must be active on the local system.
 func (d *lvm) sanlockHasGlobalLock(vgName string) (bool, error) {
-	devPath := filepath.Join("/dev/mapper", fmt.Sprintf("%s-lvmlock", strings.ReplaceAll(vgName, "-", "--")))
+	devPath := d.sanlockLVPath(vgName)
 
 	output, err := subprocess.RunCommand("sanlock", "direct", "dump", fmt.Sprintf("%s:0:134217728", devPath))
 	if err != nil {
@@ -154,6 +185,78 @@ func (d *lvm) sanlockHasGlobalLock(vgName string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// removeStaleSanlockLV removes the sanlock lease volume left behind when a shared volume group
+// disappeared while its lockspace was still started, as it blocks re-creating a volume group of the same name.
+func (d *lvm) removeStaleSanlockLV(vgName string) error {
+	devPath := d.sanlockLVPath(vgName)
+
+	if !linux.IsBlockdevPath(devPath) {
+		return nil
+	}
+
+	// Drop the lockspace lvmlockd and sanlock may still hold on the lease volume.
+	// This fails when no lockspace is left to drop, in which case nothing holds the volume.
+	_, err := subprocess.RunCommand("lvmlockctl", "--drop", vgName)
+	if err != nil {
+		d.logger.Warn("Failed to drop the lockspace of volume group", logger.Ctx{"vg_name": vgName, "err": err})
+	}
+
+	// Retry as it may take sanlock a moment to close the lease volume after the lockspace was dropped.
+	_, err = subprocess.RunCommand("dmsetup", "remove", "--retry", filepath.Base(devPath))
+	if err != nil {
+		return fmt.Errorf("Failed to remove the stale sanlock lease volume of volume group %q: %w", vgName, err)
+	}
+
+	d.logger.Warn("Removed stale sanlock lease volume", logger.Ctx{"vg_name": vgName})
+
+	// The lost volume group may have been hosting the sanlock global lock.
+	// Recovering it is best effort as the lease volume is already gone by now.
+	otherSanlockVGs, err := d.sanlockVolumeGroups(vgName)
+	if err != nil {
+		d.logger.Warn("Failed to list sanlock volume groups", logger.Ctx{"err": err})
+
+		return nil
+	}
+
+	err = d.restoreSanlockGlobalLock(otherSanlockVGs)
+	if err != nil {
+		d.logger.Warn("Failed to restore the sanlock global lock", logger.Ctx{"err": err})
+	}
+
+	return nil
+}
+
+// restoreSanlockGlobalLock re-enables the sanlock global lock in one of the given shared volume groups
+// if none of them hosts it, as it's otherwise permanently lost, preventing any future creation or
+// deletion of shared volume groups cluster-wide.
+func (d *lvm) restoreSanlockGlobalLock(vgNames []string) error {
+	if len(vgNames) == 0 {
+		return nil
+	}
+
+	for _, vgName := range vgNames {
+		hosted, err := d.sanlockHasGlobalLock(vgName)
+		if err != nil {
+			d.logger.Warn("Failed to check for sanlock global lock", logger.Ctx{"vg_name": vgName, "err": err})
+
+			return nil
+		}
+
+		if hosted {
+			return nil
+		}
+	}
+
+	_, err := subprocess.TryRunCommand("lvmlockctl", "--gl-enable", vgNames[0])
+	if err != nil {
+		return fmt.Errorf("Failed to move the sanlock global lock to volume group %q: %w", vgNames[0], err)
+	}
+
+	d.logger.Info("Moved sanlock global lock", logger.Ctx{"vg_name": vgNames[0]})
+
+	return nil
 }
 
 // pysicalVolumeExists checks if an LVM Physical Volume exists.
@@ -391,7 +494,7 @@ func (d *lvm) createDefaultThinPool(lvmVersion, thinPoolName string, thinpoolSiz
 	}
 
 	// Create the thin pool volume.
-	_, err = subprocess.TryRunCommand("lvcreate", args...)
+	_, err = lvmTryRunCommand("lvcreate", args...)
 	if err != nil {
 		return fmt.Errorf("Error creating LVM thin pool named %q: %w", thinPoolName, err)
 	}
@@ -520,7 +623,7 @@ func (d *lvm) createLogicalVolume(vgName, thinPoolName string, vol Volume, makeT
 		}
 	}
 
-	_, err = subprocess.TryRunCommand("lvcreate", args...)
+	_, err = lvmTryRunCommand("lvcreate", args...)
 	if err != nil {
 		return fmt.Errorf("Error creating LVM logical volume %q: %w", lvFullName, err)
 	}
@@ -576,6 +679,16 @@ func (d *lvm) createLogicalVolumeSnapshot(vgName string, srcVol Volume, snapVol 
 	// filling up the CoW snapshot volume and causing it to become invalid.
 	if !makeThinLv {
 		args = append(args, "-l", "100%ORIGIN")
+
+		chunkSize := srcVol.ExpandedConfig("lvm.snapshots.chunk_size")
+		if chunkSize != "" {
+			chunkSizeBytes, err := units.ParseByteSizeString(chunkSize)
+			if err != nil {
+				return "", fmt.Errorf("Invalid snapshot chunk size %q: %w", chunkSize, err)
+			}
+
+			args = append(args, "--chunksize", fmt.Sprintf("%dk", chunkSizeBytes/1024))
+		}
 	}
 
 	if readonly {
@@ -600,7 +713,7 @@ func (d *lvm) createLogicalVolumeSnapshot(vgName string, srcVol Volume, snapVol 
 		defer release()
 	}
 
-	_, err = subprocess.TryRunCommand("lvcreate", args...)
+	_, err = lvmTryRunCommand("lvcreate", args...)
 	if err != nil {
 		return "", err
 	}
@@ -628,16 +741,70 @@ func (d *lvm) acquireExclusive(vol Volume) (func(), error) {
 	lvmActivation.Lock()
 	defer lvmActivation.Unlock()
 
-	_, err := subprocess.TryRunCommand("lvchange", "--activate", "ey", "-y", "--ignoreactivationskip", volDevPath)
+	_, err := lvmTryRunCommand("lvchange", "--activate", "ey", "-y", "--ignoreactivationskip", volDevPath)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to acquire exclusive lock on LVM logical volume %q: %w", volDevPath, err)
 	}
 
-	return func() {
-		if vol.ContentType() == ContentTypeBlock && vol.ExpandedConfig("block.type") == BlockVolumeTypeQcow2 {
-			_, _ = subprocess.TryRunCommand("lvchange", "--activate", "sy", "--ignoreactivationskip", volDevPath)
-		}
-	}, nil
+	return func() { d.releaseExclusive(vol) }, nil
+}
+
+// lvActive returns whether the logical volume of a volume on a clustered pool is active on this member.
+func (d *lvm) lvActive(vol Volume) (bool, error) {
+	if !d.clustered {
+		return false, nil
+	}
+
+	_, err := d.lvmDevPath(d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("Failed to check activation of LVM logical volume %q: %w", vol.name, err)
+	}
+
+	return true, nil
+}
+
+// restoreActivation releases a volume locked by acquireExclusive, deactivating it if it wasn't active before.
+func (d *lvm) restoreActivation(vol Volume, wasActive bool) {
+	if !d.clustered {
+		return
+	}
+
+	if wasActive {
+		d.releaseExclusive(vol)
+		return
+	}
+
+	volDevPath := d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name)
+	_, _ = lvmTryRunCommand("lvchange", "--activate", "n", "--ignoreactivationskip", volDevPath)
+}
+
+// releaseExclusive switches a volume locked by acquireExclusive back to shared mode if several members may use it.
+func (d *lvm) releaseExclusive(vol Volume) {
+	if !d.clustered {
+		return
+	}
+
+	if vol.ContentType() == ContentTypeBlock && vol.ExpandedConfig("block.type") == BlockVolumeTypeQcow2 && !d.exclusiveVolume(vol) {
+		volDevPath := d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name)
+		_, _ = lvmTryRunCommand("lvchange", "--activate", "sy", "--ignoreactivationskip", volDevPath)
+	}
+}
+
+// acquireExclusiveIfActive switches the lock of an active volume to exclusive mode and leaves inactive ones alone.
+// Snapshot origins can only be resized while inactive, so they must not get activated just for the lock.
+func (d *lvm) acquireExclusiveIfActive(vol Volume) (func(), error) {
+	_, err := d.lvmDevPath(d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name))
+	if errors.Is(err, os.ErrNotExist) {
+		return func() {}, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return d.acquireExclusive(vol)
 }
 
 // removeLogicalVolume removes a logical volume.
@@ -660,7 +827,7 @@ func (d *lvm) renameLogicalVolume(volDevPath string, newVolDevPath string) error
 		return err
 	}
 
-	_, err = subprocess.TryRunCommand("lvrename", volDevPath, newVolDevPath)
+	_, err = lvmTryRunCommand("lvrename", volDevPath, newVolDevPath)
 	if err != nil {
 		return err
 	}
@@ -673,7 +840,7 @@ func (d *lvm) renameLogicalVolume(volDevPath string, newVolDevPath string) error
 // lvmValidateName refuses logical volume names whose device-mapper name would exceed the kernel limit.
 func lvmValidateName(vgName string, lvName string) error {
 	// DM_NAME_LEN is 128 bytes including the terminator and every "-" is escaped as "--".
-	dmName := fmt.Sprintf("%s-%s", strings.ReplaceAll(vgName, "-", "--"), strings.ReplaceAll(lvName, "-", "--"))
+	dmName := fmt.Sprintf("%s-%s", linux.PathNameEncode(vgName), linux.PathNameEncode(lvName))
 	if len(dmName) > 127 {
 		return fmt.Errorf("Logical volume name %q is too long for device-mapper", lvName)
 	}
@@ -699,7 +866,7 @@ func (d *lvm) lvmFullVolumeName(volType VolumeType, contentType ContentType, vol
 	}
 
 	// Escape the volume name to a name suitable for using as a logical volume.
-	lvName := strings.ReplaceAll(strings.ReplaceAll(volName, "-", lvmEscapedHyphen), internalInstance.SnapshotDelimiter, lvmSnapshotSeparator)
+	lvName := linux.PathNameEncode(volName)
 
 	return fmt.Sprintf("%s_%s%s", volType, lvName, contentTypeSuffix)
 }
@@ -756,7 +923,7 @@ func (d *lvm) resizeLogicalVolume(lvPath string, sizeBytes int64) error {
 		args = append(args, "--fs=ignore")
 	}
 
-	_, err = subprocess.TryRunCommand("lvresize", args...)
+	_, err = lvmTryRunCommand("lvresize", args...)
 	if err != nil {
 		return err
 	}
@@ -1050,6 +1217,20 @@ func (d *lvm) snapshotNeedsCoWGrow(snapLVPath string) (bool, error) {
 	return lvSize <= originSize, nil
 }
 
+// validateLVMSnapshotChunkSize checks the value against lvcreate's snapshot chunk size rule: a power of two from 4KiB to 512KiB.
+func validateLVMSnapshotChunkSize(value string) error {
+	sizeBytes, err := units.ParseByteSizeString(value)
+	if err != nil {
+		return err
+	}
+
+	if sizeBytes < 4096 || sizeBytes > 524288 || sizeBytes&(sizeBytes-1) != 0 {
+		return errors.New("Must be a power of two between 4KiB and 512KiB (binary units, e.g. 64KiB)")
+	}
+
+	return nil
+}
+
 // parseLogicalVolumeSnapshot parses a raw logical volume name (from lvs command) and checks whether it is a
 // snapshot of the supplied parent volume. Returns unescaped parsed snapshot name if snapshot volume recognised,
 // empty string if not. The parent is required due to limitations in the naming scheme that Incus has historically
@@ -1114,7 +1295,7 @@ func (d *lvm) activateVolume(vol Volume) (bool, error) {
 
 	if d.clustered {
 		// Block and ISO volumes may be used from several members at once.
-		if vol.Type() == VolumeTypeVM || vol.ContentType() == ContentTypeBlock || vol.ContentType() == ContentTypeISO {
+		if (vol.Type() == VolumeTypeVM || vol.ContentType() == ContentTypeBlock || vol.ContentType() == ContentTypeISO) && !d.exclusiveVolume(vol) {
 			_, err := subprocess.RunCommand("lvchange", "--activate", "sy", "--ignoreactivationskip", volPath)
 			if err != nil {
 				return false, fmt.Errorf("Failed to activate LVM logical volume %q: %w", volPath, err)
@@ -1135,6 +1316,38 @@ func (d *lvm) activateVolume(vol Volume) (bool, error) {
 	d.logger.Debug("Activated logical volume", logger.Ctx{"volName": vol.Name(), "dev": volPath})
 
 	return true, nil
+}
+
+// exclusiveVolume returns whether a volume is used by a single instance and so locked exclusively when clustered.
+func (d *lvm) exclusiveVolume(vol Volume) bool {
+	if vol.IsSnapshot() {
+		return false
+	}
+
+	return vol.volType == VolumeTypeVM || (vol.IsCustomBlock() && util.IsTrue(vol.config["dependent"]))
+}
+
+// activateVolumeShared activates an LVM logical volume in shared mode if not already active.
+func (d *lvm) activateVolumeShared(vol Volume) error {
+	volPath := d.lvmPath(d.config["lvm.vg_name"], vol.volType, vol.contentType, vol.name)
+	volDevPath, err := d.lvmDevPath(volPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if volDevPath != "" {
+		return nil
+	}
+
+	lvmActivation.Lock()
+	defer lvmActivation.Unlock()
+
+	_, err = subprocess.RunCommand("lvchange", "--activate", "sy", "--ignoreactivationskip", volPath)
+	if err != nil {
+		return fmt.Errorf("Failed to activate LVM logical volume %q: %w", volPath, err)
+	}
+
+	return nil
 }
 
 // deactivateVolume deactivates an LVM logical volume if present. Returns true if deactivated, false if not.
