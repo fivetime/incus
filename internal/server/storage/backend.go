@@ -55,6 +55,7 @@ import (
 	"github.com/lxc/incus/v7/internal/server/state"
 	"github.com/lxc/incus/v7/internal/server/storage/drivers"
 	"github.com/lxc/incus/v7/internal/server/storage/memorypipe"
+	"github.com/lxc/incus/v7/internal/server/storage/rescue"
 	"github.com/lxc/incus/v7/internal/server/storage/s3"
 	"github.com/lxc/incus/v7/internal/server/storagematerializationattempt"
 	"github.com/lxc/incus/v7/internal/server/storagereleasereceipt"
@@ -762,6 +763,7 @@ func (b *backend) CreateInstance(inst instance.Instance, op *operations.Operatio
 // (e.g. snapshot restore) that cannot be cleanly reverted.
 func stripMetadata(instPath string) ([]string, error) {
 	rootfsPath := filepath.Join(instPath, "rootfs")
+	rescueRootPath := rescue.TemporaryRootPath(instPath)
 
 	var removed []string
 
@@ -772,6 +774,11 @@ func stripMetadata(instPath string) ([]string, error) {
 
 		// Don't descend into the guest's own root filesystem.
 		if path == rootfsPath && d.IsDir() {
+			return filepath.SkipDir
+		}
+
+		// Nor into the temporary guest root of an instance in rescue.
+		if path == rescueRootPath && d.IsDir() {
 			return filepath.SkipDir
 		}
 
