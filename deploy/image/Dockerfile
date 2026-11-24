@@ -63,7 +63,7 @@ RUN cc -O2 -Wall -Wextra -Werror deploy/image/daemon-parent.c -o /out/daemon-par
 FROM ${ALPINE_IMAGE} AS criu-build
 
 # Includes cgroup/FD restore and ramfs fixes and rejects unrecoverable writable PSI FDs.
-ARG CRIU_COMMIT=d734365a81a12e2b7b0d8085fc45e567b1cbb93e
+ARG CRIU_COMMIT=9bca658e8828b4398c758826f9914cb8a6cdc989
 
 RUN apk add --no-cache \
       bash \
